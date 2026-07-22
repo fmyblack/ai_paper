@@ -1,7 +1,39 @@
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# Obsidian local UI state and rebuildable cache
 .trash/
+.obsidian/workspace*.json
 .obsidian/cache/
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
+.obsidian/backlinks.json
+.obsidian/graph.json
+
+# Community plugin bundles are installed locally
+.obsidian/plugins/
+
+# Python environments, bytecode, and tool caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local editor settings
+.idea/
+.vscode/
+
+# Temporary files and logs
 tmp/*
 !tmp/README.md
+*.log
+
+# Secrets and local environment configuration
+.env
+.env.*
+!.env.example
+*.cookie
+*.cookies

@@ -62,4 +62,12 @@
 
 ## Git
 
-按你的安排，当前没有初始化 git。`.gitignore` 已准备好，后续可以直接使用。
+仓库已经初始化，远端为 `git@github.com:fmyblack/ai_paper.git`。
+
+- 笔记、模板、脚本、稳定的 Obsidian 配置和论文 PDF 可以进入版本控制。
+- 工作区布局、缓存、社区插件安装包、临时文件、Python 虚拟环境和本地密钥配置默认忽略。
+- `.gitattributes` 将 PDF 标记为二进制文件，避免无意义的文本 diff。
+- GitHub 单文件限制为 100 MB；若后续出现更大的论文或附件，再安装 Git LFS 并迁移对应文件。
+- 开始新研究任务前先检查状态；工作区干净时执行 `git pull --ff-only`。
+- 完成研究任务后只暂存相关文件，创建简洁 commit 并推送到 GitHub。
+- 工作区有未提交改动时不覆盖本地内容；密钥、cookies、访问令牌和签名 URL 不得提交。
