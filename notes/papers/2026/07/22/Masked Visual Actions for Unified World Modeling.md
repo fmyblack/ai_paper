@@ -16,12 +16,12 @@ arxiv_id: "2607.19343"
 doi: ""
 paper_url: "https://arxiv.org/abs/2607.19343"
 code_url: "https://masked-visual-actions.github.io"
-pdf_path: "library/raw/2026/07/2607.19343v1.pdf"
-text_path: "library/text/2026/07/2607.19343v1.txt"
+pdf_path: "library/raw/2026/07/22/2607.19343v1.pdf"
+text_path: "library/text/2026/07/22/2607.19343v1.txt"
 sha256: "feef3cb2cd12955f1ac8daf4d5493a9a1f22f2855f2be03abe71373a0e4e8dee"
 pages: 21
 citation_key: ""
-related: ["[[notes/papers/2026/Agentic Real2Sim- Physics-based World Modeling with Vision-Language Agents]]", "[[notes/papers/2026/AlayaWorld- Interactive Long-Horizon World Modeling - Full Technical Report]]"]
+related: ["[[notes/papers/2026/07/22/Agentic Real2Sim- Physics-based World Modeling with Vision-Language Agents]]", "[[notes/papers/2026/07/22/AlayaWorld- Interactive Long-Horizon World Modeling - Full Technical Report]]"]
 cssclasses:
   - paper-note
 ---

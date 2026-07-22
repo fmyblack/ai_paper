@@ -16,12 +16,12 @@ arxiv_id: "2607.19190"
 doi: ""
 paper_url: "https://arxiv.org/abs/2607.19190"
 code_url: "https://agentic-real2sim.github.io/"
-pdf_path: "library/raw/2026/07/2607.19190v1.pdf"
-text_path: "library/text/2026/07/2607.19190v1.txt"
+pdf_path: "library/raw/2026/07/22/2607.19190v1.pdf"
+text_path: "library/text/2026/07/22/2607.19190v1.txt"
 sha256: "5c0882c9e32f9bd9923a58b8bfa4ff7e2b59eeb3e82dbd456e7aed7be6f90dc8"
 pages: 12
 citation_key: ""
-related: ["[[notes/papers/2026/Masked Visual Actions for Unified World Modeling]]", "[[notes/papers/2026/AlayaWorld- Interactive Long-Horizon World Modeling - Full Technical Report]]"]
+related: ["[[notes/papers/2026/07/22/Masked Visual Actions for Unified World Modeling]]", "[[notes/papers/2026/07/22/AlayaWorld- Interactive Long-Horizon World Modeling - Full Technical Report]]"]
 cssclasses:
   - paper-note
 ---

@@ -16,12 +16,12 @@ arxiv_id: "2607.18367"
 doi: ""
 paper_url: "https://arxiv.org/abs/2607.18367"
 code_url: "https://github.com/AlayaLab/AlayaWorld"
-pdf_path: "library/raw/2026/07/2607.18367v1.pdf"
-text_path: "library/text/2026/07/2607.18367v1.txt"
+pdf_path: "library/raw/2026/07/22/2607.18367v1.pdf"
+text_path: "library/text/2026/07/22/2607.18367v1.txt"
 sha256: "ecfe162ed101f47d18e3be467ea93cb8b49077e62d390539fd5e6ecfea90ec64"
 pages: 16
 citation_key: ""
-related: ["[[notes/papers/2026/Masked Visual Actions for Unified World Modeling]]", "[[notes/papers/2026/OmniReasoner- Thinking with Long Audio-Video via Native Tool Use]]"]
+related: ["[[notes/papers/2026/07/22/Masked Visual Actions for Unified World Modeling]]", "[[notes/papers/2026/07/22/OmniReasoner- Thinking with Long Audio-Video via Native Tool Use]]"]
 cssclasses:
   - paper-note
 ---

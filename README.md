@@ -6,7 +6,7 @@
 
 1. 在 Obsidian 中选择“打开本地仓库”，打开当前目录 `ai_paper`。
 2. 从 [[首页]] 进入论文总览、阅读队列和研究地图。
-3. 把 PDF 放入 `library/raw/YYYY/MM/`，或运行导入脚本：
+3. 把 PDF 放入 `library/raw/YYYY/MM/DD/`，或运行导入脚本：
 
    ```bash
    python3 scripts/ingest_paper.py /path/to/paper.pdf \
@@ -17,16 +17,16 @@
      --topics "agents, reasoning"
    ```
 
-4. 在 `notes/papers/YYYY/` 中继续填写自动生成的论文笔记。
+4. 在 `notes/papers/YYYY/MM/DD/` 中继续填写自动生成的论文笔记。
 5. 阅读过程中，把可复用结论沉淀到 `notes/topics/`，把实验过程记录到 `notes/reproductions/`。
 
 如果环境中安装了 `pypdf`，导入脚本会同时生成可搜索文本并记录页数；未安装时仍会复制 PDF、创建论文笔记和元数据索引。
 
 ## 目录
 
-- `library/raw/YYYY/MM/`：原始 PDF。
-- `library/text/YYYY/MM/`：从 PDF 提取的纯文本。
-- `notes/papers/YYYY/`：单篇论文笔记。
+- `library/raw/YYYY/MM/DD/`：按入库日归档的原始 PDF。
+- `library/text/YYYY/MM/DD/`：按入库日归档的提取文本。
+- `notes/papers/YYYY/MM/DD/`：按入库日归档的单篇论文笔记。
 - `notes/daily/`：每日阅读记录。
 - `notes/topics/`：跨论文主题综述与概念笔记。
 - `notes/reading/`：阅读队列与选择理由。

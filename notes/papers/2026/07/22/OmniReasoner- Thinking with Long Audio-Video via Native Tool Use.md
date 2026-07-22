@@ -16,12 +16,12 @@ arxiv_id: "2607.19339"
 doi: ""
 paper_url: "https://arxiv.org/abs/2607.19339"
 code_url: "https://github.com/RockyChen0205/OmniReasoner"
-pdf_path: "library/raw/2026/07/2607.19339v1.pdf"
-text_path: "library/text/2026/07/2607.19339v1.txt"
+pdf_path: "library/raw/2026/07/22/2607.19339v1.pdf"
+text_path: "library/text/2026/07/22/2607.19339v1.txt"
 sha256: "00ba5f75970fd7ffd27b02262cd30b2055d569c0ffb78bff117d68f02f7642aa"
 pages: 19
 citation_key: ""
-related: ["[[notes/papers/2026/Masked Visual Actions for Unified World Modeling]]", "[[notes/papers/2026/AlayaWorld- Interactive Long-Horizon World Modeling - Full Technical Report]]"]
+related: ["[[notes/papers/2026/07/22/Masked Visual Actions for Unified World Modeling]]", "[[notes/papers/2026/07/22/AlayaWorld- Interactive Long-Horizon World Modeling - Full Technical Report]]"]
 cssclasses:
   - paper-note
 ---

@@ -255,9 +255,14 @@ def main() -> int:
     paper_year = args.year or added_date.year
     source_hash = file_sha256(source_pdf)
 
-    raw_directory = vault_root / "library" / "raw" / str(added_date.year) / f"{added_date.month:02d}"
-    text_directory = vault_root / "library" / "text" / str(added_date.year) / f"{added_date.month:02d}"
-    note_directory = vault_root / "notes" / "papers" / str(paper_year)
+    date_parts = (
+        str(added_date.year),
+        f"{added_date.month:02d}",
+        f"{added_date.day:02d}",
+    )
+    raw_directory = vault_root.joinpath("library", "raw", *date_parts)
+    text_directory = vault_root.joinpath("library", "text", *date_parts)
+    note_directory = vault_root.joinpath("notes", "papers", *date_parts)
     raw_directory.mkdir(parents=True, exist_ok=True)
     text_directory.mkdir(parents=True, exist_ok=True)
     note_directory.mkdir(parents=True, exist_ok=True)

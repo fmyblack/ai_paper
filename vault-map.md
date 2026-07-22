@@ -22,9 +22,9 @@ Last updated: 2026-07-22
 
 ## Storage Layers
 
-- `library/raw/`：不可变的原始 PDF 层。
-- `library/text/`：用于搜索与 AI 辅助阅读的提取文本层。
-- `notes/papers/`：单篇理解层。
+- `library/raw/YYYY/MM/DD/`：按入库日归档的不可变原始 PDF 层。
+- `library/text/YYYY/MM/DD/`：按入库日归档、用于搜索与 AI 辅助阅读的提取文本层。
+- `notes/papers/YYYY/MM/DD/`：按入库日归档的单篇理解层。
 - `notes/daily/`：时间线与阅读过程层。
 - `notes/topics/`：跨论文知识层。
 - `notes/reproductions/`：实验验证层。
