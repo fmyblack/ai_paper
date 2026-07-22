@@ -1,0 +1,110 @@
+filters:
+  and:
+    - file.inFolder("notes/papers")
+    - type == "paper"
+views:
+  - type: table
+    name: 全部论文
+    order:
+      - file.name
+      - authors
+      - year
+      - venue
+      - topics
+      - status
+      - priority
+      - rating
+    sort:
+      - property: date_added
+        direction: DESC
+    columnSize:
+      file.name: 420
+      authors: 260
+      year: 80
+      venue: 120
+      topics: 280
+      status: 110
+      priority: 80
+      rating: 80
+  - type: table
+    name: 待读
+    filters:
+      or:
+        - status == "inbox"
+        - status == "skimmed"
+    order:
+      - file.name
+      - authors
+      - year
+      - topics
+      - priority
+      - status
+    sort:
+      - property: priority
+        direction: ASC
+      - property: date_added
+        direction: DESC
+    columnSize:
+      file.name: 440
+      authors: 260
+      topics: 300
+  - type: table
+    name: 阅读中
+    filters:
+      or:
+        - status == "reading"
+        - status == "reproducing"
+    order:
+      - file.name
+      - topics
+      - status
+      - last_read
+      - priority
+    sort:
+      - property: last_read
+        direction: DESC
+    columnSize:
+      file.name: 440
+      topics: 320
+  - type: table
+    name: 高优先级
+    filters:
+      and:
+        - priority <= 2
+        - status != "read"
+        - status != "reproduced"
+        - status != "archived"
+    order:
+      - file.name
+      - topics
+      - priority
+      - status
+      - date_added
+    sort:
+      - property: priority
+        direction: ASC
+      - property: date_added
+        direction: ASC
+    columnSize:
+      file.name: 440
+      topics: 320
+  - type: table
+    name: 已完成
+    filters:
+      or:
+        - status == "read"
+        - status == "reproduced"
+    order:
+      - file.name
+      - authors
+      - year
+      - topics
+      - status
+      - rating
+    sort:
+      - property: last_read
+        direction: DESC
+    columnSize:
+      file.name: 440
+      authors: 260
+      topics: 300

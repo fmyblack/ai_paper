@@ -1,0 +1,16 @@
+.paper-note .markdown-preview-sizer,
+.paper-note .cm-sizer {
+  max-width: 920px;
+}
+
+.paper-note h2 {
+  margin-top: 2.2em;
+}
+
+.paper-note table {
+  width: 100%;
+}
+
+.paper-note blockquote {
+  border-left-width: 3px;
+}

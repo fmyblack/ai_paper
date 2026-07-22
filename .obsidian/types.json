@@ -1,0 +1,17 @@
+{
+  "types": {
+    "aliases": "aliases",
+    "cssclasses": "multitext",
+    "tags": "tags",
+    "authors": "multitext",
+    "topics": "multitext",
+    "related": "multitext",
+    "year": "number",
+    "paper_date": "date",
+    "date_added": "date",
+    "last_read": "date",
+    "priority": "number",
+    "rating": "number",
+    "pages": "number"
+  }
+}
