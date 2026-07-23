@@ -1,0 +1,1849 @@
+--- Page 1 ---
+
+arXiv:2607.20033v1  [cs.RO]  22 Jul 2026
+Robots Acquire Manipulation Skills in Seconds
+from a Single Human Video
+Guangyan Chen1,Meiling Wang1,Te Cui1,Zichen Zhou 1,Qi Shao1,Shalfun Li2,†,Hang Su 2,3,Roy
+Gan2,Hao Wang2,Mengyin Fu1,∗,Yi Yang1,∗,Yufeng Yue1,∗
+1Beijing Institute of Technology,2X SQUARE ROBOT,3Tsinghua University
+†Project lead. ∗Corresponding author(s).
+The ability to acquire skills rapidly and effortlessly while retaining those already mastered is essential
+for robots. However, current methods still rely on a cumbersome training-time loop that is costly
+and slow, while eroding skills already mastered. In this paper, we introduceHOST(Human-to-robot
+One-Shot Skill AcquisiTion), a framework that enables a robot to acquire skills in seconds from a single
+human video while retaining previously mastered skills.HOSTresolves skill acquisition through a
+cascade of self-grounded prediction. It first estimates the robot’s progress within the demonstrated
+task, then translates the upcoming progression into the robot’s own future observations, and finally
+derives actions from these predicted observations. This cascade is trained on targets coupled to the
+video demonstration, obtained by mapping the robot trajectory and the video demonstration onto a
+shared task progress manifold, then redefining each target to align with the future progression of the
+video.HOSTthereby enables the robot to actively follow the demonstrated procedure and adapt it to
+the robot’s embodiment.HOSTacquires novel skills at inference time from a single human video in
+an average of 29 seconds and achieves a 62% average success rate. It exceeds the zero-shot baseline
+by 45% while retaining previously mastered skills.HOSTeven exceeds the baseline fine-tuned on 50
+robot demonstrations per task while requiring 50 times fewer demonstrations and acquiring each skill
+507 times faster. Additional information aboutHOSTis available on the project website.
+1 Introduction
+Developing robots that operate seamlessly in human environments, with varied objects, and utilizing various
+skillstocompleteabroadrangeoftaskshasbeenalong-standinggoalinrobotics. Insuchsettings, manipulation
+tasks vary widely across objects, tools, procedures, and user preferences, making it infeasible to anticipate
+every situation a robot may encounter. A robot may be asked to carry out an unfamiliar household routine,
+adapt to a new object arrangement, or handle a tool it has never seen. The ability to acquire new skills rapidly
+and effortlessly while retaining those already mastered is therefore essential for robots.
+Despite substantial progress in robot learning, teaching a robot each new skill still relies on a cumbersome
+training-time loop, a process that is costly, slow, and self-defeating. Reinforcement learning usually requires
+task-specific rewards and extensive trial-and-error interaction. On physical robots, such rewards are difficult
+to design and often unknown, while interaction remains slow, sample-inefficient and hard to scale across
+tasks (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11). Moreover, optimizing the reward for each skill tends to degrade skills the
+robot has already mastered. Imitation learning offers a more intuitive and scalable alternative, enabling robots
+to acquire skills directly from robot demonstrations (12, 13, 14, 15, 16). Trained on large-scale demonstration
+corpora that span hundreds of tasks and diverse embodiments (17, 18, 19, 13, 20, 14, 15, 21), imitation
+learning has markedly advanced manipulation generalization. However, the acquisition of a novel skill still
+relies on a training-time loop of collection and fine-tuning (22, 23) that exacts a considerable price and
+risks eroding skills already mastered. This loop begins with a skilled operator collecting a dedicated batch
+of task-specific demonstrations by teleoperating the physical robot, a slow, repeated process that consumes
+expert labor and scarce robot time. It then demands offline fine-tuning that incorporates these demonstrations
+into the policy, consumes additional compute, and extends over hours before a new skill becomes available.
+Even when this price is paid, the gain does not endure. Fine-tuning overwrites parameters shared across
+
+--- Page 2 ---
+
+A
+B
+C
+Time Efficiency
+Skill
+Retention
+Data
+Efficiency
+Robot
+Trajectory
+ViewpointEmbodiment SceneObject
+Coupling Prediction Targets to the Demonstration Resolving Execution through Self-grounded Prediction
+Simpler
+Skill acquisition time
+Conventional
+Ours
+507x
+Faster
+Skill retention (%)
+100 Novel skill acquisition
+Previous
+ New
++59%
+Retained
+Training-free skill acquisition
+VS
+Burdensome Data Collection Compute-intensive
+Retraining Execution Catastrophic Forgetting
+Num of demos
+Success rate (%)
+0 50
+50x Saving
+1
+1 video
+50 demos
+BUFFER
+Temporal
+Misalignment
+Robot
+Human
+Current
+Single Human Video Skill Retained
+State
+Mismatch
+Human
+Video Ours
+Progress Manifold
+× × × ×× × × × ×
+Execution
+××
+29s
+Fig. 1 Robots acquire manipulation skills in seconds from a single human video.(A) Current methods teach a
+robot new skills through a cumbersome training-time loop that is costly and slow, and erodes previously mastered skills.
+HOSTinstead acquires skills at inference time, each from a single human video, averaging 29 seconds, while retaining
+its previously mastered skills. (B) Skill acquisition from a single human video confronts a structural mismatch between
+video demonstration and execution. Temporal asynchrony between the two decouples the prediction target from the video
+demonstration, while state discrepancies hinder the translation of the observed behavior into action. (C)HOSTovercomes
+this mismatch through two mechanisms, coupling prediction targets to the demonstration and resolving execution through
+self-grounded prediction, enabling the robot to actively follow the demonstrated procedure and adapt it to the robot’s own
+embodiment.
+2
+
+--- Page 3 ---
+
+skills, causing each newly acquired behavior to erode previously mastered skills (24, 25). This training-time
+loop therefore constitutes the central bottleneck for robots to acquire new skills rapidly and effortlessly while
+retaining those already mastered, severely hindering the deployment of robots that operate seamlessly in
+human environments, as depicted in Fig. 1A.
+We draw inspiration from the observational learning capabilities of humans to break through this bottleneck.
+When faced with an unfamiliar task, humans do not require prolonged physical rehearsal or exhaustive trial and
+error. Instead, they rapidly acquire new skills by observing others and adapting the observed actions to their
+own bodies. Motivated by this cognitive efficiency, we reformulate novel skill acquisition as an inference-time
+process rather than a training-time loop, in which the behaviour is specified by a single human video and
+translated into robot actions at inference time without task-specific parameter updates. This reformulation
+supplies each new skill through a single video in place of the demonstration corpora that fine-tuning requires,
+yielding a pronounced improvement in data efficiency. The skill acquisition process proceeds without offline
+fine-tuning, enabling a new skill to become available in the time it takes to record it rather than the hours that
+teleoperation and offline fine-tuning would otherwise demand. Furthermore, the policy parameters remain
+frozen throughout the skill acquisition process, keeping previously mastered skills intact.
+As early as 1994, Kuniyoshi et al. (26) envisioned robots that acquire manipulation skills by visually observing
+a single human video, a setting later studied as one-shot visual imitation (OSVI). Although this vision has
+motivated a long line of work (27, 28, 29, 30, 31), achieving it remains an open challenge. Current prevalent
+paradigms (27, 28, 29, 30, 31) straightforwardly extend the imitation learning framework by conditioning
+on the video demonstration, while still constructing a direct mapping to robot actions and anchoring each
+predictiontargettoafixedtemporaloffsetalongtheexecutiontrajectory. Thesemethodsinevitablyreducevideo
+demonstrations to passive context and struggle to translate the observed procedure into precise fine-grained
+actions, resulting in performance substantially inferior to that attained with task-specific fine-tuning.
+These persistent limitations point to a fundamental problem rooted in the structural mismatch between
+video demonstration and execution, illustrated in Fig. 1B. (1)Temporal misalignment relegates the video
+demonstrationtoapassivecontext. Videodemonstrationsandrobottrajectoriesaretemporallyasynchronous,
+unfolding at disparate speeds. This decouples the prediction target from the video demonstration context,
+relegating the video demonstration to a passive context and hindering the model from acquiring novel skills
+from the video demonstration at inference time. (2)State discrepancies between the video demonstration
+androbotexecutionhindertranslationintoactions. The full video demonstration is provided as a monolithic
+input, floodingthemodelwithstatesirrelevanttoitscurrentstage. Evenatcorrespondingsegments, substantial
+differences in embodiment, viewpoint, and appearance between the video demonstration and the robot
+trajectory introduce severe state discrepancies. These hinder direct regression from high-dimensional video
+demonstrations to low-dimensional robot actions. (3)Scarce paired supervision impedes the development
+of reliable skill acquisition.
+Learning to acquire skills from human video for robot execution requires paired data that capture the same
+behavior in both human and robot demonstrations. Human videos and robot trajectories are each abundant on
+their own, but data pairing the two for the same behavior remains rare. This scarcity impedes the development
+of reliable skill acquisition from a single human video.
+In this paper, we introduceHOST(Human-to-robotOne-Shot Skill AcquisiTion), a framework for acquiring
+manipulation skills from a single human video demonstration, illustrated in Fig. 2. The central idea is to treat
+skill acquisition not as a passive, direct mapping from a human demonstration to robot action but as a process
+driven by the video demonstration and resolved through self-grounded prediction. This formulation builds on
+the following two principles.
+First, the video demonstration should actively determine the robot’s prediction target. Rather than fixing this
+target at a fixed temporal offset along the execution trajectory, independent of the video demonstration, we
+couple the target to the upcoming progression of the video demonstration, as shown in Fig. 2A. This coupling is
+established by mapping the robot trajectory and the video demonstration onto a shared task progress manifold.
+Each target is then redefined to align with the future progression of the video, turning the video from a passive
+conditioning signal into the active driver of the robot’s prediction.
+3
+
+--- Page 4 ---
+
+A Coupling Prediction Targets to the Demonstration B ResolvingExecutionthroughSelf-groundedPrediction
+Loss formulation
+C Skill Acquisition from a Single Human Video
+Human Video
+EncoderEInstruction
+Observation
+Robot Execution
+Localization Vision Action
+E
+H O S T
+Localization
+1 2 3Vision Action
+Visual/ActionTarget
+Progress
+Input
+Context
+Prediction
+Target
+Human Video Observation
+Progress Visual Target Action
+Instruction
+‘Place Flowers’
+Input
+Context
+‘Place Flowers’
+Future
+Progression
+Observation
+Action
+H O S T
+Fig. 2 Method overview of HOST.(A) Coupling prediction targets to the demonstration.HOSTmaps the robot trajectory
+and the video demonstration onto a shared task progress manifold, then redefines each target to align with the video’s
+future progression, turning the video into the active driver of the robot’s prediction. (B) Resolving execution through
+self-grounded prediction.HOSTworks through a causal cascade of self-grounded stages. It first localizes the robot’s
+progress within the video demonstration, then translates its upcoming progression into the robot’s own future observations,
+and finally derives actions from these predicted observations. (C) Given a single human video of a previously unseen
+task,HOSTruns the same self-grounded cascade to carry out the task, acquiring the skill while retaining those already
+mastered.
+Second, skill acquisition should be resolved through a cascade of self-grounded prediction. Humans do not
+acquire skills from a video demonstration in a single step but instead work through a cascade of self-grounded
+stages. They first retrieve the task-relevant segment of the video demonstration (32, 33, 34), then internally
+simulate the intended movement (35, 36), and finally translate that simulation into action (37, 38). As
+illustrated in Fig. 2B,HOSTformulates this cascade across three stages. It first localizes where the robot
+currently stands within the demonstrated procedure, retrieving the task-relevant segment. It then translates
+4
+
+--- Page 5 ---
+
+the upcoming progression of the video demonstration into the robot’s own future observations, and finally
+derives actions from these predicted observations. This causal cascade bridges the gap between human video
+demonstration and robot action, narrowing the cross-domain discrepancy before action generation.
+HOSTis trained in two stages to reduce its reliance on human–robot paired data. It is first trained on same-
+embodiment paired data, obtained by readily pairing different robot episodes of the same task from existing
+datasets. In this stage, the model develops the capacity to follow a demonstrated procedure by predicting
+future robot observations and actions conditioned on another execution of the same task. It is then adapted
+using a comparatively small set of human–robot paired demonstrations, extending the learned capabilities to
+human video demonstrations and enabling reliable skill acquisition from a single human video.
+Building on the above analysis, we instantiateHOST, as illustrated in Fig. 2.HOSTis trained on same-task
+pairs of video demonstrations and robot trajectories, and it then acquires novel skills at inference from a single
+human video. During training, each prediction target is coupled to the video demonstration, driving the robot
+to actively follow the demonstrated procedure. The model learns to produce this target through a cascade of
+self-grounded prediction, adapting the demonstrated procedure to the robot’s own embodiment. It is trained
+in two stages, first on same-embodiment robot–robot pairs, then adapted to human-to-robot scenarios with a
+small set of human–robot pairs. After training,HOSTis able to acquire novel skills by running the self-grounded
+cascade conditioned on a single human video, without any parameter update. This video can then be stored
+and retrieved without repeated human involvement, enabling the acquired skill to persist across recurring
+tasks. Each acquisition takes 29 seconds on average, andHOSTreaches 62% average success, exceeding the
+strongest one-shot visual imitation baseline by 43% and the strongest zero-shot imitation learning baseline
+by 45%. Even compared with the strongest baseline fine-tuned on 50 robot demonstrations per task,HOST
+achieves superior performance while using 50 times fewer demonstrations, acquiring new skills 507 times
+faster, and retaining previously mastered skills.
+2 Results
+2.1 Overview
+HOSTacquires manipulation skills from a single human video, illustrated in Fig. 3A. Given the human
+video shown in the top row, across four representative tasks spanning varied objects, tools and manipulation
+primitives,HOSTactively follows the demonstrated procedure and adapts it to its own embodiment, carrying
+out each task in the bottom row from that single recording without any parameter update.
+We benchmarkHOSTagainst the strongest baselines in terms of performance on novel tasks, data efficiency,
+time efficiency, and retention of previously mastered skills, as reported in Fig. 3B.HOSTreaches 62% success
+on novel tasks from a single human video, exceeding the strongest baseline without parameter updates by
+43%, and surpasses the strongest fine-tuned baseline while using 50 times fewer demonstrations and acquiring
+each new skill 507 times faster. This advantage does not come at the cost of previously mastered skills.HOST
+retains its original performance, whereas the strongest fine-tuned baseline falls to 40%. The following sections
+examine each of these advantages in turn.
+We first describe the experimental setup and baselines (Sec. 2.2), then demonstrate thatHOSTacquires
+skills from a single human video across 50 novel manipulation tasks (Sec. 2.3), and next compareHOST
+against imitation learning and OSVI baselines on novel tasks without parameter updates (Sec. 2.4). A further
+comparison against imitation learning under supervised fine-tuning measures the data and time efficiency of
+HOST(Sec. 2.5), and confirms thatHOSTretains previously mastered skills where fine-tuning erodes them
+(Sec. 2.6). We also assess robustness under deployment variations (Sec. 2.7), then measure the contribution
+of target coupling (Sec. 2.8) and the self-grounded prediction (Sec. 2.9), and quantify the effect of same-
+embodiment pretraining data volume on skill acquisition from a single human video (Sec. 2.10). Finally, we
+verify that acquired skills persist across recurring tasks, retrieved from their stored video demonstrations
+without repeated human involvement (Sec. 2.11).
+5
+
+--- Page 6 ---
+
+A
+B
+Fig.3 Qualitativeandquantitativeperformanceoverviewof HOST.(A)HOSTacquires manipulation skills from a single
+human video, actively following the demonstrated procedure and adapting it to its own embodiment. (B)HOSTexceeds
+the strongest baseline without parameter updates on novel tasks by 43%, surpasses the strongest fine-tuned baseline
+while using 50 times fewer demonstrations and acquiring each new skill 507 times faster, and retains its performance on
+previously mastered tasks, whereas the strongest fine-tuned baseline falls to 40%.
+2.2 Experimental Setup and Baselines
+Experimental setup.All experiments are conducted on a bimanual manipulation platform consisting of two
+ARX R5 six-axis robotic arms, each equipped with a parallel-jaw gripper. Three RGB cameras observe the
+workspace, with one wrist-mounted on each arm and one providing a static third-person view. Each arm
+operates in a 10-dimensional action space comprising Cartesian position, a 6D rotation representation, and
+gripper aperture, yielding a 20-dimensional bimanual action space. Complete implementation details are
+provided in Supplementary Sec. B.
+We evaluate skill acquisition on novel tasks that require manipulation skills absent from the training data,
+and assess skill retention on previously mastered tasks drawn from the training set. Each task undergoes 20
+trials with randomized initial object positions and orientations, and human evaluators judge success against
+task-specific completion criteria.
+Baselines.WecompareHOSTagainstbaselinesfromtwoparadigms. (1)OSVImethods,namelyVid2Robot( 30)
+and AWDA (39), are evaluated with their conditioning mechanisms integrated into theHOSTbackbone to
+ensure a fair comparison. As Vid2Robot is not open source, we report results from our reimplementation.
+These methods receive a single human video demonstration at test time. (2) Imitation learning methods,
+6
+
+--- Page 7 ---
+
+namely 𝜋0.5 (15), Wall-OSS (40), andHOST-base (41), receive a language instruction at test time.HOST-base
+shares theHOSTbackbone but omits target coupling and self-grounded prediction, conditioning directly on
+language.
+HOSTand the OSVI methods follow the same two-stage training protocol described in Sec. 4.4, in which
+Stage 1 pretrains on same-embodiment robot–robot pairs formed from 193,462 robot trajectories spanning
+229 tasks and Stage 2 adapts the model with human–robot pairs formed from an additional 5,847 self-collected
+human video demonstrations, each paired with robot trajectories of the same task drawn from that corpus.
+Among the imitation learning methods,𝜋0.5 and Wall-OSS are initialized from weights pretrained on their
+respective large-scale corpora and then trained on the same 193,462 robot trajectories, whereasHOST-base is
+trained directly on these robot trajectories.
+2.3 Skill Acquisition across 50 Novel Manipulation Tasks
+We evaluateHOSTon 50 novel manipulation tasks spanning varied objects, tools, and manipulation primitives.
+Each task is evaluated over 20 trials, as reported in Fig. 4.HOSTacquires an executable skill on every one of
+these 50 tasks from only a single human video per task, without any parameter update, and sustains success
+across the full set. This breadth confirms thatHOSTacquires skills from a single human video broadly across
+manipulation tasks. Building on this breadth, we next compareHOSTagainst imitation learning and OSVI
+baselines on a subset of these tasks in Sec. 2.4.
+2.4 Comparison with Baselines on Novel Tasks
+We compareHOSTagainst OSVI and language-conditioned imitation learning baselines on novel tasks whose
+manipulation skills are absent from the training data, with all methods evaluated without any parameter
+update.HOSTacquires the new skill from a single human video and attains the highest average success rate
+among all compared methods, as reported in Fig. 5.HOSTsurpasses the strongest language-conditioned
+imitation learning baselines,𝜋0.5 and Wall-OSS, evaluated zero-shot from the instruction, by 45%, despite
+both being pretrained on large-scale corpora.HOSTexceeds the strongest OSVI baseline by 43% even though
+both methods receive the same single human video, indicating that its advantage comes not from access to
+a video demonstration but from how that video demonstration is used to drive execution, through the two
+mechanisms that distinguishHOST, coupling prediction targets to the demonstration and resolving execution
+through self-grounded prediction, which together carry the demonstrated skill across the gap between human
+video and robot execution.
+2.5 Data and Time Efficiency of Skill Acquisition
+Sec. 2.4 establishes thatHOSTexceeds the strongest baseline by 43% on novel tasks. We further evaluate
+HOSTagainst imitation learning under supervised fine-tuning, the prevalent approach for teaching robots
+new skills, measuring the data and time efficiency ofHOSTrelative to it, as reported in Fig. 6.
+Data efficiency.We fine-tuned each imitation learning baseline on 10, 20, and 50 teleoperated demonstrations
+per novel task using Low-Rank Adaptation (LoRA) (42). We then compared the resulting success rates with
+the performance ofHOSTfrom a single human video, as presented in Fig. 6A. Performance improved with
+the demonstration budget, but even the strongest fine-tuned baseline, Wall-OSS+SFT, reached only 56%
+at 50 demonstrations per task, still 6% below the 62%HOSTreaches from a single video, while𝜋0.5+SFT
+andHOST-base+SFT remained further below. From a single human video,HOSTtherefore exceeds the
+performance of the strongest baseline at 50 demonstrations. The per-task comparison in Fig. 6C confirms that
+this advantage holds across most of these tasks.
+Time efficiency. HOSTand the imitation learning baselines under supervised fine-tuning differ sharply in
+the time required to acquire each new skill. The cost of supervised fine-tuning is dominated by teleoperated
+collection of a demonstration corpus and offline fine-tuning, together taking approximately 4.0 to 4.9 hours
+per task at 50 demonstrations, as shown in Fig. 6A and broken down in Fig. 6B.HOST, by contrast, reduces this
+collectiontoasinglehumanvideorecordingandremovesofflinefine-tuningentirely, makingeachskillavailable
+as soon as the video is recorded.HOSTcompresses the time it takes to acquire each skill to approximately 29
+7
+
+--- Page 8 ---
+
+Fig. 4 HOST acquires manipulation skills from a single human video across 50 novel manipulation tasks.The 50
+novel manipulation tasks span varied objects, tools and manipulation primitives.HOSTacquires each skill from a single
+human video demonstration at inference time.
+seconds on average, 507 times faster than even the fastest SFT baseline,𝜋0.5+SFT, which requires 4.0 hours.
+The per-task comparison in Fig. 6C confirms this gap holds consistently across individual tasks.
+2.6 Retention of Previously Mastered Skills
+We further verify thatHOSTacquires a new skill without eroding those already mastered, using the seven
+previously mastered tasks drawn from the training set and illustrated in Fig. 7B. For each method, we measured
+thesuccessrateonthesetasksbeforeandafteradaptingtoanoveltask, asreportedinFig.7A.Beforeadaptation,
+HOSTand the imitation learning baselines achieve comparable success rates on these tasks.HOSTattains the
+highest average from only a single video demonstration, as revealed in Fig. 7A and B. All three SFT baselines
+decline substantially from this comparable starting success rate after adaptation, with𝜋0.5+SFT retaining
+just 17% of its original performance at 50 demonstrations per task,HOST-base+SFT retaining 21%, and
+Wall-OSS+SFT retaining 40%, the highest retention among the three.HOST, by contrast, acquires each new
+8
+
+--- Page 9 ---
+
+Stack potsCover book Fold socksInsert pen
+Place fruits Pick pen Stack bowls Wipe plate
+Fig. 5 Success rates on novel manipulation tasks. HOSTacquires each skill from a single human video without any
+parameter update across novel tasks whose manipulation skills are absent from the training data, each evaluated over
+20 trials.HOSTis compared against OSVI baselines (Vid2Robot, AWDA) and language-conditioned imitation learning
+baselines (𝜋0.5, Wall-OSS,HOST-base) evaluated zero-shot from the instruction, exceeding the strongest baseline average
+by 43%, with the best result per task marked inbold.
+skill from the video without updating any parameters and retains that success rate afterward, with only a
+small residual difference arising from ordinary trial-to-trial variation.HOSTexceeds even the SFT baseline
+with the highest retention by 59%.HOSTthus retains previously mastered skills where fine-tuning erodes
+them.
+2.7 Robustness under Deployment Perturbations
+We evaluate the robustness ofHOSTto four perturbations that increase the gap between the deployment
+environment and the video demonstration. Three perturbations alter the deployment environment, shifting
+lighting and color, substituting out-of-distribution objects, or replacing the scene. The fourth disrupts execution
+directly, with a person physically displacing an object while the robot is executing the task.HOSTretains
+the great majority of its default success rate of 62% under all four conditions, as reported in Fig. 8. The
+performance loss increases with the severity of the perturbation, from 1% under lighting shifts to 4% under
+9
+
+--- Page 10 ---
+
+Fig. 6 HOST surpasses supervised fine-tuning in success rate, data efficiency and time efficiency.(A) Success rates
+on novel tasks and the time to acquire each skill for each SFT baseline at 10, 20 and 50 demonstrations per task, compared
+against the success rate and acquisition time ofHOSTfrom a single human video. (B) Qualitative illustration depicting the
+composition of the time to acquire each skill for𝜋0.5+SFT as a representative baseline, split between data collection and
+offline fine-tuning at 10, 20 and 50 demonstrations per task, compared against the timeHOSTtakes to acquire a skill from
+a single human video. (C) Per-task success rates and the time to acquire each skill for each SFT baseline trained on 50
+demonstrations per task, compared againstHOSTfrom a single human video.
+object substitution, 6% under scene replacement, and 9% under human disturbance during execution. Unlike
+the other three perturbations, the human disturbance occurs during execution itself, requiringHOSTto
+autonomously correct its course in response to an unexpected change. The per-task breakdown confirms that
+this resilience is broadly distributed. This robustness demonstrates thatHOSTaccurately localizes the current
+stage of robot execution within the video demonstration even when a human disturbance during execution
+shifts its task progress, and translates the upcoming progression of the video demonstration into corresponding
+robot behavior despite the state discrepancies introduced by changes in objects, scene, and lighting.
+10
+
+--- Page 11 ---
+
+Fig. 7 HOST retains its performance on previously mastered tasks while supervised fine-tuning erodes it.(A) Success
+rate on previously mastered tasks forHOSTand each SFT baseline before and after acquiring a novel task, across
+demonstration budgets. Left, absolute success rate. Right, the percentage of performance retained relative to before
+acquisition. (B) Per-task success rate on the seven previously mastered manipulation tasks, comparingHOSTagainst each
+SFT baseline before and after acquiring a novel task, across demonstration budgets.
+11
+
+--- Page 12 ---
+
+Fig.8 HOSTremainsrobusttodeploymentperturbations. HOSTmaintains strong performance under lighting variation,
+out-of-distribution objects, scene replacement, and human disturbance during execution, illustrated alongside the resulting
+average and per-task success rates on novel tasks under each condition.
+2.8 Coupling Prediction Targets to the Demonstration
+HOSTcouples each prediction target to the video demonstration, so that each target segment of the robot
+trajectory corresponds to the future evolution of the video demonstration. Fig. 9 visualizes the alignment
+between the video demonstration and the robot trajectory, validates it against human annotations, and
+quantifies the contribution of each coupling ingredient to performance on novel tasks, the same held-out tasks
+evaluated in Fig. 5.
+Progress alignment and target coupling.Coupling each prediction target to the video demonstration
+requires establishing frame-level correspondence between the robot trajectory and the video demonstration.
+One direct approach, correspondence based on clock time, matches frames by their relative position in
+time.HOSTinstead aligns frames by task progress on a shared manifold, learned self-supervised without
+frame-level annotation. Fig. 9A indicates that this progress alignment recovers frame-level correspondence
+between the video demonstration and the robot trajectory, whereas correspondence based on clock time
+yields frames from mismatched task stages. Fig. 9B demonstrates thatHOSTcouples each prediction target
+to the upcoming progression of the video demonstration using this correspondence. Fig. 9C reveals that
+the frame indices recovered by progress alignment scatter around but not on the identity diagonal across
+paired training trajectories, confirming that correspondence based on clock time is structurally insufficient.
+Fig. 9D establishes that correspondence based on clock time yields a mean absolute progress difference of
+0.079 ±0.062 from human-annotated reference points, compared with 0.006±0.008 for progress alignment.
+This order-of-magnitude improvement confirms the reliability of the self-supervised alignment module.
+Ablation of coupling variants.Fig. 9E ablates each coupling ingredient in turn, isolating its contribution
+to performance on novel tasks. Conditioning the model on the entire video demonstration reaches 0.21.
+Restricting the model to a video demonstration window chosen by timestamp raises this to 0.29, a modest
+gain limited by the temporal asynchrony between the video demonstration and the robot trajectory, which
+12
+
+--- Page 13 ---
+
+A
+B C
+D E
+Human
+Video
+Robot
+Trajectory
+Aligned
+Robot
+Trajectory
+Robot observation Prediction target of the robot trajectory
+Future progression of the video demonstration
+Human
+Video
+Aligned
+Robot
+Trajectory
+Fig. 9 Coupling prediction targets to the demonstration turns the video demonstration from a passive conditioning
+signal into the active driver of the robot’s prediction.(A) Progress alignment on a shared task progress manifold
+recovers frame-level correspondence between the human video and the robot trajectory, whereas sampling based on
+clock time yields mismatched stages. (B) Each robot prediction target is coupled to the upcoming progression of the
+demonstration. (C) Aligned frame indices across paired training trajectories scatter around but not on the identity diagonal,
+confirming that correspondence based on clock time is insufficient and alignment is necessary. (D) Progress alignment
+reduces the mean absolute progress error at human-annotated events from 0.079 under matching based on clock time to
+0.006, an order-of-magnitude improvement. (E) Each coupling ingredient contributes substantially to performance on
+novel tasks.
+often causes a timestamp-matched window to reflect a stage that the robot has not reached. Selecting the
+window by task progress on a shared manifold instead raises performance to 0.45, supplying the segment
+that matches the current execution stage. Coupling the prediction target to the future evolution of the video
+demonstration rather than to a fixed temporal offset along the execution trajectory further raises performance
+to 0.62, recovering the full model, with each ingredient in the coupling mechanism proving necessary for
+performance on novel tasks.
+13
+
+--- Page 14 ---
+
+2.9 Resolving Execution through Self-Grounded Prediction
+HOSTresolves execution through self-grounded prediction, a causal cascade within a single autoregressive
+model that first localizes the robot’s current stage within the video demonstration, then translates its upcoming
+progression into the robot’s own future observations, and finally derives actions from these predicted observa-
+tions. We quantify the contribution of each stage by introducing it in turn to a baseline that predicts action
+directly, as reported in Fig. 10A, with novel tasks drawn from Fig. 5. We then evaluate the accuracy of the
+localization stage and the quality of the predicted future observations that the cascade depends on, reported
+respectively in Fig. 10B and C.
+Ablationofself-groundedprediction.Fig. 10A ablates each stage of self-grounded prediction in turn, isolating
+its contribution to performance on novel tasks. A baseline that maps the video demonstration directly to robot
+actions, without any intermediate stage, reaches 0.34. This baseline retains coupling prediction targets to the
+demonstration, with self-grounded prediction therefore building further gains on top of target coupling. A
+localization stage raises success on novel tasks to 0.43, and a visual prediction stage running alongside action
+raises it further to 0.55. A causal cascade that derives actions from the predicted future observations raises
+performance to 0.62 and recovers the full model.
+Localization accuracy.We evaluate localization accuracy on the novel tasks, using ground-truth progress
+values provided by the alignment module. The predicted progressˆ𝑝𝑡 closely tracks the ground-truth𝑝𝑡 across
+all steps, as presented in Fig. 10B, with a mean absolute error of 0.013 in normalized progress. This error stays
+consistently small throughout, indicating that the localization stage tracks the progress of the robot within the
+video demonstration reliably.
+Visual prediction quality.Fig. 10C presents qualitative visual predictions on novel tasks. The predicted
+future observations follow the behavior demonstrated in the human video and translate it into the robot’s own
+embodiment and deployment scene. This translation remains accurate across variations in object appearance
+and initial configuration, demonstrating the reliability of self-grounded prediction under variations in scene,
+viewpoint, and embodiment encountered at deployment.
+2.10 Effect of Same-Embodiment Pretraining
+HOSTuses same-embodiment robot–robot pairs in Stage 1 to build the capacity to follow a demonstrated
+procedure, which Stage 2 then adapts to human video demonstrations using a smaller set of human–robot
+pairs. To quantify the contribution of this pretraining to skill acquisition from a single human video, we train
+variants on different fractions of the Stage 1 same-embodiment data while holding the Stage 2 adaptation data
+fixed, evaluating each variant on the same held-out novel tasks listed in Fig. 5. The 0% condition, trained only
+on the limited Stage 2 human–robot pairs, performs poorly, confirming that these pairs alone are insufficient
+to build the capacity to follow a demonstrated procedure. As reported in Fig. 10D, success on novel tasks
+then increases monotonically as the volume of Stage 1 data grows. A larger volume of same-embodiment
+pretraining data exposes the model to a wider range of robot states and object configurations, strengthening
+its capacity to localize progress within a video demonstration, translate its upcoming progression into the
+robot’s own future observations, and derive actions from those predicted observations. Stage 2 then adapts
+these capacities from robot videos to human video demonstrations. Same-embodiment pretraining therefore
+supplies the capacity needed for skill acquisition from a single human video, reducing reliance on scarce
+human–robot paired data.
+2.11 Persistence of Acquired Skills across Recurring Tasks
+HOSTacquires each novel skill from a single human video. This video can then be stored and retrieved
+without repeated human involvement, enabling the acquired skill to persist across recurring tasks.HOSTthus
+accumulates these stored videos into a reusable store of previously acquired skills. We evaluate this persistence
+mechanism along three dimensions. We measure its accuracy in retrieving the correct video for a recurring
+task, its reliability in recognizing a genuinely novel task and requesting a new human video, and its execution
+reliability with a retrieved video relative to a freshly recorded one.
+14
+
+--- Page 15 ---
+
+A B
+C
+D E
+Human video Human video
+Visual prediction Visual prediction
+Fig. 10 Resolving execution through self-grounded prediction improves performance on novel tasks at each stage,
+same-embodiment pretraining scales skill acquisition from human video, and acquired skills persist across recurring
+tasks.(A) Ablation of resolving execution through self-grounded prediction. Each added stage raises performance on novel
+tasks. (B, C) Localization accuracy and visual prediction quality. Predicted progress positions closely track ground-truth
+values across all steps, and the model adapts the demonstrated behavior to the robot’s own embodiment and deployment
+scene. (D) Success on novel tasks increases monotonically with Stage 1 same-embodiment pretraining data volume, with
+Stage 2 adaptation data held fixed. (E) Retrieval and execution reliability. Recall of recurring tasks and recognition of
+novel tasks are jointly high across a broad range of similarity thresholds, and execution from a retrieved demonstration
+matches the performance of a freshly provided one.
+15
+
+--- Page 16 ---
+
+Retrieval reliability.Each video demonstration is stored together with its task instruction and initial scene,
+enabling later encounters of the same or a similar task to retrieve it directly. Each requested task is posed
+as a query. Its instruction and current scene are compared with every stored entry through the weighted
+combination of instruction and scene similarity defined in Eq. 20. The entry with the highest score above a
+threshold 𝛿 is retrieved.HOSToperates at a single fixed threshold𝛿★ across all tasks, retrieving the correct
+stored video for a recurring task and recognizing a genuinely novel task, requesting a new human video instead,
+as shown in Fig. 10E. This threshold balances two error modes, a value set too low admits false matches that
+reuse an unrelated stored video, whereas a value set too high rejects valid matches and triggers unnecessary
+requests for a new human video. Retrieval accuracy and recognition of novel tasks remain high across a wide
+band of thresholds separating these two failure modes, and𝛿★ is chosen well within that band. This wide
+margin keepsHOSTreliable regardless of the exact choice of𝛿.
+Execution reliability from retrieved videos.Recurring tasks proceed without repeated human involvement,
+which requires retrieval to both locate the correct video and support execution as reliable as a freshly recorded
+one.HOSTacquires and executes each skill without any parameter update, and retrieval therefore substitutes
+only the source of the video demonstration, with the same frozen model processing it exactly as it would a
+freshly recorded video. Fig. 10E compares execution driven by a retrieved video with execution driven by a
+freshly recorded video on both previously mastered and novel tasks. The corresponding success rates match
+theHOSTaverages reported in Figs. 7 and 5. The two settings achieve comparable performance with only a
+small residual gap.
+3 Discussion
+The ability to acquire new skills rapidly and effortlessly while retaining those already mastered is essential for
+robots operating in human environments. However, current methods still acquire each new skill through a
+cumbersome training-time loop that is costly, slow and self-defeating. Collecting task-specific demonstrations
+consumes expert labor and scarce robot time, offline fine-tuning extends over hours before each new skill
+becomes available, and updating the shared policy parameters erodes skills already mastered. We therefore
+proposeHOST, which moves novel skill acquisition from this loop to inference. From a single human video,
+HOSTacquires each new skill and executes it without any parameter update.
+Realizing this paradigm, however, confronts a fundamental problem rooted in the structural mismatch between
+video demonstration and execution. Temporal asynchrony between the video demonstration and the robot
+execution decouples the prediction target from the video demonstration. State discrepancies in embodiment,
+viewpoint and appearance further hinder translating the observed behavior into action. Addressing this
+mismatch calls for a new formulation of how a robot acquires a skill from a demonstration. The central idea
+ofHOSTis to treat skill acquisition as a process driven by the video demonstration and resolved through
+self-grounded prediction, built on two principles. First, the video demonstration actively determines the robot’s
+prediction target.HOSTcouples this target to the upcoming progression of the video demonstration on a
+shared task progress manifold, turning the video into the active driver of the robot’s prediction. Second,HOST
+resolves execution through a causal cascade of self-grounded prediction. This cascade first localizes where the
+robot stands within the demonstrated procedure, then translates its upcoming progression into the robot’s
+own future observations, and finally derives actions from these predicted observations.HOSTthereby enables
+the robot to actively follow the demonstrated procedure and adapt it to the robot’s own embodiment.
+HOSTacquires manipulation skills in seconds from a single human video, while retaining those already
+mastered.HOSTreaches 62% average success on novel tasks without any parameter update, acquiring each
+skill in approximately 29 seconds.HOSTexceeds the strongest one-shot visual imitation baseline by 43% even
+though that baseline receives the same single human video, and the strongest zero-shot imitation learning
+baseline by 45%. Even compared with the strongest baseline fine-tuned on 50 robot demonstrations per task,
+HOSTachieves superior performance while using 50 times fewer demonstrations and acquiring each new skill
+507 times faster. This performance does not come at the cost of previously mastered skills.HOSTretains these
+skills, whereas even the strongest fine-tuned baseline retains only 40% of its original performance. A human
+video can also be stored and retrieved to support recurring tasks without repeated human involvement.
+16
+
+--- Page 17 ---
+
+HOSTmay also point toward a new possibility for skill acquisition in embodied agents. A robot could
+autonomously and continually learn new skills by observing the people around it. For example, a household
+robot could observe the people it lives with, while a factory robot could observe nearby workers. Realizing
+this requires two capabilities, learning new skills directly from human video and continuing to acquire them
+over time.HOST, built on coupling prediction targets to the demonstration and resolving execution through
+self-grounded prediction, operates directly on human video and enables the robot to actively follow the
+observed activity and adapt it to its own embodiment without any parameter update. This allows a robot to
+learn new skills directly from human video at low cost. Each video keeps the acquired skill in external context
+rather than encoding it in the policy weights. This video can then be stored and retrieved without repeated
+human involvement, enabling the acquired skill to persist across recurring tasks. A robot can thus accumulate
+these stored demonstrations without eroding previously acquired skills, continuing to acquire new skills over
+time.
+Despite its contributions, this work has several limitations that warrant further investigation. First, our
+evaluations are conducted on a single bimanual manipulation platform, andHOSTremains untested on robots
+that differ substantially in embodiment. Training on human–robot paired data from a wider range of robots
+would extendHOSTto these platforms. Second, video demonstrations capture the manipulation procedure
+without conveying the contact forces relevant to fine-grained manipulation (43). Capturing these contact
+forces, for instance with wearable sensors such as tactile gloves, is a promising direction for future iterations.
+Finally,HOSTretrieves stored demonstrations by combining instruction and scene similarities between each
+stored demonstration and the requested task. As the memory grows, this similarity may not reliably separate
+tasks whose instructions and scenes differ only subtly, and capturing these finer distinctions is a direction for
+future work.
+4 Methods
+4.1 Problem Formulation and Method Overview
+Problem formulation.Let M=M train ∪ Mtest denote a set of manipulation tasks partitioned into disjoint
+training and testing subsets. Each task𝑚∈ M train is associated with a language instructionℓ, a set of video
+demonstrations {𝜏𝑑
+𝑖 }𝑁 𝑑
+𝑖=1, and a set of robot trajectories{𝜏𝑟
+𝑗}𝑁 𝑟
+𝑗=1 that accomplish the same manipulation goal
+under potentially different embodiments and scene configurations. A video demonstration𝜏𝑑
+𝑖 ={𝑜 𝑑
+𝑡 }𝑇𝑖
+𝑡=1
+records a demonstrator performing the task as a sequence of𝑇𝑖 visual observations, with𝑜𝑑
+𝑡 ∈ O 𝑑. A robot
+trajectory 𝜏𝑟
+𝑗 ={(𝑜 𝑟
+𝑡 , 𝑠𝑟
+𝑡 , 𝑎𝑡)}
+𝑁 𝑗
+𝑡=1 records the robot carrying out the same task and comprises observations𝑜𝑟
+𝑡 ∈ O 𝑟,
+proprioceptive states𝑠𝑟
+𝑡 ∈ S, and executed actions𝑎𝑡 ∈ A. Although a video demonstration and a trajectory
+realize the same manipulation goal, they differ in length, with𝑁 𝑗 generally differing from𝑇𝑖, and may further
+differ in viewpoint, embodiment, execution dynamics, scene layout, and object instance. The model, trained on
+Mtrain, is evaluated on a disjoint test setMtest, where each task provides only a single video demonstration. The
+objective is to learn a policy𝜋𝜃(𝑎𝑡 |𝜏 𝑑, ℓ, 𝑜𝑟
+𝑡-𝐾:𝑡 , 𝑠𝑟
+𝑡 ) that, given a video demonstration, a language instruction,
+recent observations and the current proprioceptive state of the robot, generalizes to novel tasks without
+parameter updates, thereby enabling inference-time skill acquisition while preserving previously learned
+capabilities.
+Method overview. HOSTis built on a mechanistic view of skill acquisition from a single video demonstration.
+Such a video demonstration does not directly specify the actions for robot execution, and a structural mismatch
+exists between the video demonstration and robot execution. The video demonstration and robot execution
+unfold asynchronously, decoupling the prediction target from the video demonstration and relegating it to a
+passive context. The video demonstration and the robot trajectory also differ in embodiment, viewpoint and
+appearance, and these discrepancies hinder the direct translation of the observed behaviour into robot action.
+As illustrated in Fig. 2,HOSTcomprises two core mechanisms, coupling prediction targets to the demonstration
+and resolving execution through self-grounded prediction, that together resolve the structural mismatch
+between the video demonstration and robot execution. First, it couples the prediction target at each robot
+timestep to the upcoming progression of the video demonstration (Sec. 4.2), through a monotonic frame-level
+17
+
+--- Page 18 ---
+
+correspondence that maps the video demonstration and the robot trajectory onto a shared task progress
+manifold, learned self-supervised without frame-level annotation. Second, it predicts the target through a
+cascade of self-grounded prediction (Sec. 4.3). Given a video demonstration, recent robot observations𝑜𝑟
+𝑡-𝐾:𝑡
+and state 𝑠𝑟
+𝑡, and an optional language instructionℓ, it first localizes the robot’s current stage within the
+video demonstration, then translates its upcoming progression into the robot’s own future observations, and
+finally derives robot actions. It is pretrained on large-scale same-embodiment paired data and adapted to
+human-to-robot scenarios with a small set of human–robot pairs.
+After training,HOSTis able to acquire novel skills from a single human video demonstration at inference time.
+Given a single human video of an unseen task, the video drives the same coupled, self-grounded prediction,
+and the robot acts without any parameter update. A new skill therefore enters through the video at inference
+time, relocating skill acquisition from the training-time loop to inference.
+4.2 Coupling Prediction Targets to the Demonstration
+A video demonstration and a robot execution of the same task are not temporally synchronized, unfolding as
+two independent processes at different speeds. This decouples the prediction target, tied to progress along the
+robot trajectory, from the video demonstration content, relegating the video demonstration to a passive context
+and hindering the model from acquiring novel skills from the video demonstration at inference time. We
+address this by coupling prediction targets to the demonstration. The prediction target at each robot timestep
+is redefined as a dynamic segment of the robot’s own future trajectory, which step-wise corresponds to the
+upcoming evolution of the video demonstration. These coupled targets are constructed from a monotonic
+frame-level correspondence recovered by an alignment module, trained self-supervised on same-task trajectory
+pairs from Mtrain with Smooth Dynamic Time Warping (44) and temporal cycle-consistency (45), without
+frame-level annotation.
+Task progress alignment.Given a video demonstration𝜏𝑑 ={𝑜 𝑑
+𝑡 }𝑇
+𝑡=1 and a robot trajectory𝜏𝑟 ={𝑜 𝑟
+𝑡 }𝑁
+𝑡=1 of
+the same task, a shared frame embedding model𝑓𝜙, built on Qwen3-VL-Embedding-8B (46) and trained
+end-to-end during alignment training, encodes each frame into a𝑑emb-dimensional embedding. For each
+timestep of the trajectory, multi-view observations from all cameras are organized as an image sequence and
+fed to the model, with an [EOS] token appended at the end. The per-timestep representationℎ𝑡 ∈ℝ 𝐷 is
+derived from the hidden state of the last layer corresponding to this [EOS] token. A linear projection followed
+byℓ 2 normalization mapsℎ𝑡 into a𝑑 emb-dimensional embeddinge𝑡:
+ℎ𝑡 =𝑓 𝜙 (𝑜𝑡),e 𝑡 = 𝑃ℎ𝑡
+∥𝑃ℎ 𝑡 ∥2
+,(1)
+where 𝑃∈ℝ 𝑑emb ×𝐷 is a learnable projection matrix. Applying the same model to the video demonstration
+and the robot trajectory yields embedding sequencesd={ d1, . . . , d𝑇 } andr ={ r1, . . . , r𝑁 } of lengths𝑇 and 𝑁,
+respectively.
+A pairwise similarity matrix𝑆∈ℝ 𝑇×𝑁 is computed from the negative squared L2 distance between embeddings,
+scaled by a temperature parameter𝜅. Column-wise log-softmax normalization (44) then converts𝑆 into a
+pairwise cost matrix𝐶, controlled by a column-normalization temperature𝛾𝑓:
+𝑆𝑖 𝑗 =−∥d 𝑖 −r 𝑗 ∥2/𝜅, 𝑐(𝑖, 𝑗)=−log exp(𝑆 𝑖 𝑗/𝛾 𝑓 )
+Í𝑇
+𝑘=1 exp(𝑆 𝑘 𝑗/𝛾 𝑓 )
+.(2)
+Smooth Dynamic Time Warping (44) then recovers monotonic soft matching probabilities from the cost matrix
+through a forward–backward dynamic programming procedure. The forward pass computes a cumulative cost
+table𝑅, in which𝑅(𝑖, 𝑗)is the cost of the optimal monotonic path from(1,1)to(𝑖, 𝑗):
+𝑅(𝑖, 𝑗)=𝑐(𝑖, 𝑗) +smoothMin  
+𝑅(𝑖−1, 𝑗−1), 𝑅(𝑖−1, 𝑗), 𝑅(𝑖, 𝑗−1);𝛾
+
+,(3)
+where smoothMin is a differentiable approximation to the minimum operator, parameterized by a smoothness
+constant𝛾 >0that reduces to the hard minimum as𝛾→0:
+smoothMin(a;𝛾)=
+Í
+𝑘 𝑎𝑘 exp(−𝑎 𝑘/𝛾)Í
+𝑙 exp(−𝑎 𝑙/𝛾) .(4)
+18
+
+--- Page 19 ---
+
+The backward pass computes𝐸 analogously, in which𝐸(𝑖, 𝑗) is the cost of the optimal monotonic path from
+(𝑖, 𝑗) to (𝑇, 𝑁) . The soft matching probabilities are obtained by combining𝑅 and 𝐸 and normalizing each row:
+𝛽𝑑→𝑟
+𝑖 𝑗 = exp −𝛾 −1 (𝑅(𝑖, 𝑗) +𝐸(𝑖, 𝑗)) 
+Í𝑁
+𝑘=1 exp −𝛾 −1 (𝑅(𝑖, 𝑘) +𝐸(𝑖, 𝑘))  ,(5)
+where 𝛽𝑑→𝑟
+𝑖 𝑗 represents the probability that timestep𝑖 ofdcorresponds to timestep 𝑗 ofr. The monotonic
+transition structure in Eq. 3, which only permits advancing along𝑖, 𝑗, or both, constrains𝛽𝑑→𝑟 to concentrate
+on temporally ordered correspondences. The reverse matching probabilities𝛽𝑟→𝑑 ∈ℝ 𝑁×𝑇 are computed
+analogously from𝑆⊤.
+Coupling prediction targets to the demonstration.The monotonic transition structure of Smooth DTW
+encourages the learned matching distributions to concentrate along temporally ordered paths. This struc-
+ture allows direct extraction of bidirectional frame correspondences through rowwise maximum probability
+assignment.
+𝜋𝑟→𝑑 (𝑡)=arg max
+𝑗
+𝛽𝑟→𝑑
+𝑡 𝑗 , 𝜋 𝑑→𝑟 (𝑡)=arg max
+𝑗
+𝛽𝑑→𝑟
+𝑡 𝑗 .(6)
+For a robot at timestep𝑡, the mapping𝜋𝑟→𝑑 locates the video demonstration frame corresponding to the
+current execution stage. The 𝐻 video demonstration frames following this position define the upcoming
+video demonstration segment. Mapping each of these frames back to the robot trajectory via𝜋𝑑→𝑟 yields 𝐻
+corresponding robot timesteps, and the robot trajectory segmentT𝑡 at these timesteps constitutes the prediction
+target:
+𝑡𝑖 =𝜋 𝑑→𝑟 
+𝜋𝑟→𝑑 (𝑡) +𝑖
+
+, 𝑖=0,1, . . . , 𝐻−1,T 𝑡 ={𝜏 𝑟
+𝑡0 , . . . , 𝜏𝑟
+𝑡𝐻−1 }.(7)
+Since the mappings are monotonic, the target comprises an ordered sequence of aligned robot timesteps
+whose temporal extent is determined by the alignment.
+This formulation strictly binds the prediction targetT𝑡 to the video demonstration, withT𝑡 directly defined by
+the video demonstration segment{𝑜𝑑
+𝜋𝑟→𝑑 (𝑡) , . . . , 𝑜𝑑
+𝜋𝑟→𝑑 (𝑡)+𝐻−1 }. To reduce encoding cost and enable the model to
+attendtothevideodemonstrationcontentmostrelevanttothecurrentrobotstate, aslidingwindow W of 𝐿≥𝐻
+video demonstration frames centered around the coupled segment is randomly selected and fed to the model
+in place of the full video demonstration𝜏𝑑. The current progress of the robot withinW is recorded as a scalar
+localization label 𝑝𝑡, supervising the model to localize its current task stage within the video demonstration
+window and adaptively extract the relevant segment, which further enables autonomous window advancement
+at inference time. Each training sample is formally defined as a tuple(W, 𝑜 𝑟
+𝑡−𝐾:𝑡 , 𝑠 𝑟
+𝑡 , ℓ, 𝑝 𝑡,T 𝑡), where T𝑡
+comprises a future observation componentT 𝑜
+𝑡 ={𝑜 𝑟
+𝑡0 , . . . , 𝑜𝑟
+𝑡𝐻−1 } and an action componentT 𝑎
+𝑡 ={𝑎 𝑡0 , . . . , 𝑎𝑡𝐻−1 }.
+Self-supervised alignment objective.To optimize the embedding network in a self-supervised manner and
+obtain accurate matching probabilities𝛽, two complementary losses are applied. We describe the𝑑→𝑟
+direction below. The reverse direction follows by symmetry.
+A temporal cycle-consistency loss (45) enforces frame-level correspondence by constraining each frame to cycle
+back to itself, matched to its nearest neighbor in the other sequence and then matched back. The loss penalizes
+the temporal deviation between the original frame and the cycled-back frame. For each video demonstration
+framed 𝑖, the soft nearest neighbor˜r𝑖 inrand the cycle-back distribution ˆ𝛽𝑖 overdare computed as:
+˜r𝑖 =
+𝑁∑︁
+𝑗=1
+𝛽𝑑→𝑟
+𝑖 𝑗 r 𝑗, ˆ𝛽𝑖𝑘 = exp(˜r⊤
+𝑖 d𝑘/𝜅)
+Í𝑇
+𝑙=1 exp(˜r⊤
+𝑖 d𝑙/𝜅)
+.(8)
+From ˆ𝛽𝑖, the cycle-back prediction𝜇𝑖 and its variance𝜈2
+𝑖 are derived, and the loss penalizes deviations of𝜇𝑖
+from the original index𝑖:
+𝜇𝑖 =
+∑︁
+𝑘
+ˆ𝛽𝑖𝑘 𝑘, 𝜈 2
+𝑖 =
+∑︁
+𝑘
+ˆ𝛽𝑖𝑘 (𝑘−𝜇 𝑖)2,L TCC = 1
+𝑇
+𝑇∑︁
+𝑖=1
+"
+(𝑖−𝜇 𝑖)2
+𝜈2
+𝑖
++𝜆log𝜈 𝑖
+#
+.(9)
+To further encourage globally coherent alignments beyond per-frame consistency, a DTW loss minimizes the
+total alignment cost between the two sequences, computed as the forward table value at the terminal cell
+normalized by sequence length:
+LDTW = 𝑅(𝑇, 𝑁)
+𝑇+𝑁 .(10)
+The two losses are symmetrized over both directions, and the total alignment loss isLalign =L TCC +𝜆 DTW LDTW.
+19
+
+--- Page 20 ---
+
+4.3 Resolving Execution through Self-Grounded Prediction
+Beyond temporal alignment, the video demonstrations and the robot trajectories differ in embodiment,
+viewpoint and appearance. Directly deriving robot actions from the video demonstration forces the model
+to resolve intractable cross-domain ambiguities, hindering translation into precise action. Inspired by the
+causal cascade of human observational learning (32, 33, 34, 35, 36, 37, 38), we propose resolving execution
+through self-grounded prediction. We localize the robot’s current progress within the video demonstration,
+translate its upcoming progression into the robot’s own future observations conditioned on the localized
+segment, and derive robot actions from these future observations. We model this causal cascade within a
+single autoregressive diffusion model, as illustrated in Fig. 2B. The generation targets are arranged in a causal
+token sequence in which each output is conditioned on all preceding ones and jointly optimized in a single
+forward pass.
+Input representation.All visual elements, including the video demonstration windowW, recent robot
+observations 𝑜𝑟
+𝑡-𝐾:𝑡, and the future observations T 𝑜
+𝑡 , are encoded into a shared latent space by the Wan
+VAE (47), yielding video demonstration tokens𝑧𝑑, robot observation tokens𝑧𝑜, and target observation tokens
+𝑦𝑜. The localization value𝑝𝑡 and the action sequenceT 𝑎
+𝑡 are projected to the hidden dimension of the model
+through separate learnable linear layers, producing a localization token𝑦 𝑝 =𝐸 𝑝(𝑝 𝑡) and action tokens𝑦𝑎. To
+implement autoregressive generation via flow matching, each generation target is represented as a token pair,
+one noisy and one clean, where the noisy token serves as the denoising input and the clean token conditions
+subsequent targets:
+𝑦 𝑝
+𝜎 =(1−𝜎)𝑦 𝑝 +𝜎 𝜖 𝑝, 𝑦 𝑜
+𝜎 =(1−𝜎)𝑦 𝑜 +𝜎 𝜖 𝑜, 𝑦 𝑎
+𝜎 =(1−𝜎)𝑦 𝑎 +𝜎 𝜖 𝑎.(11)
+The complete token sequence places the context tokens first, followed by the target pairs in causal order:
+[𝑧 𝑑 ∥𝑧 𝑜 ∥𝑦 𝑝
+𝜎 , 𝑦 𝑝 ∥𝑦 𝑜
+𝜎, 𝑦 𝑜 ∥𝑦 𝑎
+𝜎 ],(12)
+Architecture.The model adopts a dual-expert Mixture-of-Transformer (48) architecture built on the Wan
+video diffusion backbone (47). A video expert, initialized from Wan2.2 (47), handles localization and future
+observation prediction. An action expertwith the same depth but reduced hidden dimension handles action
+generation, a reduction afforded by the lower distributional complexity of actions relative to observations. The
+two experts share self-attention by concatenating their respective query, key, and value projections at each
+layer, withQve,K ve,V ve for the video expertandQae,K ae,V ae for the action expert:
+Q=[Q ve |Q ae],K=[K ve |K ae],V=[V ve |V ae],(13)
+The joint attention output is then split and processed by expert-specific feed-forward networks. Both experts
+additionally receive a cross-attention conditioning sequence𝑐 at every layer, consisting of the language
+instruction encoded by the UMT5-XXL text encoder (49) and the proprioceptive state𝑠𝑟
+𝑡 projected via a
+learnable matrix𝑀 𝑠:
+𝑐=[UMT5(ℓ) |𝑀 𝑠 𝑠𝑟
+𝑡 ].(14)
+Autoregressive causal structure.The causal order among the localization token, the future observation
+tokens, and the action tokens is enforced through the self-attention mask. Each noisy target token attends
+to the video demonstration tokens𝑧𝑑, the robot observation tokens𝑧𝑜, and the clean tokens of all preceding
+targets, while attention to concurrent and subsequent targets is blocked. During training, the clean tokens are
+set to ground-truth representations, and gradients through the clean tokens are detached so that gradients
+from each target loss do not propagate through preceding clean targets. The localization, observation, and
+action tokens are therefore optimized jointly in a single forward pass. To bridge the gap between training and
+inference, the ground-truth localization value and future observations serving as clean tokens are augmented
+with small-magnitude Gaussian noise during training.
+Training objective.The model predicts a velocity for the noisy token of each target following the causal order
+established above, denotedˆ𝑣𝑝, ˆ𝑣𝑜 and ˆ𝑣𝑎 for the localization, observation and action targets. Each is trained
+with a flow matching objective (50) that compares the predicted velocity against the target:
+Lloc =
+ˆ𝑣𝑝 − (𝜖 𝑝 −𝑦 𝑝)
+2 ,
+Lobs = ∥ˆ𝑣𝑜 − (𝜖 𝑜 −𝑦 𝑜)∥2 ,(15)
+Lact = ∥ˆ𝑣𝑎 − (𝜖 𝑎 −𝑦 𝑎) ∥2 .
+20
+
+--- Page 21 ---
+
+The total training loss is formulated as:
+L=𝜆 𝑝Lloc +𝜆 𝑜Lobs +𝜆 𝑎Lact.(16)
+4.4 Training and Inference
+Two-stage training.Human–robot paired data would directly supervise the re-expression of a demonstrated
+procedure across embodiment, but such data remain scarce, impeding the development of reliable skill
+acquisition from a single human video.HOSTinstead develops the capacity to follow a demonstrated procedure
+first, then adapts it to human video demonstrations through a two-stage training protocol that reduces reliance
+on this scarce supervision. Stage 1 develops this capacity from readily available same-embodiment robot–robot
+pairs, and Stage 2 adapts it to human video demonstrations with a smaller set of human–robot pairs.
+In Stage 1,HOSTis pretrained on large-scale same-embodiment robot–robot pairs. Different executions of the
+same task provide natural supervision for prediction conditioned on a video demonstration, with one trajectory
+serving as the video demonstration and another providing the robot’s own future observations and actions.
+This stage teaches the model to localize progress, predict future observations and generate actions conditioned
+on a demonstrated procedure, without requiring cross-embodiment transfer. The video demonstrations used
+in this stage are exclusively robotic.
+In Stage 2, the pretrained model is adapted with a smaller collection of human–robot paired demonstrations.
+The prediction targets remain drawn from the robot’s own future trajectory, whereas the conditioning video
+demonstration is drawn from human video. This stage adapts the mechanism learned from robot–robot pairs to
+the harder setting in which task structure must be recovered across discrepancies that extend beyond viewpoint
+and appearance to a further difference in embodiment. Both stages optimize the same objective in Eq. 16,
+allowing the model to reuse the same self-grounded prediction across same-embodiment and cross-embodiment
+settings.
+The alignment module described in Sec. 4.2 is pretrained on paired same-task trajectories spanning both
+same-embodiment and cross-embodiment settings. Once trained, it is used to construct training samples for
+the policy model, with prediction targets coupled to the video demonstration.
+Inference-time skill acquisition.After training,HOSTacquires each new skill at inference time from a video,
+which serves as an external specification of the task and drives execution without any per-task training. Given
+a video demonstration𝜏𝑑 and a language instructionℓ, the model initializes the video demonstration window
+at frame index𝑤0 = 0and repeatedly performs the same causal inference loop, localizing the robot’s current
+progress within the video demonstration, predicting the robot’s own future observations from the upcoming
+progression of the video demonstration, and generating an action chunk to realize those observations. The
+video demonstration window is advanced according to the predicted progress, allowing the robot to follow the
+demonstrated task structure.
+At step𝑡, the model receives the current video demonstration windowW𝑡, recent robot observations𝑜𝑟
+𝑡−𝐾:𝑡 ,
+proprioceptive state𝑠𝑟
+𝑡 and language instructionℓ. The localization token𝑦 𝑝, the future observation tokens
+𝑦𝑜 and the action tokens𝑦𝑎 are generated sequentially from noise, with each completed output conditioning
+subsequent targets:
+ˆ𝑦𝑖 =Denoise(𝑧 𝑑, 𝑧𝑜, 𝑐,ˆ𝑦<𝑖), 𝑖∈ {𝑝, 𝑜, 𝑎},(17)
+where ˆ𝑦<𝑖 denotes the preceding generated outputs in the causal order𝑝→𝑜→𝑎 . Each denoising process
+can use an independently configured number of steps.
+The generated localizationˆ𝑦𝑝 indicates the relative progress of the robotˆ𝑝𝑡 within the current video demonstra-
+tion window. This relative position is converted into an absolute frame indexˆ𝑞𝑡 in the full video demonstration,
+and the next window is centered on this estimate:
+ˆ𝑞𝑡 =𝑤 𝑡 + ⌊ˆ𝑝𝑡 𝐿⌋, 𝑤 𝑡+1 =ˆ𝑞𝑡 − ⌊𝐿/2⌋.(18)
+Here 𝑤𝑡 is the start frame index ofW𝑡 in 𝜏𝑑. The predicted action chunkˆ𝑦𝑎 is executed for𝐻 steps, after
+which the loop continues with the updated windowW𝑡+1.
+Persistence across recurring tasks. HOSTacquires and executes each novel task from a single video
+demonstration 𝜏𝑑. Each video demonstration is preserved in a demonstration memoryB together with its
+21
+
+--- Page 22 ---
+
+task instruction and initial scene, enabling a subsequent encounter of the same or a similar task to retrieve
+it directly without repeated human involvement. The requested task is posed as a query. Its instruction and
+current scene are compared with the stored entries, and the demonstration with the highest match score above
+a similarity threshold𝛿 is retrieved. Otherwise,HOSTrecognizes the task as genuinely novel and requests a
+new human video.
+Each video demonstration 𝜏𝑑
+𝑖 is stored in B together with its language instructionℓ𝑖, a text embedding
+𝑒text
+𝑖 ∈ℝ 𝑑emb of the instruction, and a scene embedding𝑒img
+𝑖 ∈ℝ 𝑑emb of the initial observation. Qwen3-VL-
+Embedding-8B (46) maps both modalities into a shared𝑑emb-dimensional space withℓ2 normalization:
+𝑒text
+𝑖 =
+𝑔𝜓 (ℓ𝑖)
+∥𝑔 𝜓 (ℓ𝑖) ∥2
+, 𝑒 img
+𝑖 =
+𝑔𝜓 (𝑜𝑑
+1)
+∥𝑔 𝜓 (𝑜𝑑
+1) ∥2
+,(19)
+where𝑔 𝜓 denotes the Qwen3-VL-Embedding-8B encoder and𝑜𝑑
+1 is the initial image frame of𝜏𝑑
+𝑖 .
+The requested task supplies an instructionℓ𝑞 and the current robot observation 𝑜𝑟, encoded into query
+embeddings 𝑒text
+𝑞 and 𝑒img
+𝑞 following Eq. 19. Each stored video demonstration𝜏𝑑
+𝑖 is then scored by a weighted
+combination of instruction and scene cosine similarities:
+𝑠𝑖 =𝜔cos(𝑒 text
+𝑞 , 𝑒 text
+𝑖 ) + (1−𝜔)cos(𝑒 img
+𝑞 , 𝑒 img
+𝑖 ),(20)
+where 𝜔 balances instruction and scene similarity. The video demonstration with the highest score above
+𝛿 is selected and supplied to the inference pipeline as𝜏𝑑. Otherwise,HOSTrequests a new human video to
+execute the task, which is then stored inBfor later reuse.
+References
+[1] Jemin Hwangbo, Joonho Lee, Alexey Dosovitskiy, Dario Bellicoso, Vassilios Tsounis, Vladlen Koltun, and Marco
+Hutter. Learning agile and dynamic motor skills for legged robots.Science Robotics, 4(26):eaau5872, 2019.
+[2] Joonho Lee, Jemin Hwangbo, Lorenz Wellhausen, Vladlen Koltun, and Marco Hutter. Learning quadrupedal
+locomotion over challenging terrain.Science Robotics, 5(47):eabc5986, 2020.
+[3] Tao Chen, Megha Tippur, Siyang Wu, Vikash Kumar, Edward Adelson, and Pulkit Agrawal. Visual dexterity: In-hand
+reorientation of novel and complex object shapes.Science Robotics, 8(84):eadc9244, 2023.
+[4] OpenAI, Ilge Akkaya, Marcin Andrychowicz, Maciek Chociej, Mateusz Litwin, Bob McGrew, Arthur Petron, Alex
+Paino, Matthias Plappert, Glenn Powell, Raphael Ribas, Jonas Schneider, Nikolas Tezak, Jerry Tworek, Peter
+Welinder, Lilian Weng, Qiming Yuan, Wojciech Zaremba, and Lei Zhang. Solving Rubik’s cube with a robot hand.
+arXiv preprint arXiv:1910.07113, 2019.
+[5] Dmitry Kalashnikov, Alex Irpan, Peter Pastor, Julian Ibarz, Alexander Herzog, Eric Jang, Deirdre Quillen, Ethan
+Holly, Mrinal Kalakrishnan, Vincent Vanhoucke, and Sergey Levine. QT-Opt: Scalable deep reinforcement learning
+for vision-based robotic manipulation. InConference on Robot Learning, volume 87, pages 651–673. PMLR, 2018.
+[6] Dmitry Kalashnikov, Jake Varley, Yevgen Chebotar, Benjamin Swanson, Rico Jonschkowski, Chelsea Finn, Sergey
+Levine, and Karol Hausman. Scaling up multi-task robotic reinforcement learning. InProceedings of the 5th
+Conference on Robot Learning, volume 164 ofProceedings of Machine Learning Research, pages 557–575. PMLR,
+2022. URLhttps://proceedings.mlr.press/v164/kalashnikov22a.html.
+[7] Evangelos Theodorou, Jonas Buchli, and Stefan Schaal. A generalized path integral control approach to reinforce-
+ment learning.Journal of Machine Learning Research, 11:3137–3181, 2010.
+[8] Yevgen Chebotar, Mrinal Kalakrishnan, Ali Yahya, Adrian Li, Stefan Schaal, and Sergey Levine. Path integral guided
+policy search. In2017 IEEE International Conference on Robotics and Automation (ICRA), pages 3381–3388. IEEE,
+2017. doi: 10.1109/ICRA.2017.7989384.
+[9] Yuntao Ma, Andrei Cramariuc, Farbod Farshidian, and Marco Hutter. Learning coordinated badminton skills for
+legged manipulators.Science Robotics, 10(102):eadu3922, 2025. doi: 10.1126/scirobotics.adu3922.
+[10] Jianlan Luo, Charles Xu, Jeffrey Wu, and Sergey Levine. Precise and dexterous robotic manipulation via human-in-
+the-loop reinforcement learning.Science Robotics, 10(105):eads5033, 2025. doi: 10.1126/scirobotics.ads5033.
+[11] Jose A. Barreiros, Aykut Özgün Önol, Mengchao Zhang, Sam Creasey, Aimee Goncalves, Andrew Beaulieu, Aditya
+Bhat, Kate M. Tsui, and Alex Alspach. Learning contact-rich whole-body manipulation with example-guided
+reinforcement learning.Science Robotics, 10(105):eads6790, 2025. doi: 10.1126/scirobotics.ads6790.
+22
+
+--- Page 23 ---
+
+[12] Stefan Schaal. Is imitation learning the route to humanoid robots?Trends in Cognitive Sciences, 3(6):233–242,
+1999.
+[13] Brianna Zitkovich, Tianhe Yu, Sichun Xu, Peng Xu, Ted Xiao, Fei Xia, Jialin Wu, Paul Wohlhart, Stefan Welker,
+Ayzaan Wahid, Quan Vuong, Vincent Vanhoucke, Huong Tran, Radu Soricut, Anikait Singh, Jaspiar Singh, Pierre
+Sermanet, Pannag R. Sanketi, Grecia Salazar, Michael S. Ryoo, et al. RT-2: Vision-language-action models transfer
+web knowledge to robotic control. InProceedings of The 7th Conference on Robot Learning, volume 229 ofProceedings
+of Machine Learning Research, pages 2165–2183. PMLR, 2023.
+[14] Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Robert Equi, Chelsea Finn, Niccolo Fusai, Lachy
+Groom, Karol Hausman, Brian Ichter, Szymon Jakubczak, Tim Jones, Liyiming Ke, Sergey Levine, Adrian Li-Bell,
+Mohith Mothukuri, Suraj Nair, Karl Pertsch, Lucy Xiaoyang Shi, Laura Smith, James Tanner, Quan Vuong, Anna
+Walling, Haohuan Wang, and Ury Zhilinsky.𝜋0: A vision-language-action flow model for general robot control. In
+Proceedings of Robotics: Science and Systems, Los Angeles, CA, USA, 6 2025. doi: 10.15607/RSS.2025.XXI.010.
+[15] Kevin Black, Noah Brown, James Darpinian, Karan Dhabalia, Danny Driess, Adnan Esmail, Michael Robert Equi,
+Chelsea Finn, Niccolo Fusai, Manuel Y Galliker, et al.𝜋0.5: A vision-language-action model with open-world
+generalization. In9th Annual Conference on Robot Learning, 2025. arXiv:2504.16054.
+[16] Jinda Cui and Jeff Trinkle. Toward next-generation learned robot manipulation.Science Robotics, 6(54):eabd9461,
+2021. doi: 10.1126/scirobotics.abd9461.
+[17] Cheng Chi, Siyuan Feng, Yilun Du, Zhenjia Xu, Eric Cousineau, Benjamin Burchfiel, and Shuran Song. Diffusion
+policy: Visuomotor policy learning via action diffusion. InProceedings of Robotics: Science and Systems (RSS), 2023.
+[18] Tony Z Zhao, Vikash Kumar, Sergey Levine, and Chelsea Finn. Learning fine-grained bimanual manipulation with
+low-cost hardware. InProceedings of Robotics: Science and Systems (RSS), 2023.
+[19] Anthony Brohan, Noah Brown, Justice Carbajal, Yevgen Chebotar, Joseph Dabis, Chelsea Finn, Keerthana Gopalakr-
+ishnan, Karol Hausman, Alex Herzog, Jasmine Hsu, et al. RT-1: Robotics transformer for real-world control at scale.
+InProceedings of Robotics: Science and Systems (RSS), 2023.
+[20] Open X-Embodiment Collaboration. Open X-Embodiment: Robotic learning datasets and RT-X models. In2024
+IEEE International Conference on Robotics and Automation (ICRA), pages 6892–6903. IEEE, 2024. doi: 10.1109/
+ICRA57147.2024.10611477.
+[21] Dibya Ghosh, Homer Rich Walke, Karl Pertsch, Kevin Black, Oier Mees, Sudeep Dasari, Joey Hejna, Tobias Kreiman,
+Charles Xu, Jianlan Luo, You Liang Tan, Lawrence Yunliang Chen, Quan Vuong, Ted Xiao, Pannag R Sanketi, Dorsa
+Sadigh, Chelsea Finn, and Sergey Levine. Octo: An open-source generalist robot policy. InProceedings of Robotics:
+Science and Systems, Delft, Netherlands, 7 2024. doi: 10.15607/RSS.2024.XX.090.
+[22] Irving Fang, Juexiao Zhang, Shengbang Tong, and Chen Feng. From intention to execution: Probing the generaliza-
+tion boundaries of vision-language-action models.arXiv preprint arXiv:2506.09930, 2025.
+[23] Kaustubh Sridhar et al. Ricl: Adding in-context adaptability to pre-trained vision-language-action models. In
+Conference on Robot Learning, 2025.
+[24] Jiaheng Hu, Rose Hendrix, Ali Farhadi, Aniruddha Kembhavi, Roberto Martin-Martin, Peter Stone, Kuo-Hao Zeng,
+and Kiana Ehsani. FLaRe: Achieving masterful and adaptive robot policies with large-scale reinforcement learning
+fine-tuning. In2025 IEEE International Conference on Robotics and Automation (ICRA), 2025.
+[25] Qingwei Dong, Peng Zeng, Yunpeng He, Guangxi Wan, and Xiaoting Dong. Mitigating catastrophic forgetting in
+robot continual learning: A guided policy search approach enhanced with memory-aware synapses.IEEE Robotics
+and Automation Letters, 9(12):11242–11249, 2024. doi: 10.1109/LRA.2024.3487484.
+[26] Yasuo Kuniyoshi, Masayuki Inaba, and Hirochika Inoue. Learning by watching: Extracting reusable task knowledge
+from visual observation of human performance.IEEE Transactions on Robotics and Automation, 10(6):799–822,
+1994.
+[27] Chelsea Finn, Tianhe Yu, Tianhao Zhang, Pieter Abbeel, and Sergey Levine. One-shot visual imitation learning via
+meta-learning. InConference on Robot Learning, pages 357–368. PMLR, 2017.
+[28] Tianhe Yu, Chelsea Finn, Annie Xie, Sudeep Dasari, Tianhao Zhang, Pieter Abbeel, and Sergey Levine. One-shot
+imitation from observing humans via domain-adaptive meta-learning. InProceedings of Robotics: Science and Systems
+(RSS), 2018.
+[29] Zhao Mandi, Fangchen Liu, Kimin Lee, and Pieter Abbeel. Towards more generalizable one-shot visual imitation
+learning. In2022 IEEE International Conference on Robotics and Automation (ICRA), pages 2434–2444. IEEE, 2022.
+[30] Vidhi Jain, Maria Attarian, Nikhil J Joshi, Ayzaan Wahid, Danny Driess, Quan Vuong, Pannag R Sanketi, Pierre
+Sermanet, Stefan Welker, Christine Chan, Igor Gilitschenski, Yonatan Bisk, and Debidatta Dwibedi. Vid2Robot:
+23
+
+--- Page 24 ---
+
+End-to-end Video-conditioned Policy Learning with Cross-Attention Transformers. InProceedings of Robotics: Science
+and Systems, Delft, Netherlands, July 2024. doi: 10.15607/RSS.2024.XX.052.
+[31] Raktim Goswami, Prashanth Krishnamurthy, Yann LeCun, and Farshad Khorrami. Osvi-wm: One-shot visual
+imitation for unseen tasks using world-model-guided trajectory generation. In D. Belgrave, C. Zhang, H. Lin,
+R. Pascanu, P. Koniusz, M. Ghassemi, and N. Chen, editors,Advances in Neural Information Processing Systems,
+volume 38, pages 54725–54745. Curran Associates, Inc., 2025.
+[32] Daniel L Schacter, Donna Rose Addis, and Randy L Buckner. Remembering the past to imagine the future: the
+prospective brain.Nature Reviews Neuroscience, 8(9):657–661, 2007.
+[33] Andrew N Meltzoff. Infant imitation after a 1-week delay: long-term memory for novel acts and multiple stimuli.
+Developmental Psychology, 24(4):470–476, 1988.
+[34] Samuel J Gershman and Nathaniel D Daw. Reinforcement learning and episodic memory in humans and animals:
+an integrative framework.Annual Review of Psychology, 68:101–128, 2017.
+[35] Marc Jeannerod. Neural simulation of action: a unifying mechanism for motor cognition.NeuroImage, 14(1):
+S103–S109, 2001.
+[36] Daniel M Wolpert, Kenji Doya, and Mitsuo Kawato. A unifying computational framework for motor control and
+social interaction.Philosophical Transactions of the Royal Society B: Biological Sciences, 358(1431):593–602, 2003.
+[37] Giacomo Rizzolatti, Leonardo Fogassi, and Vittorio Gallese. Neurophysiological mechanisms underlying the
+understanding and imitation of action.Nature Reviews Neuroscience, 2(9):661–670, 2001.
+[38] Giovanni Buccino, Stefan Vogt, Afra Ritzl, Gereon R Fink, Karl Zilles, Hans-Joachim Freund, and Giacomo Rizzolatti.
+Neural circuits underlying imitation learning of hand actions: an event-related fmri study.Neuron, 42(2):323–334,
+2004. doi: 10.1016/s0896-6273(04)00181-3.
+[39] Matthew Chang and Saurabh Gupta. One-shot visual imitation via attributed waypoints and demonstration
+augmentation. In2023 IEEE International Conference on Robotics and Automation (ICRA), pages 5055–5062. IEEE,
+2023.
+[40] Andy Zhai, Brae Liu, Bruno Fang, Chalse Cai, Ellie Ma, Ethan Yin, Hao Wang, Hugo Zhou, James Wang, Lights Shi,
+et al. Igniting vlms toward the embodied space.arXiv preprint arXiv:2509.11766, 2025.
+[41] Tianyuan Yuan, Zibin Dong, Yicheng Liu, and Hang Zhao. Fast-wam: Do world action models need test-time future
+imagination?arXiv preprint arXiv:2603.16666, 2026.
+[42] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+Lora: Low-rank adaptation of large language models. InInternational Conference on Learning Representations, 2022.
+[43] Nima Fazeli, Miquel Oller, Jiajun Wu, Zheng Wu, Joshua B. Tenenbaum, and Alberto Rodriguez. See, feel, act:
+Hierarchical learning for complex manipulation skills with multisensory fusion.Science Robotics, 4(26):eaav3123,
+2019. doi: 10.1126/scirobotics.aav3123.
+[44] Isma Hadji, Konstantinos G Derpanis, and Allan D Jepson. Representation learning via global temporal alignment
+and cycle-consistency. InProceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages
+11068–11077, 2021.
+[45] Debidatta Dwibedi, Yusuf Aytar, Jonathan Tompson, Pierre Sermanet, and Andrew Zisserman. Temporal cycle-
+consistency learning. InProceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages
+1801–1810, 2019.
+[46] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang
+Gao, Chunjiang Ge, et al. Qwen3-vl technical report.arXiv preprint arXiv:2511.21631, 2025.
+[47] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao
+Yang, et al. Wan: Open and advanced large-scale video generative models.arXiv preprint arXiv:2503.20314, 2025.
+[48] Weixin Liang, Lili Yu, Liang Luo, Srini Iyer, Ning Dong, Chunting Zhou, Gargi Ghosh, Mike Lewis, Wen-tau
+Yih, Luke Zettlemoyer, and Xi Victoria Lin. Mixture-of-transformers: A sparse and scalable architecture for
+multi-modal foundation models.Transactions on Machine Learning Research, 2025. ISSN 2835-8856. URL
+https://openreview.net/forum?id=Nu6N69i8SB.
+[49] Hyung Won Chung, Xavier Garcia, Adam Roberts, Yi Tay, Orhan Firat, Sharan Narang, and Noah Constant. Unimax:
+Fairer and more effective language sampling for large-scale multilingual pretraining. InInternational Conference on
+Learning Representations (ICLR), 2023.
+[50] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for generative
+modeling. InThe Eleventh International Conference on Learning Representations, 2023.
+24
+
+--- Page 25 ---
+
+[51] Brenna D Argall, Sonia Chernova, Manuela Veloso, and Brett Browning. A survey of robot learning from demonstra-
+tion.Robotics and Autonomous Systems, 57(5):469–483, 2009.
+[52] Harish Ravichandar, Athanasios S Polydoros, Sonia Chernova, and Aude Billard. Recent advances in robot learning
+from demonstration.Annual Review of Control, Robotics, and Autonomous Systems, 3:297–330, 2020.
+[53] Tianhao Zhang, Zoe McCarthy, Owen Jow, Dennis Lee, Xi Chen, Ken Goldberg, and Pieter Abbeel. Deep imitation
+learning for complex manipulation tasks from virtual reality teleoperation. In2018 IEEE International Conference
+on Robotics and Automation (ICRA), pages 5628–5635. IEEE, 2018.
+[54] Ji Woong (Brian) Kim, Juo-Tung Chen, Pascal Hansen, Lucy Xiaoyang Shi, Antony Goldenberg, Samuel Schmidgall,
+Paul Maria Scheikl, Anton Deguet, Brandon M. White, De Ru Tsai, Richard Jaepyeong Cha, Jeffrey Jopling, Chelsea
+Finn, and Axel Krieger. SRT-H: A hierarchical framework for autonomous surgery via language-conditioned imitation
+learning.Science Robotics, 10(104):eadt5254, 2025. doi: 10.1126/scirobotics.adt5254.
+[55] Dean A. Pomerleau. ALVINN: An autonomous land vehicle in a neural network. In David S. Touretzky, editor,
+Advances in Neural Information Processing Systems, volume 1. Morgan-Kaufmann, 1988.
+[56] Yuzhe Qin, Yueh-Hua Wu, Shaowei Liu, Hanwen Jiang, Ruihan Yang, Yang Fu, and Xiaolong Wang. DexMV:
+Imitation learning for dexterous manipulation from human videos. InEuropean Conference on Computer Vision,
+pages 570–587. Springer, 2022.
+[57] Chen Wang, Haochen Shi, Weizhuo Wang, Ruohan Zhang, Li Fei-Fei, and C Karen Liu. DexCap: Scalable and
+portable mocap data collection system for dexterous manipulation. InProceedings of Robotics: Science and Systems
+(RSS), 2024.
+[58] Pierre Sermanet, Corey Lynch, Yevgen Chebotar, Jasmine Hsu, Eric Jang, Stefan Schaal, and Sergey Levine. Time-
+contrastive networks: Self-supervised learning from video. In2018 IEEE International Conference on Robotics and
+Automation (ICRA), pages 1134–1141. IEEE, 2018.
+[59] Kevin Zakka, Andy Zeng, Pete Florence, Jonathan Tompson, Jeannette Bohg, and Debidatta Dwibedi. XIRL:
+Cross-embodiment inverse reinforcement learning. InConference on Robot Learning, pages 537–546. PMLR, 2022.
+[60] Corey Lynch, Mohi Khansari, Ted Xiao, Vikash Kumar, Jonathan Tompson, Sergey Levine, and Pierre Sermanet.
+Learning latent plans from play. InConference on Robot Learning, pages 1113–1132. PMLR, 2020.
+[61] Shikhar Bahl, Abhinav Gupta, and Deepak Pathak. WHIRL: Human-to-robot imitation in the wild. InProceedings of
+Robotics: Science and Systems (RSS), 2022.
+[62] Chen Wang, Linxi Fan, Jiankai Sun, Ruohan Zhang, Li Fei-Fei, Danfei Xu, Yuke Zhu, and Animashree Anandkumar.
+MimicPlay: Long-horizon imitation learning by watching human play. InConference on Robot Learning, volume 229,
+pages 201–221. PMLR, 2023.
+[63] Ruijie Zheng, Dantong Niu, Yuqi Xie, Jing Wang, Mengda Xu, Yunfan Jiang, Fernando Castañeda, Fengyuan Hu,
+You Liang Tan, Letian Fu, Trevor Darrell, Furong Huang, Yuke Zhu, Danfei Xu, and Linxi Fan. EgoScale: Scaling
+dexterous manipulation with diverse egocentric human data.arXiv preprint arXiv:2602.16710, 2026.
+[64] Guangyan Chen, Te Cui, Meiling Wang, Chengcai Yang, Mengxiao Hu, Haoyang Lu, Yao Mu, Zicai Peng, Tianxing
+Zhou, Xinran Jiang, et al. Graphmimic: Graph-to-graphs generative modeling from videos for policy learning. In
+Proceedings of the Computer Vision and Pattern Recognition Conference, pages 1756–1768, 2025.
+[65] Guangyan Chen, Meiling Wang, Te Cui, Chengcai Yang, Mengxiao Hu, Haoyang Lu, Zicai Peng, Tianxing Zhou,
+Xinran Jiang, Yi Yang, et al. Learning from videos through graph-to-graphs generative modeling for robotic
+manipulation.IEEE Transactions on Robotics, 2026.
+[66] Guangyan Chen, Meiling Wang, Te Cui, Luojie Yang, Qi Shao, Lin Zhao, Tianle Zhang, Yihang Li, Yi Yang, and
+Yufeng Yue. Unifying latent action and latent state pre-training for policy learning from videos. InProceedings of
+the SIGGRAPH Asia 2025 Conference Papers, pages 1–11, 2025.
+[67] Dingzhe Li, Yixiang Jin, YuHao Sun, Yong A, Hongze Yu, Jun Shi, Xiaoshuai Hao, Peng Hao, Huaping Liu,
+Xiang Li, Xinde Li, Fuchun Sun, Jianwei Zhang, and Bin Fang. What foundation models can bring for robot
+learning in manipulation: A survey.The International Journal of Robotics Research, 45(7):1091–1142, 2026. doi:
+10.1177/02783649251390579.
+[68] Scott Reed, Konrad Zolna, Emilio Parisotto, Sergio Gómez Colmenarejo, Alexander Novikov, Gabriel Barth-Maron,
+Mai Giménez, Yury Sulsky, Jackie Kay, Jost Tobias Springenberg, et al. A generalist agent.Transactions on Machine
+Learning Research, 2022.
+[69] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan
+Foster, Grace Lam, Pannag Sanketi, et al. OpenVLA: An open-source vision-language-action model.arXiv preprint
+arXiv:2406.09246, 2024.
+25
+
+--- Page 26 ---
+
+[70] Songming Liu, Lingxuan Wu, Bangguo Li, Hengkai Tan, Huayu Chen, Zhengyi Wang, Ke Xu, Hang Su, and Jun Zhu.
+RDT-1B: A diffusion foundation model for bimanual manipulation.arXiv preprint arXiv:2410.07864, 2024.
+[71] Johan Bjorck et al. GR00T N1: An open foundation model for generalist humanoid robots.arXiv preprint
+arXiv:2503.14734, 2025.
+[72] Junjie Wen, Yichen Zhu, Jinming Li, Zhibin Tang, Chaomin Shen, and Feifei Feng. DexVLA: Vision-language model
+with plug-in diffusion expert for general robot control. InConference on Robot Learning, volume 305. PMLR, 2025.
+[73] David Ha and Jürgen Schmidhuber. World models.arXiv preprint arXiv:1803.10122, 2018.
+[74] Bo Ai, Stephen Tian, Haochen Shi, Yixuan Wang, Tobias Pfaff, Cheston Tan, Henrik I. Christensen, Hao Su, Jiajun
+Wu, and Yunzhu Li. A review of learning-based dynamics models for robotic manipulation.Science Robotics, 10
+(106):eadt1497, 2025. doi: 10.1126/scirobotics.adt1497.
+[75] Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning behaviors by
+latent imagination. InInternational Conference on Learning Representations (ICLR), 2020.
+[76] Danijar Hafner, Timothy Lillicrap, Mohammad Norouzi, and Jimmy Ba. Mastering atari with discrete world models.
+InInternational Conference on Learning Representations, 2021.
+[77] Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. Mastering diverse control tasks through world
+models.Nature, 640:647–653, 2025. arXiv:2301.04104.
+[78] Vincent Micheli, Eloi Alonso, and François Fleuret. Transformers are sample-efficient world models. InInternational
+Conference on Learning Representations (ICLR), 2023.
+[79] DanijarHafner, TimothyLillicrap, IanFischer, Ruben Villegas, David Ha, Honglak Lee, andJames Davidson. Learning
+latent dynamics for planning from pixels. InInternational Conference on Machine Learning, pages 2555–2565. PMLR,
+2019.
+[80] Nicklas Hansen, Hao Su, and Xiaolong Wang. TD-MPC2: Scalable, robust world models for continuous control. In
+International Conference on Learning Representations (ICLR), 2024.
+[81] Yilun Du, Mengjiao Yang, Bo Dai, Hanjun Dai, Ofir Nachum, Joshua B Tenenbaum, Dale Schuurmans, and Pieter
+Abbeel. Learning universal policies via text-guided video generation. InAdvances in Neural Information Processing
+Systems, volume 36, pages 9156–9172, 2023.
+[82] Kevin Black, Mitsuhiko Nakamoto, Pranav Atreya, Homer Walke, Chelsea Finn, Aviral Kumar, and Sergey Levine.
+Zero-shot robotic manipulation with pre-trained image-editing diffusion models. InInternational Conference on
+Learning Representations (ICLR), 2024. SuSIE; arXiv:2310.10639.
+[83] Homanga Bharadhwaj, Debidatta Dwibedi, Abhinav Gupta, Shubham Tulsiani, Carl Doersch, Ted Xiao, Dhruv
+Shah, Fei Xia, Dorsa Sadigh, and Sean Kirmani. Gen2Act: Human video generation in novel scenarios enables
+generalizable robot manipulation.arXiv preprint arXiv:2409.16283, 2024.
+[84] Junbang Liang, Ruoshi Liu, Ege Ozguroglu, Sruthi Sudhakar, Achal Dave, Pavel Tokmakov, Shuran Song, and Carl
+Vondrick. Dreamitate: Real-world visuomotor policy learning via video generation. InProceedings of The 8th
+Conference on Robot Learning, volume 270 ofProceedings of Machine Learning Research, pages 3943–3960. PMLR,
+2025. URLhttps://proceedings.mlr.press/v270/liang25b.html.
+[85] Russell Mendonca, Shikhar Bahl, and Deepak Pathak. Structured world models from human videos. InProceedings
+of Robotics: Science and Systems (RSS), 2023. doi: 10.15607/RSS.2023.XIX.012.
+[86] Mengjiao Yang, Yilun Du, Kamyar Ghasemipour, Jonathan Tompson, Leslie Kaelbling, Dale Schuurmans, and Pieter
+Abbeel. UniSim: Learning interactive real-world simulators.arXiv preprint arXiv:2310.06114, 2023.
+[87] Hongtao Wu, Ya Jing, Chilam Cheang, Guangzeng Chen, Jiafeng Xu, Xinghang Li, Minghuan Liu, Hang Li, and
+Tao Kong. Unleashing large-scale video generative pre-training for visual robot manipulation. InInternational
+Conference on Learning Representations (ICLR), 2024. arXiv:2312.13139, 2023.
+[88] Chi-Lam Cheang, Guangzeng Chen, Ya Jing, Tao Kong, Hang Li, Yifeng Li, Yuxiao Liu, Hongtao Wu, Jiafeng Xu,
+Yichu Yang, Hanbo Zhang, and Minzhao Zhu. GR-2: A generative video-language-action model with web-scale
+knowledge for robot manipulation.arXiv preprint arXiv:2410.06158, 2024.
+[89] Lin Li, Qihang Zhang, Yiming Luo, Shuai Yang, Ruilin Wang, Fei Han, Mingrui Yu, Zelin Gao, Nan Xue, Xing Zhu,
+et al. Causal world modeling for robot control.arXiv preprint arXiv:2601.21998, 2026.
+[90] Moo Jin Kim, Yihuai Gao, Tsung-Yi Lin, Yen-Chen Lin, Yunhao Ge, Grace Lam, Percy Liang, Shuran Song, Ming-Yu
+Liu, Chelsea Finn, and Jinwei Gu. Cosmos Policy: Fine-tuning video models for visuomotor control and planning.
+arXiv preprint arXiv:2601.16163, 2026.
+26
+
+--- Page 27 ---
+
+[91] Shalfun Li, Victor Yao, Charles Yang, Truth Qu, Regis Cheng, Ryan Yu, Howard Lu, Newton Von, Vincent Chen,
+Yohann Tang, et al. Wall-wm: Carving world action modeling at the event joints.arXiv preprint arXiv:2606.01955,
+2026.
+[92] Jiaming Zhou, Ke Ye, Jiayi Liu, Teli Ma, Zifan Wang, Ronghe Qiu, Kun-Yu Lin, Zhilin Zhao, and Junwei Liang.
+Exploring the limits of vision-language-action manipulation in cross-task generalization. InThe Thirty-ninth Annual
+Conference on Neural Information Processing Systems (NeurIPS), 2025.
+[93] Guangyan Chen, Meiling Wang, Te Cui, Yao Mu, Haoyang Lu, Zicai Peng, Mengxiao Hu, Tianxing Zhou, Mengyin
+Fu, Yi Yang, Yufeng Yue, et al. Fmimic: Foundation models are fine-grained action learners from human videos.
+The International Journal of Robotics Research, page 02783649251377335, 2025.
+[94] Guangyan Chen, Meiling Wang, Te Cui, Yao Mu, Haoyang Lu, Tianxing Zhou, Zicai Peng, Mengxiao Hu, Haizhou
+Li, Li Yuan, et al. Vlmimic: Vision language models are visual imitation learner for fine-grained actions.Advances in
+Neural Information Processing Systems, 37:77860–77887, 2024.
+[95] Edward Johns. Coarse-to-fine imitation learning: Robot manipulation from a single demonstration. In2021 IEEE
+International Conference on Robotics and Automation (ICRA), pages 4613–4619. IEEE, 2021.
+[96] Jinhan Li, Yifeng Zhu, Yuqi Xie, Zhenyu Jiang, Mingyo Seo, Georgios Pavlakos, and Yuke Zhu. OKAMI: Teaching
+humanoid robots manipulation skills through single video imitation. InConference on Robot Learning, volume 270,
+pages 299–317. PMLR, 2024.
+[97] Kamil Dreczkowski, Pietro Vitiello, Vitalis Vosylius, and Edward Johns. Learning a thousand tasks in a day.Science
+Robotics, 10(108):eadv7594, 2025. doi: 10.1126/scirobotics.adv7594.
+[98] Justin Kerr, Chung Min Kim, Mingxuan Wu, Brent Yi, Qianqian Wang, Ken Goldberg, and Angjoo Kanazawa. Robot
+see robot do: Imitating articulated object manipulation with monocular 4d reconstruction. InConference on Robot
+Learning, volume 270, pages 587–603. PMLR, 2024. arXiv:2409.18121.
+[99] Deepak Pathak, Parsa Mahmoudieh, Guanghao Luo, Pulkit Agrawal, Dian Chen, Yide Shentu, Evan Shelhamer,
+Jitendra Malik, Alexei A Efros, and Trevor Darrell. Zero-shot visual imitation. InInternational Conference on Learning
+Representations, 2018.
+[100] Sudeep Dasari and Abhinav Gupta. Transformers for one-shot visual imitation. InConference on Robot Learning,
+pages 2071–2084. PMLR, 2021.
+[101] NormanDiPaloandEdwardJohns. DINOBot: Robotmanipulationviaretrievalandalignmentwithvisionfoundation
+models. In2024 IEEE International Conference on Robotics and Automation (ICRA), pages 2798–2805. IEEE, 2024.
+arXiv:2402.13181.
+[102] Guangyan Chen, Meiling Wang, Qi Shao, Zichen Zhou, Weixin Mao, Te Cui, Minzhao Zhu, Yinan Deng, Luojie Yang,
+Zhanqi Zhang, et al. See once, then act: Vision-language-action model with task learning from one-shot video
+demonstrations.arXiv preprint arXiv:2512.07582, 2025.
+[103] Marco Cuturi and Mathieu Blondel. Soft-DTW: A differentiable loss function for time-series. InInternational
+Conference on Machine Learning, pages 894–903. PMLR, 2017.
+[104] Chien-Yi Chang, De-An Huang, Yanan Sui, Li Fei-Fei, and Juan Carlos Niebles. D3TW: Discriminative differentiable
+dynamic time warping for weakly supervised action alignment and segmentation. InProceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, pages 3546–3555, 2019.
+[105] Xiaolong Wang, Allan Jabri, and Alexei A Efros. Learning correspondence from the cycle-consistency of time. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 2566–2576, 2019.
+[106] Sateesh Kumar, Jonathan Zamora, Nicklas Hansen, Rishabh Jangir, and Xiaolong Wang. GraphIRL: Graph inverse
+reinforcement learning from diverse videos. InProceedings of The 6th Conference on Robot Learning, volume 205 of
+Proceedings of Machine Learning Research, pages 55–66. PMLR, 2023. URLhttps://proceedings.mlr.press/
+v205/kumar23a.html.
+[107] William Peebles and Saining Xie. Scalable diffusion models with transformers. InProceedings of the IEEE/CVF
+International Conference on Computer Vision, pages 4195–4205, 2023.
+[108] Yi Zhou, Connelly Barnes, Jingwan Lu, Jimei Yang, and Hao Li. On the continuity of rotation representations in
+neural networks. InProceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages
+5745–5753, 2019.
+27
+
+--- Page 28 ---
+
+Supplementary Contents
+1. Related work.....................................................................................29
+1.1 Learning robot manipulation from demonstrations ........................................... 29
+1.2 One-shot visual imitation .................................................................... 30
+1.3 Temporal alignment and correspondence learning............................................31
+2. Implementation details ........................................................................... 32
+2.1 Alignment module...........................................................................32
+2.2 Autoregressive diffusion model architecture..................................................33
+2.3 Training procedure .......................................................................... 35
+2.4 Data processing ............................................................................. 36
+2.5 Inference....................................................................................37
+3. Notation table....................................................................................38
+28
+
+--- Page 29 ---
+
+Appendix A Related Work
+A.1 Learning Robot Manipulation from Demonstrations
+Learning from demonstrations offers a direct and intuitive way to teach robots new manipulation skills. This
+section first reviews imitation learning and then discusses two directions that have become prominent in
+robot learning research, vision–language–action foundation models and world models that incorporate video
+generation and future prediction.
+A.1.1 Imitation learning from robot and human demonstrations
+Teaching robots to replicate human motor skills is a long-standing objective in robotics (51, 52). Imitation
+learning, or learning from demonstrations (LfD), formulates the problem as recovering a policy from expert
+state–action trajectories obtained via teleoperation or kinesthetic teaching (12, 53, 54). When the expert
+and the robot share the same embodiment, behavioral cloning provides an effective framework (55). Recent
+advances in policy architectures have further improved these approaches. Diffusion Policy (17) models robot
+action distributions with denoising diffusion processes and achieves strong multimodal behavior coverage.
+ACT (18) introduces transformer-based action chunking for fine-grained bimanual manipulation on low-cost
+hardware. These methods have substantially improved the performance attainable through imitation learning
+when high-quality robot demonstrations are available.
+The setting becomes substantially harder when the demonstrator is human, as the embodiment, viewpoint,
+and dynamics differ from those of the robot. Retargeting methods extract human hand or body poses from
+video and map them to robot joint configurations through hand-crafted or learned correspondence (56, 57),
+while methods for domain adaptation instead learn embodiment-invariant representations that bridge the
+visual or state-space gap between human and robot observations (58, 59). A further line of work leverages
+human activity directly as a learning signal, learning latent plans or behavioral priors from unstructured
+human play and in-the-wild video (60, 61, 62). Most recently, EgoScale (63) establishes a log-linear scaling
+law between egocentric video data and downstream robot performance, demonstrating that large-scale human
+video pretraining followed by intermediate training on robot data yields substantial gains with minimal robot
+supervision (64, 65, 66).
+A.1.2 Vision–language–action models
+The convergence of large-scale pretraining and robot learning has given rise to vision–language–action (VLA)
+modelsthatunifyperception, languageunderstanding, androbotactiongenerationinasinglearchitecture( 67).
+EarlyeffortssuchasGato( 68)demonstratethatasingletransformercanbetrainedacrossvision, language, and
+control modalities, albeit with limited manipulation performance. RT-1 (19) shows that training a high-capacity
+transformer on large-scale robot demonstrations yields robust real-world manipulation policies. RT-2 (13)
+extends this approach by jointly fine-tuning a vision–language model on robot action data, which transfers
+web-scale visual and semantic concepts to robotic control. The Open X-Embodiment initiative (20) further
+shows that co-training across diverse embodiments and institutions yields positive transfer, with the resulting
+RT-X models exhibiting improved performance over single-embodiment baselines.
+A broader wave of VLA models has since extended this paradigm across architectures, scales, and embodiments.
+Octo (21) provides a generalist policy that can be efficiently fine-tuned to new robots and tasks, while
+OpenVLA (69) offers an open-source VLA trained on the Open X-Embodiment dataset.𝜋0 (14) introduces
+flow matching into the VLA framework, achieving state-of-the-art dexterous manipulation and multi-stage
+task execution, and its successor𝜋0.5 (15) demonstrates open-world generalization to novel environments
+through large-scale co-training on heterogeneous data, including cross-embodiment robot demonstrations and
+web data. RDT-1B (70) scales diffusion-based policies to one billion parameters for bimanual manipulation,
+and GR00T N1 (71) provides a foundation model for generalist humanoid robot control through a joint
+vision–language–action architecture. DexVLA (72) introduces a modular diffusion expert plugged into a VLA
+backbone for dexterous manipulation.
+29
+
+--- Page 30 ---
+
+A.1.3 World models and video generation for robot learning
+World models that predict future states have a long history in robot control. Ha and Schmidhuber (73, 74)
+demonstrate that recurrent world models learned in latent space can facilitate policy evolution. Dreamer (75)
+learns behaviors by latent imagination, DreamerV2 (76) masters Atari with discrete world models, and
+DreamerV3 (77) extends the approach to diverse domains. IRIS (78) introduces transformer-based world
+models that achieve strong sample efficiency. In the continuous control setting, PlaNet (79) learns latent
+dynamics for planning from pixels, and TD-MPC2 (80) provides scalable and robust latent-space world models.
+With the advent of large-scale video generation, pixel-space world models have been explored for manipulation.
+UniPi (81) generates future video frames as a planning representation. It converts goals specified in text
+into visual plans, from which an inverse dynamics model extracts actions. SuSIE (82) refines this idea by
+using a pretrained image-editing diffusion model to generate subgoal images that guide a goal-conditioned
+policy. Gen2Act (83) generates human demonstration videos in novel scenarios to enable robot generalization,
+and Dreamitate (84) leverages video generation of demonstrations to learn real-world visuomotor policies.
+SWIM (85) pre-trains a world model from human videos and fine-tunes it on robot data, establishing that
+human video provides useful dynamics priors for manipulation. UniSim (86) learns an interactive generative
+simulator from real-world data, enabling policy training within the learned world model.
+More recently, world-action models (WAMs) jointly train video prediction and action generation within a
+shared architecture (87, 88, 89, 90, 41, 91). GR-1 (87) pretrains on large-scale video data and fine-tunes
+for robot action prediction. GR-2 (88) extends this to tens of millions of internet video clips, improving
+generalization. LingBot-VA (89) proposes a Mixture-of-Transformers architecture that jointly predicts future
+frames and actions in a shared latent space via autoregressive diffusion, using closed-loop rollout for long-
+horizon dexterous manipulation. Cosmos Policy (90) fine-tunes large video generation models as visuomotor
+robotpolicies, demonstratingtransferfrominternet-scalevideopretraining. Fast-WAM( 41)showsthatvideoco-
+training, rather than explicit future imagination at test time, is the primary source of WAM performance gains.
+Accordingly, removing test-time video generation yields 4× faster inference while maintaining competitive
+performance.
+Despite this progress, these methods struggle to generalize beyond the training distribution (92), and learning
+a new skill typically requires additional task-specific demonstrations and offline training, a cycle that is costly,
+slow, and risks catastrophic forgetting of previously acquired skills (25, 24).HOSTinstead acquires novel
+manipulation skills at inference time from a single human video demonstration without any parameter update.
+It achieves 62% average success on novel tasks and exceeds the strongest zero-shot imitation baseline by 45%.
+Compared with supervised fine-tuning on 50 robot demonstrations per task,HOSTachieves a higher success
+rate and acquires each skill roughly 507 times faster.
+A.2 One-Shot Visual Imitation
+A.2.1 One-shot visual imitation methods
+Kuniyoshi et al. (26) envisioned robots extracting reusable task knowledge from a single observed human
+performance. This setting, now studied as one-shot visual imitation (OSVI), requires robots to bridge em-
+bodiment and viewpoint differences and translate one observed performance into executable robot actions.
+One line of work constructs modular pipelines that decompose this problem into perception, grounding, and
+execution stages, estimating the target interaction pose or object configuration from the video demonstration
+and replaying the resulting trajectory in open loop (93, 94, 95, 96). FMimic (93) leverages vision–language
+models to extract fine-grained hand–object interaction keypoints from a human video demonstration, then
+transfers these keypoints to novel scenes via region-to-keypoint mapping and refines execution with pose
+estimation based on contact. MT3 (97) decomposes manipulation trajectories into alignment and interaction
+phases and retrieves over a thousand tasks from as few as one video demonstration each, assuming the robot
+grasps each object with the same pose as in the video demonstration. RSRD (98) recovers articulated 3D
+part motions from monocular RGB video for bimanual imitation, depending on high-quality part-level 3D
+reconstruction. Open-loop replay confines these pipelines to reproducing simple demonstrated behaviors
+and limits the adaptation required for real-world deployment, and independently engineered modules also
+30
+
+--- Page 31 ---
+
+introduce compounding errors that restrict generalization across diverse manipulation scenarios.
+An alternative line of work seeks to learn a unified model that maps a human video demonstration and current
+robot observations to robot actions (27, 28, 99, 100, 29, 39, 101, 30, 31, 102). Early efforts in this direction
+adopt meta-learning. Finn et al. (27) propose meta-learning for one-shot visual imitation, and DAML (28)
+extendsthis approachtocross-embodiment settingsthroughdomain adaptation. Pathaket al.( 99)demonstrate
+visual imitation from video without access to action labels. T-OSVI (100) uses transformers to capture long-
+range dependencies in video demonstrations, supporting an embodiment mismatch between the demonstrator
+and the robot. MOSAIC (29) establishes a more challenging evaluation protocol with completely unseen
+test tasks, revealing that prior methods struggle to generalize beyond their training distribution. AWDA (39)
+improves generalization through attributed waypoints and demonstration augmentation. DINOBot (101)
+leverages vision foundation models for egocentric one-shot imitation via retrieval-based alignment. More
+recently, Vid2Robot (30) encodes the demonstration video via a ViT–Perceiver architecture and conditions a
+cross-attention transformer policy on the resulting tokens, augmented with temporal cycle-consistency and
+video–text contrastive losses to align prompt and robot representations. OSVI-WM (31) introduces an approach
+guided by a world model, in which a learned causal transformer world model iteratively predicts latent states
+from concatenated demonstrator and robot representations, decoding the predicted trajectory into physical
+waypoints. These end-to-end methods eliminate the need for manually designed module interfaces. However,
+their performance still lags behind that of language-conditioned policies (15) and falls far short of that achieved
+through task-specific fine-tuning. This gap suggests that learning novel manipulation skills from a single video
+demonstration remains an open problem.
+Existing OSVI methods continue to perform substantially worse than task-specific fine-tuning. This shortfall
+reflects the structural mismatch between video demonstration and execution. Temporal asynchrony decouples
+the prediction target from the video demonstration, while differences in embodiment, viewpoint, and ap-
+pearance make the observed behavior difficult to translate into action.HOSTresolves this mismatch through
+coupling prediction targets to the demonstration and resolving execution through self-grounded prediction.
+Rather than fixing the prediction target at a temporal offset independent of the video demonstration,HOST
+couples each target to the video demonstration’s upcoming content on the shared task progress manifold,
+turning the video into the active driver of the robot’s predicted actions. Execution is then resolved through
+resolving execution through self-grounded prediction, a causal cascade that first localizes the robot’s progress
+within the video demonstration, then predicts its own future observations, and finally derives actions from
+these future observations.
+A.3 Temporal Alignment and Correspondence Learning
+A.3.1 Video temporal alignment methods
+Temporal alignment of videos depicting the same process under different conditions is a fundamental problem
+in video understanding. The differentiable formulation of Dynamic Time Warping has been a key enabler.
+Soft-DTW (103) replaces the non-differentiable minimum operator in DTW with a soft-min, producing a
+differentiable alignment loss that enables gradient-based optimization. D3TW (104) extends this with a
+discriminative, margin-based loss for weakly supervised action alignment and segmentation.
+A related line of work learns temporal representations in a self-supervised manner, without relying on frame-
+level correspondence labels. Time-contrastive networks (TCN) (58) learn viewpoint-invariant representations
+by enforcing temporal consistency across simultaneously recorded multi-view videos, enabling imitation from
+observation by matching embeddings across human and robot demonstrations. Temporal cycle-consistency
+(TCC) (45) extends this idea to unpaired videos. It learns per-frame embeddings so that a frame mapped to
+its nearest neighbor in another video and then mapped back returns to its original position. This cycle enables
+fine-grained alignment without frame-level supervision. Wang (105) proposes learning spatial correspondence
+through forward-backward cycle-consistency in time, demonstrating that temporal consistency provides a
+powerful self-supervisory signal. Hadji et al. (44) reformulate DTW as a differentiable probabilistic procedure
+for path finding. The procedure serves directly as a training objective and extends naturally to a global
+cycle-consistency loss. It produces monotonic soft matching probabilities for processes that share temporal
+structure but differ in pace and appearance.
+31
+
+--- Page 32 ---
+
+Within robot learning, temporal alignment has been applied to derive reward signals, identify correspondences
+in task progress, and regularize policy training as an auxiliary loss. XIRL (59) derives cross-embodiment
+reward functions from representations learned through temporal alignment, and GraphIRL (106) applies
+graph abstraction with temporal matching to derive dense reward functions from videos. TCN (58) uses
+temporalalignmenttoidentifycorrespondencesintaskprogressforimitationfromobservation. Vid2Robot( 30)
+incorporates temporal cycle-consistency as an auxiliary loss alongside video–text contrastive learning, which
+aligns prompt and robot representations during policy training.
+HOSTinstead uses temporal alignment as a structural mechanism that directly constructs the prediction target,
+rather than an auxiliary loss or reward signal. A self-supervised alignment module, combining temporal cycle-
+consistency (45) with differentiable monotonic path finding (44), recovers frame-level correspondence between
+the video demonstration and the robot trajectory. Through coupling prediction targets to the demonstration,
+this correspondence redefines the prediction target at each robot timestep. The target is redefined as the
+segment of the robot’s own trajectory that corresponds to the future evolution of the video demonstration.
+This construction establishes a direct causal dependency between the demonstration content and the training
+objective, transforming the video from passive context into an active supervisory signal at each step.
+Appendix B Implementation Details
+This section provides the complete implementation details for reproducingHOST, covering the alignment
+module, autoregressive diffusion model architecture, training procedure, data processing, and inference
+pipeline. Each subsection concludes with a hyperparameter summary table for easy reference.
+B.1 Alignment Module
+Vision encoder and embedding.The alignment module employs Qwen3-VL-Embedding-8B (46) as the
+shared vision encoder𝑓𝜙, loaded in bfloat16 with scaled dot-product attention and gradient checkpointing
+enabled. The full model is fine-tuned end-to-end during alignment training. Each frame is processed through
+the complete Qwen3-VL forward pass, and the per-frame representation is extracted from the [EOS] token
+position in the last hidden layer, yielding a𝐷=1,536-dimensional hidden state. A single learnable linear layer
+projects the hidden state to a𝑑=128-dimensional embedding, followed byℓ2 normalization, as formulated in
+Eq. 1. The same encoder and projection are applied to both the video demonstration and the robot trajectory.
+Smooth DTW configuration.Smooth Dynamic Time Warping runs forward and backward passes to compute
+bidirectional alignment. The forward pass accumulates costs along monotonic paths using the smooth minimum
+operator formulated in Eq. 3, with softmin temperature𝛾=1.0. A column-normalization temperature𝛾 𝑓 =0.1
+controls the sharpness of the matching probabilities. When both sequences share the same length, the
+anti-diagonal parallel implementation reduces the computation from𝑂(𝑇 2) sequential steps to𝑂(𝑇) parallel
+anti-diagonal sweeps. Boundary conditions initialize the origin cell to its cost value and all border cells to
+a large constant of109. The backward table is computed analogously from the terminal cell. The matching
+probabilities 𝛽 are then obtained by combining the forward and backward tables and applying row-wise
+softmax normalization, as formulated in Eq. 5. The pairwise similarity matrix uses negative squared L2
+distance entries scaled by a softmax temperature𝜅=0.1.
+Loss configuration.The temporal cycle-consistency loss is defined in Eq. 9 and adopts variance-aware mean
+squared error regression. The predicted cycle-back variance𝜈2
+𝑖 is clamped with𝜖=10−4 for numerical stability
+under bfloat16, and the variance regularization weight is𝜆var=0.001with label smoothing of0.1. The path-cost
+loss weight is𝜆DTW=0.3, normalized by the sum of sequence lengths𝑇+𝑁, as formulated in Eq. 10. Both losses
+are symmetrized over both alignment directions.
+Training configuration.The module is trained with AdamW, using𝛽1=0.9, 𝛽2=0.999, 𝜖=10−8, and weight
+decay10 −5. The learning rate is10−5 with cosine annealing over 100 warmup steps down to a minimum
+ratio of0.3. Training runs for 10,000 steps on 64 GPUs with a per-GPU batch size of 4, yielding an effective
+batch size of 256. It uses bfloat16 mixed precision, DeepSpeed ZeRO-3, and gradient clipping at3.0. Training
+data comprises same-task trajectory pairs drawn fromMtrain, spanning both robot–robot and human–robot
+32
+
+--- Page 33 ---
+
+configurations, with pairs formed by randomly selecting two distinct trajectories of the same task. Data
+augmentation consists of random horizontal flipping and brightness/contrast jittering.
+After training, the alignment module is frozen and used offline to construct the conditioning windows,
+localization labels, and prediction targets for autoregressive diffusion model training, described in Sec. 4.2. At
+inference time, the alignment module is not invoked. The autoregressive diffusion model autonomously tracks
+task progress via the learned localization head, described in Sec. B.5. Hyperparameters are summarized in
+Supplementary Table 1.
+Table 1 Alignment module hyperparameters.
+Parameter Value
+Vision encoder Qwen3-VL-Embedding-8B (fine-tuned, bf16)
+Hidden dimension𝐷/ embedding dimension𝑑emb 1,536 / 128
+Embedding projection Linear +ℓ 2 normalization
+SDTW softmin temperature𝛾/ column-normalization temperature𝛾𝑓 1.0 / 0.1
+Softmax temperature𝜅0.1
+TCC variance weight𝜆var/ label smoothing 0.001 / 0.1
+D2TW loss weight𝜆DTW 0.3
+Optimizer AdamW (𝛽 1=0.9,𝛽2=0.999,𝜖=10−8)
+Learning rate / schedule10 −5/ cosine (100 warmup, min ratio 0.3)
+Weight decay / gradient clipping10 −5/ 3.0
+Training steps / GPUs / batch per GPU 10,000 / 64 / 4
+Precision / distributed strategy bfloat16 / DeepSpeed ZeRO-3
+B.2 Autoregressive Diffusion Model Architecture
+VAE.Robot visual observations and video demonstration frames are encoded by WanVideoVAE (47) with
+48 latent channels and8× spatial downsampling. Multi-view images from all three cameras are vertically
+concatenated in pixel space prior to VAE encoding, producing a combined frame of height224×3=672pixels
+that is mapped to an84×28latent grid per timestep. The VAE is frozen throughout training.
+Videoexpert.Thevideoexpertisa30-layerDiffusionTransformer( 107)initializedfromWan2.2-TI2V-5B( 47),
+with hidden dimension 3,072, feed-forward dimension 14,336, 24 attention heads at 128 dimensions per
+head, and patch size[1, 2, 2]. It processes the video demonstration tokens together with the current robot
+observation and future observation tokens, so its predicted future observations remain grounded in the current
+robot state. A causal attention mask on the first frame lets the first frame, the current robot observation,
+attend only to its own tokens. All subsequent frames instead attend bidirectionally to all frames, including
+the first. This design prevents the deterministic current observation from being contaminated by noisy future
+observation tokens, while still letting the future observation tokens condition on the current observation.
+Each transformer block employs Adaptive Layer Normalization (AdaLN) with six learned modulation compo-
+nents per layer. These components comprise shift, scale, and gate for both self-attention and feed-forward
+sub-layers. The diffusion timestep is embedded via sinusoidal encoding, followed by a two-layer MLP that maps
+freq_dim =256 to hidden_dim. It is then projected to the six modulation parameters through a SiLU-activated
+linear layer. Separated timestep embedding is used. The first frame always receives a clean timestep of
+zero, while subsequent frames receive the actual diffusion timestep. This reflects the asymmetry between the
+deterministic input observation and the noisy generation targets.
+Three-dimensional rotary position embedding (3D RoPE) encodes spatial and temporal structure. Separate
+frequency components for the temporal, height, and width axes are precomputed and applied to query and key
+vectors via complex rotation. Video demonstration frames receive temporal positions[0, 1, . . . , 𝑓 𝑑−1], robot
+observation frames continue from[𝑓 𝑑, . . . , 𝑓 𝑑+𝑓 𝑟−1], and the localization token receives a dedicated temporal
+index one past all frames with zero spatial coordinates.
+Video demonstration conditioning.Video demonstration tokens 𝑧𝑑 are placed at the beginning of the
+self-attention sequence, as formulated in Eq. 12. They participate in the shared self-attention computation
+33
+
+--- Page 34 ---
+
+alongside robot observation and action tokens. The attention mask enforces unidirectional conditioning.
+Video demonstration tokens attend only to other video demonstration tokens, through full self-attention
+within the video demonstration window, while robot observation and action tokens can attend to the video
+demonstration tokens. This design allows the model to extract information from the video demonstration
+without it being influenced by the current robot state. When the video demonstration is dropped during
+training, with probability0.5, the corresponding tokens are replaced with zero padding and masked out of all
+attention computations. The text description then serves as the sole task conditioning signal.
+Headwise gating modulates the influence of video demonstration information at each attention head. Gate
+parameters are initialized with zero weights and a bias of5.0, starting the model with approximately neutral,
+open gating and allowing task-specific attention patterns to emerge during training.
+Action expert.The action expert is a 30-layer DiT with a hidden dimension of 1,024, a feed-forward dimension
+of4,096, andthesameattention-headconfigurationasthevideoexpert. Bothuse24headswith128dimensions
+per head. This shared configuration permits shared self-attention in the MoT framework. Its query, key, and
+value projections map the 1,024-dimensional hidden state to this shared 3,072-dimensional attention space.
+The attention output is then projected back to 1,024 dimensions before the feed-forward sub-layer. Each action
+step is independently encoded by a linear projection from the action dimension, mappingℝ20 toℝ 1024. This
+yields one token per timestep, for a total of𝐻=32action tokens. The action expert applies one-dimensional
+RoPE over the action sequence.
+The backbone parameters of the action expert are initialized from the video expert via dimension-wise linear
+interpolation. For each weight tensor whose last dimension differs between the two experts, the pretrained
+weights are linearly interpolated from𝑑𝑣=3,072to 𝑑𝑎=1,024along that dimension. They are then scaled by
+𝛼=
+√︁
+𝑑𝑣/𝑑𝑎 to preserve the variance of activations despite the dimensional reduction. Action-specific parameters
+that have no counterpart in the video expert, such as the input projection and output head, are initialized with
+standard Kaiming uniform initialization. Headwise gating is applied to the self-attention in the action expert,
+with the same zero-weight, bias-5.0initialization.
+Mixture-of-Transformers.In the MoT architecture, formulated in Eq. 13, the two experts share self-attention
+by concatenating their query, key, and value projections at each layer. The joint attention output is then split
+by expert and processed by branch-specific feed-forward networks. Gradient checkpointing is applied to the
+mixed attention computation during training to reduce memory consumption.
+Text and proprioceptive conditioning.The cross-attention conditioning sequence𝑐 is formulated in Eq. 14.
+It comprises text embeddings encoded by UMT5-XXL (49) at 4,096 dimensions, with a context length of 512
+and a maximum tokenizer length of 512. It also comprises the proprioceptive state, projected via a learnable
+linear layer fromℝ20 to ℝ4096. Text embeddings are computed offline using the frozen UMT5-XXL encoder
+and loaded during training. Both expert branches receive𝑐 via cross-attention at every transformer layer.
+The framework accepts either a language instruction, a video demonstration, or both as task specification at
+inference time.
+Localization token.The scalar localization value𝑝𝑡 is projected to the hidden dimension of the video expert
+by a learnable encoder𝐸 𝑝, a two-layer MLP with GELU activation. It mapsℝ1 to ℝ3072 and then toℝ3072,
+producing a single localization token. The decoder𝐷𝑝 maps the generated representation back to a scalar
+prediction through LayerNorm followed by a two-layer MLP with GELU activation. This MLP mapsℝ3072 to
+ℝ3072 and then toℝ1.
+To bridge the gap between ground-truth conditioning at training time and model-predicted conditioning at
+inference, the clean progress token𝑦 𝑝 is augmented with bounded Gaussian noise during training. This token
+conditions subsequent generation targets, and the noise has standard deviation0.5, applied with probability
+0.5. The noised value is then clamped to[−1, 1]. This noisy clean progress (NCP) scheme improves the
+robustness of autoregressive conditioning. Progress denoising uses a dedicated flow matching scheduler with
+shift=3.0.
+Autoregressive attention mask.The causal ordering among the three generation targets, described in Sec. 4.3,
+is enforced through the self-attention mask. The noisy localization token can attend to𝑧𝑑 and 𝑧𝑜 but not to
+subsequent targets. The noisy observation tokens can attend to𝑧𝑑, 𝑧𝑜, and the clean localization token, but
+34
+
+--- Page 35 ---
+
+not to action tokens. The noisy action tokens can attend to𝑧𝑑, 𝑧𝑜, the clean localization token, and the clean
+observation tokens. During training, clean tokens are populated with ground-truth values and their gradients
+are stopped so that each target’s loss does not back-propagate into preceding targets. Hyperparameters are
+summarized in Supplementary Table 2.
+Table 2 Autoregressive diffusion model architecture hyperparameters.
+Module Parameter Value
+Video expert
+Backbone Wan2.2-TI2V-5B (5B parameters)
+Layers / hidden dim / FFN dim 30 / 3,072 / 14,336
+Attention heads / head dim 24 / 128
+Patch size[1,2,2]
+VAE latent channels / spatial downsample 48 /8×
+Attention mask Causal on first frame
+Positional encoding 3D RoPE (temporal, height, width)
+Modulation AdaLN (6 components per layer)
+Timestep embedding Separated (first frame𝜎=0)
+Action expert
+Layers / hidden dim / FFN dim 30 / 1,024 / 4,096
+Attention heads / head dim 24 / 128
+Action tokenization Linear(ℝ 20 →ℝ 1024), one token per step
+Initialization Linear interpolation from video expert (𝛼=
+√︁
+𝑑𝑣/𝑑𝑎)
+Positional encoding 1D RoPE
+Conditioning and gating
+Text encoder UMT5-XXL (offline, 4,096-dim, context length 512)
+Proprioceptive projection Linear(ℝ 20 →ℝ 4096)
+Video demonstration conditioning Self-attention
+Headwise gate initialization Weights=0, bias=5.0
+Video demonstration drop probability 0.5
+Progress encoder𝐸𝑝 MLP(1→3072→3072, GELU)
+Progress decoder𝐷𝑝 LayerNorm→MLP(3072→3072→1, GELU)
+NCP noise scale / probability 0.5 / 0.5
+B.3 Training Procedure
+Stage 1 performs same-embodiment pretraining, and Stage 2 performs human–robot adaptation. Both stages
+share an identical training configuration with full-parameter updates. The optimizer is AdamW with𝛽1=0.9,
+𝛽2=0.95, and weight decay10−2. Training uses a constant learning rate of10−5. Training is distributed across
+64 GPUs with a per-GPU batch size of 2, yielding an effective batch size of 128. It uses bfloat16 mixed precision
+and DeepSpeed ZeRO Stage 1. Gradients are clipped to a maximum norm of1.0. No exponential moving
+average (EMA) of model weights is used.
+The loss weights are𝜆𝑜=1.0, 𝜆 𝑎=10.0, and 𝜆 𝑝=1.0, as formulated in Eq. 16. The elevated action loss weight
+compensates for the lower token count of the action sequence relative to the observation token grid and
+ensures balanced gradient magnitudes across the two expert branches.
+Flow matching configuration.Flow matching uses 1,000 training timesteps with a shift of5.0for both
+observation and action schedulers, and a shift of3.0for the progress scheduler. All three targets follow the
+same velocity-prediction parameterization, as formulated in Eq. 15. Timesteps𝜎 are sampled by drawing
+𝑢∼Uniform[ 0, 1] and applying the shifted schedule𝜎=𝜙(𝑢, 𝑠)=𝑠·𝑢/ ( 1 + (𝑠− 1) ·𝑢) , where 𝑠 is the shift
+parameter. A Gaussian-weighted importance function𝑤(𝜎)=exp  −2 (𝜎−𝜎 max/2) /𝜎 max
+ 2, centered at the
+midpoint of the schedule, concentrates training signal on intermediate noise levels where the denoising task is
+most informative.
+35
+
+--- Page 36 ---
+
+Training scale.Stage 1 trains for 500,000 steps on same-embodiment robot–robot pairs formed from 193,462
+robot trajectories spanning 229 tasks. Stage 2 trains for 100,000 steps on human–robot pairs formed from an
+additional 5,847 self-collected human video demonstrations, each paired with robot trajectories of the same
+task drawn from that corpus. Hyperparameters are summarized in Supplementary Table 3.
+Table 3 Training hyperparameters (shared by Stage 1 and Stage 2).
+Parameter Value
+Optimizer AdamW (𝛽 1 =0.9,𝛽 2 =0.95)
+Learning rate / schedule10 −5 / constant
+Weight decay / max gradient norm10 −2 / 1.0
+GPUs / batch per GPU / effective batch 64 / 2 / 128
+Precision / distributed strategy bfloat16 / DeepSpeed ZeRO-1
+EMA None
+Loss weights𝜆 𝑜 /𝜆 𝑎 /𝜆 𝑝 1.0 / 10.0 / 1.0
+Flow matching timesteps 1,000
+Shift (observation, action / progress) 5.0 / 3.0
+Prediction type (all targets) Velocity (Eq. 15)
+Timestep sampling Shifted schedule + Gaussian weighting
+Stage 1 steps / data 500K / 193,462 robot trajectories (229 tasks)
+Stage 2 steps / data 100K / 5,847 human–robot pairs
+B.4 Data Processing
+Observations.Three RGB cameras observe the workspace, including one wrist-mounted camera on each
+arm and one camera providing a static third-person view. Each camera captures224×224images, resized by
+aligning dimensions to a multiple of 8 while preserving aspect ratio. Multi-view observations are vertically
+concatenated in pixel space before VAE encoding, producing a combined frame of height224× 3 = 672pixels.
+The robot history length is𝐾=0, meaning only the current frame is used and no historical frames are included.
+Actions and proprioception.Each arm operates in a 10-dimensional action space, comprising a 3-dimensional
+Cartesian position, a 6-dimensional rotation representation (108), and a 1-dimensional gripper aperture. To-
+gether, the two arms form a 20-dimensional bimanual action space. The proprioceptive state is 20-dimensional,
+encoding the end-effector pose of both arms. Actions are normalized per-dimension to[−1, 1] via linear min-
+max scaling computed from training statistics. Six-dimensional rotation representations are used throughout
+training and converted to Euler angles through the rotation matrix at inference time.
+Temporal structure.Each video demonstration windowW contains 𝐿=6×32=192raw video demonstration
+frames covering the coupled segment and its surrounding context. Temporal downsampling at an action-to-
+video ratio of8:1produces the192 /8=24video frames provided to the model. The mapping derived from
+alignment and formulated in Eq. 7 establishes a monotonic correspondence at the frame level between video
+demonstration frames and robot frames. The resulting target is defined at action resolution and contains𝐻=32
+aligned robot timesteps per cycle. All𝐻 actions are retained for action prediction, while the corresponding
+observations are uniformly downsampled at an8:1ratio before video encoding, yielding𝐻/8=4target frames
+for video prediction. During training, the video demonstration window position is randomly offset to vary
+the surrounding context. The base action frame interval is 15 frames at 32Hz, and it is randomly scaled by
+a factor drawn uniformly from[0.5, 2.0] to improve robustness to execution speed variation. Static frames,
+identified by rotation, translation, and gripper displacement thresholds of0.001, are removed from trajectories
+before sampling.
+Data augmentation.Augmentation is applied per-sample with temporally consistent parameters across all
+frames. Brightness, contrast, and saturation are each scaled by a factor drawn uniformly from[0.7, 1.3],
+36
+
+--- Page 37 ---
+
+and hue is shifted uniformly in[−0.05, 0.05]. Gaussian blur, with𝜎 drawn from [0.1, 2.0], is applied with
+probability0 .5. Random cropping with scale in[0.8, 1.0] is also applied. Hyperparameters are summarized in
+Supplementary Table 4.
+Table 4 Data processing hyperparameters.
+Parameter Value
+Image resolution / resize224×224/ resize aligned to multiples of 8
+Number of cameras 3 (2 wrist + 1 third-person)
+Multi-view encoding Vertical concatenation in pixel space before VAE
+Robot history𝐾0
+Action dimension / proprioceptive dimension 20 / 20 (EEF)
+Action normalization Linear min-max to[−1,1]
+Video demonstration window length𝐿/ action chunk𝐻192 frames (6×32) / 32 steps
+Action-to-video downsample ratio8:1
+Action frame interval / random scale 15 /[0.5,2.0]
+Static frame thresholds (rotation/translation/gripper) 0.001 / 0.001 / 0.001
+B.5 Inference
+At each step, the three targets are generated through sequential autoregressive denoising (Eq. 17), using a
+first-order Euler ODE solver. Localization is denoised in 10 steps from pure Gaussian noise, producing the clean
+progress token ˆ𝑦𝑝 that conditions subsequent stages. Visual prediction is then denoised in 20 steps, generating
+the predicted future observationsˆ𝑦𝑜 conditioned onˆ𝑦𝑝. Finally, action is denoised in 20 steps, producing the
+action chunk ˆ𝑦𝑎 conditioned on bothˆ𝑦𝑝 and ˆ𝑦𝑜. Each stage uses its respective scheduler configuration, with
+shift = 3.0for localization and shift= 5.0for visual prediction and action. The inference schedule samples
+uniform steps from𝜎=1to 𝜎=0and transforms them through the same shifted schedule𝜙 used during training.
+The predicted action chunk of𝐻=32steps is fully executed before the next step. The video demonstration
+window W is advanced via Eq. 18 with the predicted localization scalar, and the window start is monotonically
+clipped to [𝑤𝑡,|𝜏 𝑑 |−𝐿] to prevent backward drift. Hyperparameters are summarized in Supplementary Table 5.
+Table 5 Inference hyperparameters.
+Parameter Value
+ODE solver First-order Euler
+Localization denoising steps 10
+Observation denoising steps 20
+Action denoising steps 20
+Action execution Full chunk (32 steps)
+37
+
+--- Page 38 ---
+
+Table 6Summary of notation used in the main text.
+Symbol Description
+Tasks and trajectories
+M,M train,M test Task set, training subset, testing subset
+𝑚Individual manipulation task
+𝜏𝑑 Video demonstration
+𝜏𝑟 Robot trajectory
+𝑜𝑑
+𝑡 ∈ O 𝑑,𝑜 𝑟
+𝑡 ∈ O 𝑟 video demonstration / robot observation at time𝑡
+𝑠𝑟
+𝑡 ∈ SRobot proprioceptive state at time𝑡
+𝑎𝑡 ∈ ARobot action at time𝑡
+𝑇𝑖,𝑁 𝑗 Length of video demonstration𝑖/ robot trajectory𝑗
+Embeddings and representations
+𝑓𝜙 Shared vision encoder
+ℎ𝑡 Per-frame representation (𝐷-dimensional)
+𝑃Learnable projection matrix
+e𝑡 Frame embedding (𝑑emb-dimensional)
+d𝑡,r 𝑡 Video demonstration / robot frame embeddings
+d,rVideo demonstration / robot embedding sequences
+Temporal alignment
+𝑆Pairwise distance-based similarity matrix
+𝜅Temperature parameter
+𝛽𝑑→𝑟,𝛽 𝑟→𝑑 Soft matching probabilities
+𝑅(𝑖, 𝑗),𝐸(𝑖, 𝑗)Forward / backward DTW tables
+𝛾Smoothness parameter for smooth minimum
+𝛾 𝑓 Column-normalization temperature
+˜r𝑖 Soft nearest neighbor (robot)
+ˆ𝛽𝑖𝑘 Cycle-back distribution
+𝜇𝑖,𝜈 2
+𝑖 Cycle-back mean / variance
+𝜋𝑟→𝑑,𝜋 𝑑→𝑟 Monotonic frame-level mappings
+Prediction target and conditioning
+𝐻Number of action steps in the prediction target
+𝑡𝑖 Robot timestep in the prediction target
+T𝑡 Prediction target at robot timestep𝑡
+T 𝑜
+𝑡 ,T 𝑎
+𝑡 Observation / action components ofT𝑡
+WVideo demonstration sliding window
+𝐿Window length
+𝑝𝑡 Localization value (relative position withinW)
+𝑤𝑡 Start frame index ofWin𝜏 𝑑
+Model and diffusion
+𝜋𝜃 Policy with parameters𝜃
+ˆ𝑣𝑝,ˆ𝑣𝑜,ˆ𝑣𝑎 Predicted localization / observation / action velocity
+𝑧𝑑,𝑧 𝑜 Video demonstration / robot observation tokens
+𝑦 𝑝 Localization token
+𝑦𝑜,𝑦 𝑎 Target observation / action targets
+𝜖Gaussian noise vector
+𝜎Diffusion timestep
+𝑦 𝑝
+𝜎,𝑦 𝑜
+𝜎,𝑦 𝑎
+𝜎 Noisy localization / observation / action tokens
+𝐸 𝑝 Localization encoder
+𝑀𝑠 Proprioceptive projection matrix
+ℓLanguage instruction
+𝑐Cross-attention conditioning sequence
+Loss functions
+LTCC Temporal cycle-consistency loss
+LDTW Path-cost loss
+Lalign Total alignment loss
+Lobs,L act,L loc Observation / action / localization loss
+LTotal training loss
+𝜆,𝜆 DTW,𝜆 𝑜,𝜆 𝑎,𝜆 𝑝 Loss weights
+Inference
+ˆ𝑦𝑝,ˆ𝑦𝑜,ˆ𝑦𝑎 Predicted localization / observation / action
+ˆ𝑝𝑡 Decoded localization scalar
+ˆ𝑞𝑡 Absolute frame index in the video demonstration
+38

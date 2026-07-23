@@ -1,0 +1,946 @@
+--- Page 1 ---
+
+Look Less, Think Faster: Joint Token-Compute
+Adaptation for Multimodal LLMs
+Pengcheng Wang1 , Zhiquan Wang1 , Jayoung Lee1 , Zhuoyan Xu2 , Ran
+Xu3 , Saurabh Bagchi1 , Yin Li2 , and Somali Chaterji1
+1 Purdue University, West Lafayette, IN, USA
+2 University of Wisconsin–Madison, Madison, WI, USA
+3 NVIDIA, Santa Clara, CA, USA
+Abstract.Multimodal Large Language Models (MLLMs) have recently
+demonstrated strong performance across vision-language tasks. However,
+their high inference cost, arising from both the large number of input
+visual tokens and the heavy computation of the large language model
+(LLM), remains a key barrier to practical deployment. Recent work at-
+tempts to reduce the cost by adaptively optimizing individual dimen-
+sions,e.g., pruning redundant visual tokens or skipping LLM layers and
+heads. Nonetheless, prior approaches typically treat these dimensions in-
+dependently and overlook a fundamental coupling: the available compute
+resources must be dynamically allocated across all dimensions based on
+the input content. To bridge the gap, we proposeSmar tVL, a unified
+adaptive inference framework that jointly controls vision token number
+and model compute capability in response to varying input contents and
+compute budgets.SmartVLintroduces a vision-side token controller
+that dynamically selects informative visual tokens and an LLM-side com-
+pute controller that adaptively adjusts LLM computation. Importantly,
+these controllers are trained to coordinate with each other so that the
+overall inference cost satisfies a target budget. To allow this joint schedul-
+ing, we connect the controllers using a shared budget encoding and lever-
+age a differentiable latency estimator for end-to-end training. This de-
+sign enablesSmartVLto learn cross-stage allocation strategies that
+adapttobothinputcomplexityandruntimecomputeconstraints.Exper-
+iments across multiple MLLM benchmarks demonstrate that, with joint
+scheduling,SmartVLconsistently outperforms prior adaptive methods
+and achieves superior accuracy–efficiency Pareto frontiers. Project page:
+https://www.schaterji.io/publications/2026/jointtokencompute.
+Keywords:Multimodal LLMs·Adaptive Inference
+1 Introduction
+Multimodal Large Language Models (MLLMs) have become the dominant
+paradigm for multimodal understanding, achieving remarkable success across a
+wide range of vision-language tasks, including visual question answering (VQA),
+captioning, and grounding [1,8,22,32,40]. However, this generality comes at a
+arXiv:2607.20357v1  [cs.CV]  22 Jul 2026
+
+--- Page 2 ---
+
+2 P. Wang et al.
+high computational cost at inference time. Importantly, this cost is largely fixed,
+regardless of the complexity of the input visual data. For example, processing
+an iconic image of an object requires essentially the same amount of computa-
+tion as processing an image of the same object embedded in heavy background
+clutter. This mismatch becomes more pronounced under deployment scenarios
+with varying latency requirements. Real-time systems impose strict latency con-
+straints4 to ensure rapid responses, whereas offline systems may tolerate longer
+processing times. Even within a single deployment environment, the computa-
+tional resources available to the model may fluctuate depending on system load.
+Existing solutions for efficient inference typically adopt static inference
+pipelines [2,8], which do not account for variability in input complexity or the
+compute budget available at runtime. Consequently, these methods may allocate
+excessive computation to simple inputs, while lacking the flexibility to adapt
+when the available compute budget is significantly reduced at runtime, leading
+to suboptimal performance. This raises a key question:can we design an adaptive
+inference framework for MLLMs that dynamically allocates computation based on
+both the input content and the available compute budget?
+To realize such an adaptive design, we must identify and control the primary
+drivers of MLLM inference cost. MLLMs often integrate a pretrained vision en-
+coder with a large language model (LLM). The vision encoder transforms an
+input image or video into a sequence of vision tokens, which are further pro-
+cessed by the LLM alongside text tokens. This leads to a major computational
+bottleneck in the prefill stage, whose computation can be reduced across three
+primary dimensions. First,sequence length: a standard vision encoder such
+as CLIP ViT-L/14 [27] produces 576 patch tokens per image, all of which are
+concatenated with text tokens and processed through every layer of the lan-
+guage model. Second,model depth: the language model typically consists of
+32 or more transformer layers, each contributing to latency and memory foot-
+print. Third,model width: within each layer, computation is distributed across
+multiple attention heads and a wide feed-forward network. Maximizing perfor-
+mance under varying latency constraints and input content requires navigating
+the complex interplay between these computational axes.
+While prior work has exploited these individual axes through methods such
+as token pruning (e.g., FastV [4], AIM [42], LLaVA-PruMerge [28], VTW [21])
+for sequence length, and adaptive layer/head skipping (e.g., AdaLLaVA [37],
+MoDES [13]) for model depth and width, the primary limitation of these meth-
+ods is that they address dimensions in strict isolation. Thisdecoupledapproach
+leads to stage incompatibility and prevents globally optimal efficiency. Specif-
+ically, isolated token pruning evaluates spatial redundancy without awareness
+of the high-level linguistic context required by the LLM. Discarding visually re-
+dundant but semantically critical tokens causes irreversible information loss that
+propagates through downstream layers. Conversely, isolated model skipping as-
+sumes full-length input sequences, failing to adapt its computational depth when
+4 Throughout this work, we use a FLOPs-based compute budget as a hardware-
+independent proxy for these latency targets.
+
+--- Page 3 ---
+
+Look Less, Think Faster 3
+prior token pruning has already simplified the context.Our key insightis
+that token redundancy in the visual sequence and reasoning complexity within
+the LLM arefundamentally coupled. The architectural capacity of the language
+model, specifically its depth and width, is strictly conditioned on the information
+density of the pruned visual input.
+2 3 4 5 6 7 8
+FLOPs (T)
+66
+68
+70
+72
+74
+76Accuracy (%)
+30% 40% 50% 60% 70% 80% 90% 100%
+SmartVL
+AdaLLaVA
+AdaLLaVA-PruMerge
+FastV
+LLaVA-PruMerge+
+Fig.1:Pareto frontier on VQAv2.
+SmartVLachieves a stronger accuracy–
+efficiency tradeoff than token-pruning
+methods (FastV and LLaVA-PruMerge+),
+compute-only control (AdaLLaVA), and
+the composed token+compute baseline
+(AdaLLaVA-PruMerge), highlighting the
+benefit of cross-dimensional adaptation.
+Driven by our insight, we propose
+Smar tVL, a unified adaptive in-
+ference framework that jointly con-
+trols sequence length, model depth,
+and model width.SmartVLconsists
+of two lightweight modules: avision-
+side token controllerand anLLM-
+side compute controller. Crucially, to
+ensure the framework is explicitly
+content- and budget-aware, these con-
+trollers formulate their allocation de-
+cisions based on fused intermediate
+features that jointly encode the in-
+put semantics and the target compute
+budget. Rather than relying on iso-
+lated heuristics, both controllers are
+trained end-to-end via a differentiable
+resource estimator that directly penalizes deviations from the compute budget.
+By conditioning all computational decisions on the fused content and budget
+representations, the framework eliminates the need for manual threshold tun-
+ing. During inference, an integrated bounding mechanism strictly enforces the
+compute budget while enabling dynamic, cross-dimensional compute trade-offs.
+Consequently, the system autonomously decides for each input instance whether
+to allocate FLOPs toward retaining more visual context or activating deeper
+reasoning layers, as shown in Fig. 1.
+We evaluateSmartVLon multiple MLLM benchmarks (VQAv2, GQA,
+TextVQA, ScienceQA, POPE, MMBench, VizWiz) and compare against
+single-dimension token pruning baselines (LLaVA-PruMerge+, FastV), two-
+dimensional compute adaptive methods (AdaLLaVA), and a composed token-
+compute adaptation solution (AdaLLaVA-PruMerge). Joint token-compute
+scheduling consistently yields superior accuracy versus efficiency Pareto fronts
+compared to individual token or compute controls or their naive combinations.
+Specifically,SmartVLconsistently outperforms AdaLLaVA across all FLOPs
+levels, achieving a 6.6% accuracy gain at 50% compute and maintaining this lead
+uptofullcapacity.WhileSmartVLdeliverscomparableaccuracytoPruMerge+
+within its restricted 3T to 4.8T window, our framework scales across a signifi-
+cantly broader range from 2.5T to the full 8.5T capacity.
+Our main contributionsare summarized as follows.
+•We propose a unified adaptive inference framework that jointly controls se-
+quence length, model depth, and model width to satisfy varying compute
+
+--- Page 4 ---
+
+4 P. Wang et al.
+budgets. This approach explicitly addresses the fundamental cross-stage cou-
+pling between vision token spatial density and LLM architectural capacity
+that prior work overlooks.
+•We design two lightweight controllers linked by a shared budget encoding
+across the MLLM pipeline, jointly optimized via a differentiable latency esti-
+mator. To stabilize the compound discrete search space, we introduce a train-
+ing strategy utilizing Gumbel-sigmoid sampling and an asymmetric budget
+violation loss, ensuring strict adherence to target latency while preserving
+reasoning accuracy.
+•Experiments across multiple MLLM benchmarks and diverse tasks demon-
+strate that our method consistently outperforms decoupled baseline solutions.
+Notably, our framework achieves a stronger Pareto frontier with a wider adap-
+tation range: at the same computational budget, our method delivers higher
+accuracy. At∼50% compute budget, our method outperforms AdaLLaVA by
+an average of 7.8% across seven benchmarks.
+2 Related Work
+MLLMs architectures.Modern MLLMs adopt a “patch tokens + LLM” ar-
+chitecture: a ViT-style encoder generates dense visual tokens that are projected
+into the language model’s embedding space and processed autoregressively [17,
+23,27]. Two primary approaches have emerged for the vision-to-language pro-
+jection stage. The first employs learnable query mechanisms, such as the Q-
+Former in BLIP-2 [18] and InstructBLIP [7], that compress visual informa-
+tion through cross-attention with a fixed number of learnable queries. This
+query-based paradigm has been adopted in subsequent models such as VideoL-
+LaMA [39] and Qwen2-VL [36]. Alternatively, LLaVA [23] and MiniGPT-4 [44]
+use a multilayer perceptron (MLP) to directly project visual tokens into the
+language model’s embedding space, a design that has proven effective for mul-
+timodal instruction tuning and has been scaled up in recent models such as
+Molmo [8] and Qwen2.5/3-VL [2,3]. Despite this architectural diversity, current
+MLLMs have a fixed computational cost regardless of the complexity of the in-
+put data, and cannot respond to varying compute budgets at inference time.
+These gaps motivate our content- and budget-aware adaptive inference.
+Efficient inference of MLLMs.Compact architectures reduce inference cost
+by pairing small language backbones (e.g., Phi-2 [16]) with vision encoders, as
+demonstrated by TinyGPT-V [38], LLaVA-ϕ[45], and TinyLLaVA [43]. Mo-
+bileVLM [5] and MobileVLM V2 [6] further optimize backbone and projector
+design for mobile deployment, achieving competitive accuracy at sub-3B scales.
+Post-training compression and conditional computation offer a complementary
+strategy. Quantization and low-rank adaptation can cut memory bandwidth
+and arithmetic intensity with minimal accuracy degradation [9,35]. Mixture-
+of-experts (MoE) architectures such as MoE-LLaVA [20] and LLaVA-MoD [29]
+route each token to a small subset of expert modules, reducing total model ca-
+pacity. Another line of work targets the large number of visual tokens, which
+
+--- Page 5 ---
+
+Look Less, Think Faster 5
+drive both attention complexity and key-value cache memory. FastV [4] and
+VTW [21] prune up to half of image tokens after shallow layers based on at-
+tention patterns. LLaVA-PruMerge [28] performs early pruning before tokens
+enter the LLM using vision-encoder key-value statistics. IVTP [12] combines
+vision-side and instruction-aware pruning to retain only query-relevant tokens.
+FastVLM [33] replaces the standard ViT backbone with a hybrid encoder that
+natively produces far fewer tokens. While these methods largely improve ef-
+ficiency, they inherit the fundamental static configuration problem and thus
+cannot support adaptive inference.
+Adaptive, budget-aware inference.Several recent works seek to allocate
+computation dynamically: either in response to an explicit resource budget, or
+driven by the content of each input, or both. MoDES [13] targets adaptive com-
+putation in MoE-based MLLMs by learning per-token expert importance and
+applying input-dependent expert activation to reduce per-token computation.
+It focuses on expert-width control via lightweight gating without changing the
+base architecture. AIM [42] extends token reduction to a training-free setting,
+supporting token merging and pruning across a range of resource configurations
+within a single model. Most directly related to our work, AdaLLaVA [37] learns
+an inference policy that, given an image-question pair and a latency budget
+proxy, adaptively drops transformer layers, attention heads, and MLP modules
+in the LLM while largely preserving accuracy. While AdaLLaVA demonstrates
+budget-conditioned model-component control, it does not jointly coordinate vi-
+sion token count and model capacity.SmartVLaddresses this limitation with
+a unified framework that simultaneously controls all three axes of MLLM com-
+putation, conditioned on both input content and latency budget.
+3Smar tVL: Adaptive Inference of MLLMs
+Given an imageIand a text promptT, a standard MLLM encodesIintoN
+visual tokens, concatenates them with text tokens, and processes the sequence
+through anL-layer transformer (hidden dimensionD,Aheads per layer). The
+resulting prefill computation spansthree dimensions: 1) sequence lengthS,
+determined by the retained visual tokensSvis; 2) model depthLeff, the number
+of executed transformer layers; and 3) model widthαl, the active fraction of
+attention heads and FFN channels at layerl. We use(S, Leff, αl)as the adaptive
+search space for our allocation framework.
+Budget constraint.Letf(·;φ)denote the MLLM with parametersφ. Let
+b∈[b min,1]denote a target compute budget expressed as a fraction of full-model
+prefillFLOPs.WeuseFLOPsasthebudgetmetricbecauseprefillcomputationis
+compute-bound and FLOPs provide a hardware-independent proxy for latency
+that correlates well with wall-clock time on modern accelerators. A minimum
+bmin >0is enforced since the firstPlayers (prefix layers, Sec. 3.2) always
+execute at full capacity.
+
+--- Page 6 ---
+
+6 P. Wang et al.
+Adaptation policy.Given input(I, T)and budgetb, we seek a learned allo-
+cation policyπthat determines binary masks for three joint dimensions. These
+masks collectively define the computational configuration as follows:
+– Sequence length (S):The token maskmtoken determines the number of
+retained vision tokensS vis = P
+i mtoken,i, yielding the effective sequence
+lengthS=S text +S vis, whereS text is the number of text tokens.
+– Effective depth (Leff):The layer maskm layer dictates the execution of
+transformer blocks, directly controlling the vertical depth of the model.
+– Effective width (αl):The activation fractionαl ∈[0,1]represents the per-
+layer width derived frommlayer andm head. Specifically,α l = 0denotes a
+skipped layer, whileαl = 1indicates execution at full capacity.
+At inference, the generated answerXa is produced by the modelfrunning under
+the specific allocation dictated byπ(I, T, b).
+X a ←f
+ 
+I, T;φ
+ π(I, T, b)
+
+, (1)
+i.e.,fis applied to the prompt with token and layer/head selection given byπ.
+The policyπ ∗ maximizes task accuracy subject to the budget constraint:
+π∗ = arg maxπ A(I, T, f, π)s.t.C(I, T, π)≤b· C full, (2)
+whereA(I, T, f, π)denotestheaccuracyoffwhenrununderallocationπ(I, T, b),
+C(I, T, π)denotes the resulting prefill compute cost, andC full is the full-model
+prefill cost. The policyπis realized by two sequential controllers (Secs. 3.1
+and 3.2). Each transformer layer’s cost scales asO(αl ·D 2S+α l ·DS 2), where
+D2Sarises from linear projections (Q/K/V/O and FFN) andDS2 from atten-
+tion score computation. Aggregating overLeff executed layers:
+Cprefill =O
+
+ΣL
+l=1 αl ·(D 2S+DS 2)
+
+. (3)
+Sequence length enters quadratically through attention, making token reduc-
+tion the highest-leverage single dimension. Depth (number of active layers) and
+width (αl) each provide multiplicative reductions that compound with token re-
+duction, so joint control over all three dimensions yields strictly larger savings
+than optimizing any single dimension alone.
+Framework overview.We realize this formulation with two learned controllers
+bridged by a shared budget signal (Fig. 2). Avision-side token controller
+(Sec.3.1)determineswhichvisualtokenstoretainviaper-tokenGumbel-sigmoid
+decisions. AnLLM-side compute controller(Sec. 3.2) determines which
+transformer layers to execute and which attention head groups to activate within
+each layer. Both controllers are jointly optimized end-to-end through adiffer-
+entiable FLOPs estimator(Sec. 3.3) that maps their continuous outputs to
+an estimated compute ratio. Concretely,πdecomposes into two components:
+mtoken =π tok(hb),(m layer,m head) =π comp(˜h(P)
+b ), (4)
+whereh b ∈R Cv (withC v representing the vision encoder hidden dimension) is
+the budget token’s hidden state at the ViT output, encoding both image content
+
+--- Page 7 ---
+
+Look Less, Think Faster 7
+Language Response
+Large Language Model
+Prediction Loss
+Projector
+Compute Controller
+Token Controller
+Tokenizer
+Differentiable
+Latency Estimator
+Vision Encoder
+ Budget Violation
+Loss
+Vision Input
+Language Instruction
+∇ prediction →  LLM, Controllers
+Budget Encoder
+Global Budget ∇ violation →  Controllers
+Append
+Append
+Fig.2: Overview ofSmar tVL.A vision-side token controller and an LLM-side
+compute controller jointly govern three coupled compute dimensions: vision tokens
+(sequence length), active attention heads and FFN capacity (width), and executed
+transformer layers (depth). Both controllers are conditioned on the same global budget
+and trained end-to-end through a differentiable latency estimator, enabling them to
+learn content- and budget-aware allocation strategies across all three dimensions.
+and budgetb(Sec. 3.1), and ˜h(P)
+b ∈R D is the budget token’s hidden state after
+PLLM prefix layers, fused with the token countκfromπ tok (Sec. 3.2).
+3.1 Vision-Side Token Controller
+As the initial stage of this joint allocation process, the token controller deter-
+mines the sequence length by adaptively selecting a subset of vision tokens as
+the input to the LLM, conditioned on image content and compute budget.
+In-encoder budget fusion.To tightly couple token selection with visual pro-
+cessing and minimize overhead, we embed the budget signal directly into the
+vision encoder. The scalar budgetbis mapped to the ViT hidden space via
+sinusoidal encoding (PE) [34] and an MLP:
+eViT
+b = MLPViT
+ 
+PE(b)
+
++p b (5)
+wherep b is a learned position embedding. This budget token is appended to the
+input sequenceX0 = [xCLS,x 1, . . . ,xN ,e ViT
+b ]. By attending to all image patches
+throughout the ViT layers, it dynamically fuses visual content with the budget
+constraint to output a context-aware budget statehb ∈R Cv.
+Per-token Gumbel-Sigmoid decisions.The token controller projectshb via
+a linear layer to compute per-token logitsz∈R N. To enable differentiable
+binary routing, we apply the Gumbel-sigmoid relaxation [15,26].zi is perturbed
+by Gumbel noiseξi to produce a continuousyi at temperatureτ:
+yi =σ
+ 
+(zi +ξ i)/τ
+
+, m i =1[y i >0.5]−sg(y i) +y i. (6)
+This straight-through estimator (STE), wheresg(·)is the stop-gradient operator,
+applies the discrete maskmtoken ∈ {0,1} N during the forward pass while routing
+gradients through the continuousyi backward. The retained token countSvis =
+
+--- Page 8 ---
+
+8 P. Wang et al.
+P
+i mi thus adapts dynamically to the input. During training, dropped tokens
+are zeroed to maintain static tensor shapes for batching. At inference, we remove
+the noise (ξi = 0) and physically discard tokens whereσ(zi)≤0.5. The LLM
+processes only the selected tokens; RoPE [31] natively handles this compressed,
+contiguous sequence without requiring positional re-encoding. Because the token
+controller is trained under the same budget signal used at inference time, its
+learned logits produce a token mask for each input from the image content and
+target budget, avoiding manually tuned retention ratios for each dataset.
+3.2 LLM-Side Compute Controller
+After receiving the visual sequence from the token controller, the LLM-side com-
+pute controller constitutes the second stage of the joint allocation framework.
+It governs model depthLeff and widthα l by dynamically deciding which trans-
+former layers to execute and which attention head groups to activate within each
+layer. To explicitly address the cross-stage coupling, these discrete architectural
+decisions are strictly conditioned on the actual retained visual token countSvis
+and the shared global budget.
+Budget encoding and prefix layers.To project the scalar budgetbinto the
+LLM embedding space, we reuse the vision-side sinusoidal encoding but apply a
+distinctMLPtomatchtheLLMhiddendimensionD:e LLM
+b = MLPLLM(PE(b))∈
+RD. Appended to the end of the prompt sequence, this budget token receives
+standard RoPE and attends to all preceding visual and textual content. The
+initialPtransformer blocks (prefix layers) strictly execute at full capacity to
+establish a minimum computational baseline. Through these layers, the budget
+token aggregates global context to output a content-aware representationh(P)
+b .
+Cross-stage token count embedding.Although the prefix stateh (P)
+b cap-
+tures visual context, it lacks an explicit measure of the consumed token budget.
+Because LLM inference cost strictly depends on the retained sequence length, we
+explicitly condition the compute controller on the normalized token survival rate
+κ= sg
+ PN
+i=1 σ(zi)
+
+/N∈[0,1]. This scalar is positionally encoded and added to
+the prefix boundary state:
+eκ = MLP κ
+ 
+PE(κ)
+ ˜h(P)
+b =h (P)
+b +e κ. (7)
+Crucially, the stop-gradient operatorsg(·)isolates the vision and compute con-
+trollers’ optimization trajectories. Backpropagating the LLM’s architectural al-
+location gradients directly throughκinduces severe magnitude imbalances, pre-
+maturely forcing the vision controller into a degenerate sparse state. Detaching
+this specific path stabilizes the joint discrete optimization while rigorously pre-
+serving the forward budget conditioning.
+Gating via independent Gumbel-Sigmoid.Given the fused state˜h(P)
+b , the
+compute controller predicts discrete execution masks for the remaining layers
+P+ 1throughL. Unlike prior adaptive methods (e.g., AdaLLaVA) that en-
+force a deterministic top-Kconstraint via Gumbel-softmax selection, our frame-
+work applies independent Gumbel-sigmoid activations (Eq. (6)) simultaneously
+
+--- Page 9 ---
+
+Look Less, Think Faster 9
+to each layer or head group. This independent formulation is essential because
+the optimal active module count is not statically predefined; rather, it emerges
+dynamically from the global budget and the preceding vision token survival
+rate. To prevent premature structural collapse, we initialize the linear gating
+biases positively, ensuring the network begins optimization near full capacity
+before the asymmetric violation loss (Sec. 3.3) induces selective deactivation.
+We explore two specific allocation granularities:Layer controller (L). A sin-
+gle linear projection maps the fused state toL−Plogits. These are processed
+via the independent Gumbel-sigmoid function to produce a binary layer mask
+mlayer = (g l)L
+l=P+1 ∈ {0,1} L−P. Each elementgl governs the execution of its cor-
+responding dynamically scheduled layerl: ifgl = 0, the layer is strictly bypassed
+via its residual connection; ifgl = 1, it executes at full capacity (αl = 1).
+Layer-Head controller (LH). For finer-grained allocation, theAattention
+heads are partitioned intoGequal-sized groups (e.g.,G=4for LLaMA-7B with
+A=32). The linear gating head generates a matrix of group-level binary masks
+for the dynamically scheduled layers withM= GumbelSigmoid
+ 
+Wh ˜h(P)
+b +
+ch
+
+. Each row inM∈ {0,1} (L−P)×G corresponds to a layerl, denoted as
+Ml ∈ {0,1} G, and serves as a binary mask broadcast to its respective head
+groups within that layer; thusM=m head. To maintain balanced computa-
+tional reduction, one decision per group synchronously controls both the multi-
+head attention components and the corresponding intermediate dimension of
+the FFN. The active capacity fraction for layerlis dynamically computed as
+αl =PG
+j=1 Ml,j/G. Consequently, when all group masks for a specific layer eval-
+uate to zero (αl = 0), the entire layer is skipped, effectively unifying depth and
+width control within a single formulation.
+3.3 Joint Training and Inference
+Jointly optimizing the allocation decisions across both the vision token controller
+and LLM compute controller under a strict global budget poses fundamental
+challenges regarding non-differentiability and training stability. To circumvent
+the discrete bottleneck and map surrogate probabilities to a continuous compute
+ratio, we design a differentiable FLOPs estimator. Guided by this estimated ra-
+tio, an asymmetric budget violation loss is applied to ensure stable, soft-guided
+optimization without inducing structural collapse. Furthermore, a dynamic bud-
+get sampling procedure is integrated during training, enabling the unified model
+to generalize across a continuous spectrum of resource constraints.
+Differentiable latency estimator.With ˜Svis =PN
+i=1 σ(zi)(the differentiable
+proxy forSvis),α l the effective layer activity, andS=Stext + ˜Svis, the estimated
+prefill cost is calculated as:
+ˆC=Σ L
+l=1 αl
+
+(8D2 + 6DDint)·S+ 4D·S 2
++ 2DV·S, (8)
+whereD int is the FFN intermediate dimension andVthe vocabulary size. The
+normalized ratior= ˆC/Cfull is differentiable in both˜Svis and{α l}. Letθdenote
+
+--- Page 10 ---
+
+10 P. Wang et al.
+the parameters of both controllers, including their respective budget and token-
+count embedding modules. This differentiable latency estimator bypasses the
+non-differentiable discrete routing bottleneck, establishing an end-to-end gradi-
+ent path for the budget constraint. The gradient of the budget penalty (∂r/∂θ)
+propagates exclusively to these controller parameters, explicitly driving the vi-
+sion token controller and LLM compute controller to learn budget compliance.
+Asymmetric budget violation loss.Given the estimated compute ratior
+and target budgetb, we formulate an asymmetric penalty:
+Lover = max(0, r−b) 2,L under = max(0,(b−µ)−r), (9)
+where the marginµdefines a zero-penalty tolerance interval[b−µ, b]. The asym-
+metric form reflects the different consequences of the two violations. Overshoot-
+ing the budget breaks the requested operating point and is therefore penalized
+quadratically, while under-utilization remains feasible but leaves available ca-
+pacity unused. We penalize the latter linearly, providing a steady incentive to
+exploit compute without overwhelming the task prediction loss. The final train-
+ing objective integrates these terms:
+Ltotal =L pred +λ(t)·(w over · Lover +w under · Lunder), (10)
+wherew over andw under are weights forL over andL under, respectively.λ(t) =
+min(1, t/T warmup)linearly scales the violation weight. This scheduled warmup is
+critical for optimization stability. Enforcing an immediate budget constraint be-
+fore the controllers learn to distinguish task-relevant features causes the penalty
+gradients to dominateL pred, prematurely forcing the network into degenerate
+sparse states. Delaying full regularization ensures the controllers first establish
+reliable importance distributions, grounding subsequent pruning in learned task
+utility rather than random initialization.
+Training procedure.At each step, a target budgetbis sampled uniformly from
+[bmin, bmax]and applied to the entire batch. This enables generalization across
+compute budgets, while batch-level sharing maintains hardware execution effi-
+ciency. To achieve fine-grained sensitivity tob, we employ sinusoidal encodings
+that allow the controllers to handle unseen budget ratios. The framework un-
+dergoes end-to-end optimization of the LLM, projector, and both controllers
+to coordinate decisions across the perception and cognition stages; the vision
+encoder remains frozen to ensure a stable input feature distribution for training.
+Inference.Removing Gumbel noise yields deterministic execution masks at in-
+ference. Because the differentiable training objective enforces the budget softly,
+the raw masks can occasionally exceed the target budget; forb <1.0, we there-
+fore apply a deterministic budget projection. Empirically, we find that generative
+quality is relatively resilient to sequence truncation, so the projection first dis-
+cards the lowest-confidence visual tokens. It reduces layers or heads only when
+token-level adjustment alone is insufficient.
+Implementation details.Controller hyperparameters, including the token and
+compute Gumbel temperatures, are fixed across benchmarks and budgets; each
+operating point is selected by changing the target compute budget at inference.
+
+--- Page 11 ---
+
+Look Less, Think Faster 11
+4 Experiments and Results
+4.1 Experiment Setup
+Benchmarks.We evaluate zero-shot performance vialmms-eval[41] on seven
+benchmarksacrossdiversecapabilities:VQAv2[10](general),GQA[14](spatial),
+TextVQA[30](text-centric),ScienceQA[25] (reasoning),VizWiz[11] (real-world
+blind), POPE [19] (hallucination), and MMBench [24] (comprehensive). Follow-
+ing prior works [37], we report official metrics and average prefill FLOPs.
+Baselines.We compareSmartVLagainst four methodological categories: (1)
+Compute-only(AdaLLaVA [37]) featuring LLM-side adaptation only; (2)Token-
+only(LLaVA-PruMerge+ [28], FastV [4]) focused on sequence pruning with a
+static LLM; (3)Sequential(AdaLLaVA-PruMerge), a two-stage composition
+lacking joint end-to-end optimization; and (4)Full-model reference(LLaVA-
+1.5 [22]) as the performance upper bound and FLOPs normalization anchor. For
+fixed token-pruning baselines, we use their original interfaces to sweep preset
+retention ratios up to full token retention, covering 10%–100% for FastV and
+1/8–1 for PruMerge+. The resulting fixed-ratio configurations form the operat-
+ing points used for their Pareto envelopes.
+Model variants.We evaluate two variants of our design, differing in the com-
+pute controller granularity:SmartVL-L uses layer-level gating (depth only) and
+SmartVL-LH uses head-group gating (depth and width). Both variants include
+the vision-side token controller.
+4.2 Main Results and Discussion
+Accuracy-efficiency tradeoffs.We previewed the results on VQAv2 in Fig. 1;
+here we provide quantitative comparisons. On VQAv2,SmartVLshows con-
+sistent gains across budgets. At 50% FLOPs,SmartVLreaches 74.4% accu-
+racy, compared with 67.9% for AdaLLaVA and 74.5% for AdaLLaVA-PruMerge.
+AdaLLaVA suffers a sharp drop at 50% budget (its minimum operating point),
+whereasSmartVLmaintains strong accuracy from 20% to 100% of full budget.
+At 70% FLOPs, the gap betweenSmartVL(75.7%) and AdaLLaVA (74.4%)
+remains 1.3 points, while at full budgetSmartVLmatches the base model
+(76.5%). AdaLLaVA-PruMerge achieves comparable accuracy in the mid-range
+but is limited to a few manually configured token-retention ratios (we test 25%
+PruMerge+ token retention with AdaLLaVA layers at 65%, 80%, and 100%)
+and cannot adapt continuously. FastV and LLaVA-PruMerge+ are fixed token-
+pruning methods (we sweep their original retention-ratio interfaces as described
+in Sec. 4.1); they use a dataset-level retention configuration and cannot adap-
+tively adjust for each request or sample. These results confirm that joint cross-
+dimensional control yields a better Pareto frontier than decoupled baselines.
+Comprehensive benchmark results.Fig. 3 extends the comparison to six
+additional benchmarks: GQA, TextVQA, ScienceQA, POPE, VizWiz, and MM-
+Bench.SmartVLconsistently outperforms or matches baselines across these
+
+--- Page 12 ---
+
+12 P. Wang et al.
+2 3 4 5 6 7 8
+57
+58
+59
+60
+61
+62
+GQA
+30% 40% 50% 60% 70% 80% 90% 100%
+2 3 4 5 6 7 8 9
+30
+35
+40
+45
+50
+55
+TextVQA
+30% 40% 50% 60% 70% 80% 90% 100%
+2 3 4 5 6 7 8 9
+65
+66
+67
+68
+69
+70
+ScienceQA
+30% 40% 50% 60% 70% 80% 90% 100%
+2 3 4 5 6 7 8
+86
+87
+POPE
+30% 40% 50% 60% 70% 80% 90% 100%
+2 3 4 5 6 7 8 9
+36
+40
+44
+48
+52
+56
+VizWiz
+30% 40% 50% 60% 70% 80% 90% 100%
+2 3 4 5 6 7 8 9
+58
+60
+62
+64
+MMBench
+30% 40% 50% 60% 70% 80% 90% 100%
+SmartVL
+AdaLLaVA-PruMerge
+AdaLLaVA
+FLOPs (T)
+Accuracy
+Fig.3: Accuracy–Latency Pareto comparison across benchmarks.Pareto
+fronts on (a) GQA, (b) TextVQA, (c) ScienceQA, (d) POPE, (e) VizWiz, and (f) MM-
+Bench.SmartVLconsistently achieves a stronger or comparable accuracy–efficiency
+tradeoff across operating points against AdaLLaVA and AdaLLaVA-PruMerge.
+diverse tasks. On TextVQA and VizWiz, AdaLLaVA suffers severe degrada-
+tion at 50% budget (29.8% and 34.3%, respectively), whereasSmartVLmain-
+tains 54.4% and 55.1% at the same FLOP level. On GQA,SmartVL(59.8%
+at 50%) slightly trails AdaLLaVA-PruMerge (60.1%) but surpasses AdaLLaVA
+(56.8%). On ScienceQA and POPE, all three methods achieve comparable ac-
+curacy, withSmartVLshowing modest gains in the mid-range. On MMBench,
+AdaLLaVA and AdaLLaVA-PruMerge are competitive at full budget;SmartVL
+achieves 62.0% at 50% compared to 63.1% for AdaLLaVA-PruMerge and 63.3%
+for AdaLLaVA. Overall,SmartVLprovides the most consistent Pareto frontier
+across benchmarks, with the largest advantages on VQA-style tasks (VQAv2,
+TextVQA, VizWiz) where adaptive token and compute control matter the most.
+4.3 Vision Token Controller Analysis
+A distinguishing feature of our framework relative to AdaLLaVA is the addition
+of a learned vision-side token controller that operates after the ViT encoder. This
+section isolates its contribution by comparing against established token selection
+methods. Fig. 4 compares our token controller (with the compute controller dis-
+abled,i.e., all layers and heads active) against PruMerge+ [28] and FastV [4] on
+VQAv2.Ourtokencontrollerachievesaconsistentlyfavorableaccuracy-efficiency
+tradeoff across the full range. In the high FLOPs regime, it preserves accuracy
+better than both baselines by retaining the most task-relevant tokens. In the low
+FLOPs regime, it outperforms FastV and PruMerge+ by a clear margin. Impor-
+tantly, our token controller is budget-conditioned: a single trained model pro-
+duces different token subsets for different budgets and selects input-dependent
+token subsets for each target budget. By comparison, the fixed-pruning baselines
+form discrete retention-ratio operating points, while our controller changes the
+retained token set with the target budget. This budget-conditioned flexibility of
+our approach is what enables seamless integration with the compute controller
+in the full framework.
+
+--- Page 13 ---
+
+Look Less, Think Faster 13
+2 3 4 5 6 7 8
+FLOPs (T)
+66
+68
+70
+72
+74
+76VQAv2 Accuracy (%)
+30% 40% 50% 60% 70% 80% 90% 100%
+Ours
+FastV
+LLaVA-PruMerge+
+Fig.4: Pareto frontier of token-
+prune methods(VQAv2). Our learned
+token controller achieves a favorable
+tradeoff compared to FastV / LLaVA-
+PruMerge+ across varying budgets.
+2 3 4 5 6 7 8 9
+FLOPs (T)
+30
+35
+40
+45
+50
+55T extVQA Accuracy (%)
+30% 40% 50% 60% 70% 80% 90% 100%
+SmartVL-L
+SmartVL-LH
+AdaLLaVA-PruMerge
+AdaLLaVA
+Fig.5: Pareto frontier of different
+model variants(TextVQA). Our vari-
+ants (L and LH) achieve a larger adapta-
+tion range and better trade-off compared
+to AdaLLaVA / AdaLLaVA-PruMerge.
+4.4 Ablation Studies
+L vs. LH variant.Comparing the two variants and baselines on TextVQA
+(Fig. 5),SmartVLyields consistent gains across all compute budgets. At 50%
+FLOPs, SmartVL-L has 54.1% accuracy, beating AdaLLaVA-PruMerge (51.3%)
+and avoiding the severe degradation of AdaLLaVA (29.8%). This performance
+lead persists at 70% FLOPs (57.0% vs. 54.3% and 50.8%, respectively) and scales
+to a baseline-leading 58.1% at full capacity. The SmartVL-LH variant offers a
+viable alternative, trading a marginal drop at full budget (57.5%). This find-
+ing indicates that MLLM redundancy primarily resides in sequence and depth.
+Preserving full-width attention remains essential for inference quality, making
+joint token-layer control outperform a fully unconstrained 3D controller. While
+comparable in the mid-range, AdaLLaVA-PruMerge lacks continuous adapta-
+tion, relying instead on manual, discrete configurations (e.g., 25% tokens with
+65-100% layers). Furthermore, AdaLLaVA suffers a severe accuracy degradation
+at 50% compute, exposing the fundamental limits of layer-only pruning relative
+to cross-dimensional control.
+Content-dependentoptimaltoken-computeallocation.Akeydesignchoice
+ofSmartVLis to jointly train the token and compute controllers, rather than
+optimizing either dimension in isolation. To validate this decision, we conduct
+an ablation study with separately trained vision-token and compute controllers.
+We sweep the token retention ratioT∈ {0.5,0.6,0.7,0.8,0.9}and compute re-
+tention ratioC∈ {0.5,0.6,0.7,0.8}, and record the resulting computation and
+accuracy. In this setup, each controller receives its own budget signal, specify-
+ing how many visual tokens or how much LLM compute to keep. As shown in
+Fig. 6, the optimal(T, C)varies substantially across tasks and budget levels.
+For instance, POPE consistently favors high visual coverage with minimal LLM
+depth (T=0.8,C=0.5), while VQAv2 and TextVQA require progressively deeper
+reasoning as the budget grows (T=0.9,C=0.8at 7 TFLOPs). In addition, single-
+dimensional adaptation is not sufficient. In Fig. 7, we present combinations with
+different token or compute retention ratios but similar end-to-end FLOPs. At
+
+--- Page 14 ---
+
+14 P. Wang et al.
+Fig.6: Optimal token-compute adaptation varies based on task.Best perfor-
+mance allocations under varying compute budgets are shown across the figures. The
+optimal combination differs across tasks and compute budget levels;e.g., POPE con-
+sistently favors a high token retention ratio with greater tolerance to reduced compute
+retention, while VQAv2 requires deeper LLM processing with a higher compute reten-
+tion ratio. No single configuration or trade-off is optimal for different tasks.
+Fig.7: Visualization of token-compute allocation under a 4 TFLOPs comp-
+tute budget. The upper and lower figures show the prediction results on POPE and
+TextVQA. Different(T, C)combinations exhibit varying performance depending on
+the input, demonstrating that the best budget allocation is content-dependent.
+comparable FLOPs around 4 TFLOPs, shifting the budget from vision tokens
+to LLM compute (or vice versa) leads to different predictions on the same in-
+put, and the pattern also differs across tasks. This confirms that inference cost
+should be allocated across both dimensions in acontent-aware manner. If only
+one dimension were used, the model would lack the flexibility needed for diverse
+task types and input characteristics.
+Scaling to 13B models.We further instantiateSmartVLon the LLaVA-
+1.5-13B backbone, which has 40 language layers with a fixed 20-layer prefix,
+and evaluate on the VQAv2 validation set. The 13B variant follows the same
+
+--- Page 15 ---
+
+Look Less, Think Faster 15
+global-budget training and inference pipeline as the 7B model, with AdaLLaVA
+13B [37] serving as the corresponding compute-only baseline.
+4 6 8 10 12 14 16
+FLOPs (T)
+72
+74
+76
+78VQAv2 Accuracy (%)
+30% 40% 50% 60% 70% 80% 90% 100%
+SmartVL (13B)
+AdaLLaVA (13B)
+Fig.8: Scaling to 13B on VQAv2.
+SmartVLimproves the accuracy-efficiency
+Pareto frontier over AdaLLaVA.
+As shown in Fig. 8, joint token-
+compute adaptation improves the
+Pareto frontier at this larger scale.
+Nearthehalf-budgetregime,SmartVL
+reaches75.45%accuracyat7.25Tpre-
+fill FLOPs, while AdaLLaVA reaches
+72.27% at 8.27T. At comparable
+mid/high compute levels,SmartVL
+obtains 77.66% at 11.56T com-
+pared with 76.45% at 11.57T for
+AdaLLaVA, and reaches 78.82% at
+full budget compared with 77.85%.
+These results show that the learned allocation strategy transfers to a larger
+backbone, with joint visual-token and LLM-depth adaptation continuing to im-
+prove the accuracy–efficiency tradeoff under constrained computation.
+5 Conclusion and Discussion
+In this paper, we presentedSmartVL, a unified adaptive inference framework
+that jointly controls visual token usage and LLM computation in MLLMs un-
+der varying global budgets and input contents. By coupling a vision-side token
+controller with an LLM-side compute controller through a shared budget en-
+coding and a differentiable latency estimator,SmartVLlearns content-aware
+allocation strategies across different computational dimensions. Extensive ex-
+periments across multiple benchmarks demonstrated that this joint scheduling
+achieves stronger accuracy-efficiency tradeoffs than prior adaptive baselines.
+Future work.Our latency estimator targets prefill-stage FLOPs as the primary
+inference cost; extending this adaptive routing to the memory-bound decode
+stage remains open. Our architectural routing is orthogonal to weight quantiza-
+tion, and combining the two may yield compounded gains. Finally, translating
+FLOP reductions into wall-clock improvements will require integrating sparse
+execution masks with specialized hardware kernels.
+Acknowledgements.This material is based in part upon work supported by
+the National Science Foundation under Grant Numbers CNS-2333487/2333491
+(CPS Frontier), CNS-2146449 (NSF CAREER), and IIS-2442739 (NSF CA-
+REER), as well as a gift from Google. Any opinions, findings, conclusions, or
+recommendations expressed in this material are those of the authors and do not
+necessarily reflect the views of the sponsors. We thank the reviewers and area
+chairs for their constructive feedback, which helped improve this work.
+
+--- Page 16 ---
+
+16 P. Wang et al.
+References
+1. Bai, J., Bai, S., Yang, S., Wang, S., Tan, S., Wang, P., Lin, J., Zhou, C., Zhou, J.:
+Qwen-VL: A versatile vision-language model for understanding, localization, text
+reading, and beyond. arXiv preprint arXiv:2308.12966 (2023)
+2. Bai, S., Cai, Y., Chen, R., Chen, K., Chen, X., Cheng, Z., Deng, L., Ding, W., Gao,
+C., Ge, C., et al.: Qwen3-VL technical report. arXiv preprint arXiv:2511.21631
+(2025)
+3. Bai, S., Chen, K., Liu, X., Wang, J., Ge, W., Song, S., Dang, K., Wang, P.,
+Wang, S., Tang, J., Zhong, H., et al.: Qwen2.5-VL technical report. arXiv preprint
+arXiv:2502.13923 (2025)
+4. Chen, L., Zhao, H., Liu, T., Bai, S., Lin, J., Zhou, C., Chang, B.: An image is
+worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-
+language models. In: ECCV (2024)
+5. Chu, X., Qiao, L., Lin, X., Xu, S., Yang, Y., Hu, Y., Wei, F., Zhang, X., Zhang,
+B., Wei, X., et al.: MobileVLM: A fast, strong and open vision language assistant
+for mobile devices. arXiv preprint arXiv:2312.16886 (2023)
+6. Chu, X., Qiao, L., Zhang, X., Xu, S., Wei, F., Yang, Y., Sun, X., Hu, Y., Lin, X.,
+Zhang, B., et al.: MobileVLM V2: Faster and stronger baseline for vision language
+model. arXiv preprint arXiv:2402.03766 (2024)
+7. Dai, W., Li, J., Li, D., Tiong, A., Zhao, J., Wang, W., Li, B., Fung, P.N., Hoi,
+S.: Instructblip: Towards general-purpose vision-language models with instruction
+tuning. In: NeurIPS (2023)
+8. Deitke, M., Clark, C., Lee, S., Tripathi, R., Yang, Y., Park, J.S., Salehi, M., Muen-
+nighoff, N., Lo, K., Soldaini, L., et al.: Molmo and pixmo: Open weights and open
+data for state-of-the-art vision-language models. In: CVPR (2025)
+9. Dettmers, T., Pagnoni, A., Holtzman, A., Zettlemoyer, L.: QLORA: Efficient fine-
+tuning of quantized LLMs. In: NeurIPS (2023)
+10. Goyal, Y., Khot, T., Summers-Stay, D., Batra, D., Parikh, D.: Making the v in vqa
+matter: Elevating the role of image understanding in visual question answering. In:
+CVPR (2017)
+11. Gurari, D., Li, Q., Stangl, A.J., Guo, A., Lin, C., Grauman, K., Luo, J., Bigham,
+J.P.: Vizwiz grand challenge: Answering visual questions from blind people. In:
+CVPR (2018)
+12. Huang, K., Zou, H., Xi, Y., Wang, B., Xie, Z., Yu, L.: IVTP: Instruction-guided
+visual token pruning for large vision-language models. In: ECCV (2024)
+13. Huang, Y., Wang, Z., Yuan, Z., Ding, Y., Gong, R., Guo, J., Liu, X., Zhang, J.:
+MoDES: Accelerating mixture-of-experts multimodal large language models via
+dynamic expert skipping. In: CVPR (2026)
+14. Hudson, D.A., Manning, C.D.: GQA: A new dataset for real-world visual reasoning
+and compositional question answering. In: CVPR (2019)
+15. Jang, E., Gu, S., Poole, B.: Categorical reparameterization with gumbel-softmax.
+In: ICLR (2017)
+16. Javaheripi, M., Bubeck, S., Abdin, M., Aneja, J., Bubeck, S., Mendes, C.C.T.,
+Chen, W., Del Giorno, A., Eldan, R., Gopi, S., et al.: Phi-2: The surprising power
+of small language models. Microsoft Research Blog (2023)
+17. Jia, C., Yang, Y., Xia, Y., Chen, Y.T., Parekh, Z., Pham, H., Le, Q., Sung, Y.H.,
+Li, Z., Duerig, T.: Scaling up visual and vision-language representation learning
+with noisy text supervision. In: ICML (2021)
+
+--- Page 17 ---
+
+Look Less, Think Faster 17
+18. Li, J., Li, D., Savarese, S., Hoi, S.: BLIP-2: Bootstrapping language-image pre-
+training with frozen image encoders and large language models. In: ICML (2023)
+19. Li, Y., Du, Y., Zhou, K., Wang, J., Zhao, W.X., Wen, J.R.: Evaluating object
+hallucination in large vision-language models. In: EMNLP (2023)
+20. Lin, B., Tang, Z., Ye, Y., Huang, J., Zhang, J., Pang, Y., Jin, P., Ning, M., Luo, J.,
+Yuan, L.: MoE-LLaVA: Mixture of experts for large vision-language models. IEEE
+Transactions on Multimedia (2026)
+21. Lin, Z., Lin, M., Lin, L., Ji, R.: Boosting multimodal large language models with
+visual tokens withdrawal for rapid inference. In: AAAI (2025)
+22. Liu, H., Li, C., Li, Y., Lee, Y.J.: Improved baselines with visual instruction tuning.
+In: CVPR (2024)
+23. Liu, H., Li, C., Wu, Q., Lee, Y.J.: Visual instruction tuning. In: NeurIPS (2023),
+LLaVA: Large Language and Vision Assistant
+24. Liu, Y., Duan, H., Zhang, Y., Li, B., Zhang, S., Zhao, W., Yuan, Y., Wang, J., He,
+C., Liu, Z., et al.: MMBench: Is your multi-modal model an all-around player? In:
+ECCV (2024)
+25. Lu, P., Mishra, S., Xia, T., Qiu, L., Chang, K.W., Zhu, S.C., Tafjord, O., Clark, P.,
+Kalyan, A.: Learn to explain: Multimodal reasoning via thought chains for science
+question answering. In: NeurIPS (2022)
+26. Maddison, C., Mnih, A., Teh, Y.: The concrete distribution: A continuous relax-
+ation of discrete random variables. In: ICLR (2017)
+27. Radford, A., Kim, J.W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry,
+G., Askell, A., Mishkin, P., Clark, J., et al.: Learning transferable visual models
+from natural language supervision. In: ICML (2021)
+28. Shang, Y., Cai, M., Xu, B., Lee, Y.J., Yan, Y.: LLaVA-PruMerge: Adaptive token
+reduction for efficient large multimodal models. In: ICCV (2025)
+29. Shu, F., Liao, Y., Zhang, L., Zhuo, L., Xu, C., Zhang, G., Shi, H., Chan, L., Yu,
+Z., He, W., et al.: LLaVA-MoD: Making llava tiny via moe-knowledge distillation.
+In: ICLR (2025)
+30. Singh, A., Natarajan, V., Shah, M., Jiang, Y., Chen, X., Batra, D., Parikh, D.,
+Rohrbach, M.: Towards vqa models that can read. In: CVPR (2019)
+31. Su, J., Ahmed, M., Lu, Y., Pan, S., Bo, W., Liu, Y.: Roformer: Enhanced trans-
+former with rotary position embedding. Neurocomputing (2024)
+32. Tian, X., Gu, J., Li, B., Liu, Y., Wang, Y., Zhao, Z., Zhan, K., Jia, P., Lang, X.,
+Zhao, H.: DriveVLM: The convergence of autonomous driving and large vision-
+language models. In: Conference on Robot Learning (2025)
+33. Vasu, P.K.A., Faghri, F., Li, C.L., Koc, C., True, N., Antony, A., Santhanam,
+G., Gabriel, J., Grasch, P., Tuzel, O., Pouransari, H.: FastVLM: Efficient vision
+encoding for vision language models. In: CVPR (2025)
+34. Vaswani,A.,Shazeer,N.,Parmar,N.,Uszkoreit,J.,Jones,L.,Gomez,A.N.,Kaiser,
+Ł., Polosukhin, I.: Attention is all you need. In: NeurIPS (2017)
+35. Wang, C., Wang, Z., Xu, X., Tang, Y., Zhou, J., Lu, J.: QuantVLM: Post-training
+quantization for efficient vision–language models. In: NeurIPS (2024)
+36. Wang, P., Bai, S., Tan, S., Wang, S., Fan, Z., Bai, J., Chen, K., Liu, X., Wang, J.,
+Ge, W., et al.: Qwen2-VL: Enhancing vision-language model’s perception of the
+world at any resolution. arXiv preprint arXiv:2409.12191 (2024)
+37. Xu, Z., Nguyen, K.D., Mukherjee, P., Bagchi, S., Chaterji, S., Liang, Y., Li, Y.:
+Learning to inference adaptively for multimodal large language models. In: ICCV
+(2025)
+38. Yuan, Z., Li, Z., Huang, W., Ye, Y., Sun, L.: TinyGPT-V: Efficient multimodal
+large language model via small backbones. arXiv preprint arXiv:2312.16862 (2023)
+
+--- Page 18 ---
+
+18 P. Wang et al.
+39. Zhang, H., Li, X., Bing, L.: Video-LLaMA: An instruction-tuned audio-visual lan-
+guage model for video understanding. In: EMNLP Demo Track (2023)
+40. Zhang, J., Huang, J., Jin, S., Lu, S.: Vision-language models for vision tasks: A
+survey. IEEE TPAMI (2024)
+41. Zhang, K., Li, B., Zhang, P., Pu, F., Cahyono, J.A., Hu, K., Liu, S., Zhang, Y.,
+Yang, J., Li, C., et al.: LMMs-Eval: Reality check on the evaluation of large mul-
+timodal models. In: Findings of the Association for Computational Linguistics:
+NAACL 2025 (2025)
+42. Zhong, Y., Liu, Z., Li, Y., Wang, L.: AIM: Adaptive inference of multi-modal llms
+via token merging and pruning. In: ICCV (2025)
+43. Zhou, B., Hu, Y., Weng, X., Jia, J., Luo, J., Liu, X., Wu, J., Huang, L.:
+TinyLLaVA: A framework of small-scale large multimodal models. arXiv preprint
+arXiv:2402.14289 (2024)
+44. Zhu, D., Chen, J., Shen, X., Li, X., Elhoseiny, M.: MiniGPT-4: Enhancing vision-
+language understanding with advanced large language models. In: ICLR (2024)
+45. Zhu, Y., Zhu, M., Liu, N., Xu, Z., Peng, Y.: LLaVA-Phi: Efficient multi-modal
+assistant with small language model. In: EMCLR (2024)
