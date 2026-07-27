@@ -1,0 +1,1444 @@
+--- Page 1 ---
+
+MIRROR: Learning from the Other View for
+Multi-Modal Reasoning
+Wen Ye1∗, Yuxiao Qu2∗, Aviral Kumar2, Xuezhe Ma1
+1University of Southern California, 2Carnegie Mellon University
+Abstract
+Unlike large language models (LLMs) that exhibit strong reasoning capabilities,
+vision-language models (VLMs) struggle with visual reasoning, even on geometry
+problems that admit equivalent text, diagram, and combined diagram+text views.
+We show that these views often elicit different behaviors: a model may solve
+a problem from text but fail on the corresponding diagram, or succeed visually
+while failing textually. This inconsistency suggests that different views expose
+complementary reasoning paths and failure modes that standard multimodal post-
+training does not fully exploit. To study and exploit this phenomenon, we construct
+ODA-Data, a high-quality paired multimodal geometry dataset with text-dominant,
+image-dominant, and combined image+text views of the same problems, together
+with splits for training and evaluating modality-dependent reasoning behaviors. We
+then developModality-Informed Reciprocal Reasoning Optimization( MIRROR),
+a reinforcement learning approach for improving multimodal reasoning via self-
+supervision. For each problem, MIRROR evaluates the model under all views, selects
+the best-performing view as a teacher, and trains other views with a reverse-KL
+objective towards the teacher. Across reasoning benchmarks that evaluate on
+geometry problems, MIRROR improves over standard RL and yields more accurate
+and consistent behavior across modalities.
+1 Introduction
+Vision-language models have made substantial progress on multimodal reasoning [3, 10], but their
+behavior remains highly sensitive to how the information is presented [23, 25, 57]. As we also find
+in our experiments, a model may solve a problem when the relevant relations are written in text,
+yet fail when those relations must be recovered from an image; conversely, an image may make
+geometric structure salient in a way that a purely textual description does not. This inconsistency
+is especially concerning because the underlying reasoning problem has not changed, only the input
+view has. It suggests that current VLMs are not merely limited by problem difficulty [55], but also by
+view-dependent failures in grounding and reasoning. Our goal is to study and address these failures.
+To do so, we focus on geometry problems that serve as a natural testbed for studying this phenomenon.
+Many geometry problems admit several views of the same underlying mathematical structure: a
+text-dominantview, where quantities and relations are enumerated in language; animage-dominant
+view, where the image carries essential geometric information and the accompanying text mainly
+specifies the question; and acombinedimage+text view, where both sources are available. Unlike
+many multimodal settings where visual inputs introduce information unavailable in language [2, 29],
+geometry allows the same problem to be expressed through text, diagrams, or both. This enables a
+controlled comparison of reasoning across views while keeping the underlying semantics unchanged.
+As we find in Table 1, this controlled comparison reveals a useful asymmetry: the same model can
+expose a valid reasoning path under one view even when it fails under another. This suggests that
+cross-view inconsistency is not just a robustness failure, but also a potential supervision signal.
+∗Equal contribution. Corresponding Author: yewen@usc.edu, yuxiaoq@andrew.cmu.edu
+Preprint.
+arXiv:2607.21552v1  [cs.AI]  23 Jul 2026
+
+--- Page 2 ---
+
+Same problem, different views leads to modality asymmetry, MIRROR turns it into learning signal
+Image-dominant
+Find the 
+length of the 
+third side.
+Text-dominant
+In a triangle, two sides are 9 and 10,
+and the included angle is 87°.
+Find the length of the third side.
+Combined (image + text)
+In a triangle, two sides 
+are 9 and 10, and the 
+included angle is 87°. 
+Find the length of the 
+third side. 
+grounding
+bottleneck
+Mental imagery 
+is challenging
+full
+information
+Best Teacher selected per problem
+𝐿 = 𝐿𝐺𝑅𝑃𝑂+ 𝜆 · 𝐾𝐿(𝑠𝑡𝑢𝑑𝑒𝑛𝑡 || 𝑡𝑒𝑎𝑐ℎ𝑒𝑟)
+♛
+Te x t-dominant 
+Student
+Image-dominant 
+Student
+Selected Teacher 
+View
+Teacher Guidance
+Figure 1:Modality-Informed Reciprocal Reasoning Optimization ( MIRROR). MIRROR exploits view asymmetry by
+selecting the strongest-performing view of each problem as a teacher and regularizing weaker student views towards the
+teacher distribution, improving performance without external supervision.
+Prior work on multimodal reasoning often improves models by using external teachers [27], curated
+rationales [59], or specialized training data that teaches the model how to combine visual and textual
+inputs [5, 13]. However, such supervision may not be available for every target setting, and distillation
+from external teachers can be fragile under distribution mismatch [24]. In contrast, we study whether
+paired views of the same problem can provide a form of self-supervision: when the model succeeds
+under one view but fails under another, can the successful view help improve the weaker one?
+In this paper, we propose MIRROR (Modality-Informed Reciprocal Reasoning Optimization), a
+training framework that uses reasoning from stronger views of a problem to improve reasoning
+under weaker views. For each problem, we construct text-dominant, image-dominant, and combined
+image+text views (Figure 1), evaluate the current model under each view, and select the strongest-
+performing view as a problem-specific teacher. The student is trained under a restricted view with
+no information redundancy which is either text-dominant or image-dominant. The challenge is to
+transfer the teacher signal without forcing the student to imitate trajectories that depend on information
+unavailable from its own view. MIRROR addresses this with on-policy distillation: the student samples
+rollouts from its own view, while the selected teacher view only rescores the same student-generated
+trajectories. Combined with outcome-reward RL under the student view, this provides dense teacher
+guidance while keeping optimization on states actually visited by the restricted-view student.
+To instantiate our approach, we construct ODA-Data, a paired geometry dataset with text-dominant,
+image-dominant, and combined image+text views of the same underlying problems. ODA-Data
+preserves problem identity across views, enabling us to measure both accuracy and cross-view
+consistency. We use ODA-Train for post-training and ODA-Val as a held-out benchmark to measure
+view-dependent solvability: whether a model solves the same problem consistently when presented
+through different views. Empirically, MIRROR outperforms both post-training on a mixture of prompts
+and recent open-source post-trained VLMs. On ODA-Val, MIRROR achieves the best performance
+across all image and text validation metrics, improving image pass@16 by 14.49% and text pass@16
+by 5.88% over the base model. These gains transfer to external geometry benchmarks: on GeoInt,
+MIRROR improves over the base model by 7.59% in pass@16, and on MathVerse, it improves the
+mean judge score by 5.22%. Beyond accuracy, on ODA-Train, the fraction of problems solved
+under both image-dominant and text-dominant views increases from 42.5% to 60.7% with MIRROR
+training. MIRROR also expands the set of solvable examples, achieving the largest net solvability gain
+on ODA-Data at +8.95%. These results show that paired views provide an effective self-supervision
+signal for stronger and more consistent multimodal reasoning.
+2 Related Work
+Multimodal mathematical reasoning benchmarks and data scaling.Prior work shows that special-
+ized multimodal math data can substantially improve MLLM reasoning. For example, Math-LLaV A
+fine-tunes LLaV A-1.5 on MathV360K [39], and MultiMath-7B trains on MultiMath-300K with
+image captions and step-by-step solutions [31]. Several benchmarks have also been introduced for
+visual mathematical reasoning, including MATH-Vision [44], MathVerse [57], and geometry-focused
+benchmarks such as LeanGeo-Bench [40], GeoInt [48], and GeoGoal [7]. More recently, CROSS-
+2
+
+--- Page 3 ---
+
+MATH studies modality gaps using matched text-dominant, image-dominant, and the combined
+image+text versions of synthetic puzzles [ 49]. These works motivate our focus on geometry and
+provide evaluation settings that we build on, including MathVerse and GeoInt. Instead of focusing
+on scaling data or constructing benchmarks, our goal is algorithmic: how paired views of the same
+problem can be used during RL training to transfer reasoning behavior across modalities?
+RL and cross-modal transfer for multimodal models.Recent work has explored RL and cross-
+modal transfer for multimodal reasoning. Vision-R1 uses synthetic chain-of-thought data and
+progressive RL [20]; R1-OneVision converts images into textual descriptions before SFT and RL [54];
+and FAST uses difficulty-aware rewards with KL-regularized GRPO [12]. Closest to our setting,
+VOLD distills from a stronger text-only LLM teacher into a VLM student using on-policy distillation
+and GRPO [5]. These methods show that stronger teachers can improve multimodal reasoning. In
+contrast, we targetself-supervisedimprovement: paired views of the same problem reveal cross-modal
+performance asymmetries that can serve as supervision for improving reasoning across modalities.
+On-policy Distillation.On-policy distillation has emerged as a way to learn from a teacher while
+reducing the distribution mismatch of standard behavioral cloning: instead of training only on
+teacher-generated traces, the student samples its own rollouts and receives token-level guidance
+from a teacher on the states it actually visits [1, 16]. More broadly, prior work on self-improvement
+has trained language-model agents to critique and iteratively refine their own responses through
+recursive self-feedback [32]. On-policy self-distillation provides a complementary mechanism for
+internal improvement, including self-distillation from demonstrations [37], feedback-conditioned self-
+teachers [22], and privileged-context teachers [60]. Recent multi-teacher or multi-model extensions [9,
+50, 51] use specialized teachers, debate [52], or calibrated teacher signals to merge complementary
+capabilities into a single student [19, 42, 43, 53]. MIRROR differs in both the source and structure of
+the teacher signal: rather than distilling from an external stronger model, a fixed teacher pool, or
+privileged solution traces, it selects the strongest on-policy generations for a certain view of the same
+problem as a problem-specific teacher, building a self-supervised approach for improving model.
+Explicit intermediate structure for visual reasoning.A complementary line of work improves
+visual reasoning by either actively selecting informative visual evidence or introducing intermediate
+structures between perception and reasoning. Act2See learns to adaptively select and process visual
+observations for more effective video reasoning [28]. For visual mathematical reasoning, MathCoder-
+VL uses image-to-code supervision [45]. Zhang et al. [58] introduces a geometry-specialized vision
+encoder for recognizing visual primitives. Related work on plane-geometry formalization [ 11]
+similarly exposes structured representations. These approaches introduce inductive biases through
+active perception, code, symbolic descriptions, formal proofs, or geometry priors. In contrast,MIRROR
+retains the original input views and remains end-to-end: rather than explicitly selecting evidence
+or constructing intermediate representations, it encourages the model to internalize transferable
+reasoning structure through cross-modal supervision and regularization.
+3 Preliminaries and Notation
+We study post-training of a multimodal language model, denoted by πbase with parameters θ, on
+problem instances that may be presented with different input views. For a problem x∼ρ , let M(x)
+denote the set of available views of the same underlying problem content. In this work, we focus
+on two views: a text-dominant view xtext and an image-dominant view ximg. We can also readily
+construct a combined view xcomb := (xtext,x img), which contains both views simultaneously. For
+any input view ˜x∈ M(x) , a rollout y∼π(· | ˜x) attempts to solve the problem. As in standard
+outcome-reward RL, we assume that correctness can be evaluated from the final answer, and define a
+binary rewardr(x,y)∈ {0,1}. We study performance using pass@k[8] under each modality.
+4 Understanding Differences in Reasoning Across Modalities
+Before introducing our approach, we first analyze reasoning behaviors of the base model
+Qwen3-VL-4B-Instruct [4] when solving the same underlying problem from different input views.
+In this section, we characterize when text-dominant, image-dominant, or combined text-and-image
+inputs lead to different reasoning behaviors and performance. Concretely, we ask three questions:
+(1)how do the model’s reasoning trajectories differ when conditioned on different modalities?(2)
+when is reasoning from one modality systematically easier than reasoning from another? and(3)Can
+access to both text and images reveal supervision signals that are hidden from any single modality?
+3
+
+--- Page 4 ---
+
+Table 1:Representative modality-dependent reasoning behaviors.Each column illustrates one source of cross-modal
+supervision; full prompts and completions are in Appendix D together with additional examples.
+Example 1:Image→TextExample 2:Text→ImageExample 3:Image+Text→Image
+Image
+QueryGiven four fixed pointsA(−3,0),
+B(1,−1),C(0,3),D(−1,3)
+and a moving pointP, find
+minP |P A|+|P B|+|P C|+
+|P D|.
+In a13-14-15triangle, three
+semicircles are drawn with
+diameters on the sides and tangent
+to the other two sides. The product
+of their areas equals the cube of a
+sphere’s surface area. If the sphere
+volume is aπ
+√
+b
+c , finda+b+c.
+In circleO,BCis a diameter,AB⊥BC,
+ADOEis a line,AP=AD, and
+AB= 2R. Which option is correct?
+(A)AP 2 =P B·AB. (B)
+AP·DO=P B·AD. (C)
+AB2 =AD·DE. (D)
+AB·AD=OB·AO. (E) None.
+Before
+training
+Image-dominant:solves correctly
+with3
+√
+2 + 2
+√
+5.
+Text-dominant:does not realize P
+at the intersection ofACandBD
+minimizes the desired quantity and
+falls back to numerical search of
+possible locations ofPand
+estimates8.74.
+Text-dominant:solves correctly
+with873.
+Image-dominant:misreads each
+semicircle’s diameter as exactly the
+lenfth of each side of the triangle
+when in reality each diameter is
+shorter than the side. The model
+wrongly predicts3249.
+Image-dominant:missesAP=AD
+condition from the diagram and wrongly
+chooses B.
+Combined image+text:uses the textual
+relation that explicitly stated AP=AD and
+correctly chooses A.
+After
+training
+Text-dominant:recovers the
+structural solution and predicts
+3
+√
+2 + 2
+√
+5.
+Image-dominant:avoids the visual
+grounding error and predicts873.
+Image-dominant:notes the tick marks
+indicatingAD=APand now chooses A.
+TakeawayThe diagram makes the geometric
+structure salient, so
+image-dominant reasoning
+supervises text-dominant reasoning.
+The text removes a perceptual
+bottleneck, so text-dominant
+reasoning supervises
+image-dominant reasoning.
+Combined image+text view leverages explicit
+textual descriptions together with the visual
+structure, removing ambiguity. So combined
+image+text reasoning supervises
+image-dominant reasoning.
+To compare reasoning traces for different modalities per problem, we constructODA-Data, a
+geometry dataset derived from OpenDataArena/ODA-Math-460k [6]. Each example contains two
+views of the same problem: a “text-dominant” view and an “image-dominant” view. In our analysis
+and training, we also consider a third combined image+text view, which is constructed on the fly
+by concatenating the text-dominant prompt with the image from the image-dominant view. Starting
+from the pure text dataset ODA-Math-460k, we first filter out easy problems, generate and verify
+TikZ-based diagrams using Gemini-3-Pro-Preview [14], and rewrite the image-dominant prompt
+so that it no longer contains information present in the diagram. We then run modality-specific
+evaluations with the base model Qwen3-VL-4B-Instruct [4] and retain problems that are solved under
+one view but not the other, yielding approximately 2K curated examples. The dataset is randomly
+split 85:15 intoODA-Trainfor post-training andODA-Valfor evaluation. See Appendix C for
+full details. Because ODA-Data is filtered to retain modality-dependent examples, ODA-Val is a
+diagnostic benchmark for understanding cross-view performance asymmetry and transfer.
+4.1 How do Reasoning Traces Differ Across Modalities?
+We first compare reasoning traces induced by the text-dominant view, the image-dominant view and
+the combined image+text view of the same underlying problem. Although all views contain sufficient
+information to solve the task, they often induce substantially different trajectories. Text-conditioned
+reasoning tends to follow relations explicitly stated in language, while image-conditioned reasoning
+first recovers objects, relations, and spatial structure from the diagram. This grounding step can
+introduce errors that are absent in the text view. However, diagrams can sometimes make geometric
+structure visually salient, leading to more reliable solution paths than the ones generated under the
+text-dominant view. All in all, we observe both pros and cons of reasoning with diagrams.
+Table 1 summarizes three representative cases.In Example 1, the image-dominant input makes the
+geometric configuration of four points visually salient. The image-conditioned model finds the correct
+structural solution, while the text-conditioned model falls back to numerical search; after training
+with MIRROR, the text-conditioned model recovers the same structural reasoning pattern. In Example
+2, the text-dominant input explicitly provides the side lengths of the 13–14–15 triangle, while the
+4
+
+--- Page 5 ---
+
+image-dominant input requires the model to infer them from the diagram. The image-conditioned
+model initially misreads the drawn semicircle diameter, but avoids this grounding error and recovers
+the correct text-supervised answer after training. In Example 3, neither restricted view is fully reliable:
+the text-dominant model cannot resolve the geometric configuration, while the image-dominant model
+misses the relation AP=AD from the diagram. The combined image+text view succeeds by using
+the text to verify relations while also grounding the reasoning in the diagram; after training, the
+image-dominant model identifies the missing condition and predicts the correct option. We include
+more detailed model responses for these examples in Appendix D.
+These examples highlight three complementary sources of cross-modal supervision. When the
+diagram reveals useful structure, image-conditioned reasoning can supervise text-conditioned rea-
+soning. When the text avoids a perceptual bottleneck, text-conditioned reasoning can supervise
+image-conditioned reasoning. When neither restricted view is fully reliable, the combined view can
+provide a stronger teacher by jointly conditioning on visual structure and explicit textual relations.
+However, no single direction is uniformly reliable: the best teacher depends on whether the bottleneck
+is interpreting textual constraints, visual grounding, or missing cross-view context. This motivates
+our use of adaptive teacher selection over text-dominant, image-dominant, and combined views.
+Quantitative analysis.We next quantify these view-dependent differences over ODA-Train us-
+ing Qwen3-VL-4B-Instruct and examine pass@1 metric. At the aggregate level, text-dominant
+achieves 29.58%, image-dominant achieves 10.54%, and combined image+text prompting achieves
+26.84%. Across ODA-Train, the text-dominant view performs best on 51.14% of problems, the
+image-dominant view on 37.98%, and the combined image+text view on 10.88%. Thus, although
+text-dominant prompting is strongest on average, nearly half of the problems are best supervised
+by a non-text-dominant view. These results suggest that the qualitative behaviors in Table 1 are not
+isolated anecdotes, but recurring sources of modality asymmetry.
+4.2 Does Mixed-Modality RL Transfer Across Views?
+Figure 2:Single problem analysis.Across both views, MIRROR
+achieves the highest training reward, followed by GRPO trained
+on the corresponding single modality, while naive GRPO over
+mixed modality views performs worst. This shows that simply
+exposing RL to multiple views of the same underlying problems is
+not sufficient for reliable cross-modal transfer; without an explicit
+transfer direction, the sparse reward signal can be diluted across
+heterogeneous problem-view pairs.
+Given the asymmetries above, a natural ques-
+tion is whether standard RL can exploit mul-
+tiple views simply by training on them to-
+gether. That is, if the model observes text-
+dominant, and image-dominant views of the
+same problems during RL, will successful rea-
+soning behavior automatically transfer from
+the more performant view to the less perfor-
+mant one? We answer this question by train-
+ing standard GRPO [ 36] on such a mixed-
+modality single problem dataset, where the
+underlying problem appears under both text-
+dominant and image-dominant views. We also
+include MIRROR in Figure 2 as a preview of
+our method that will be introduced in Sec-
+tion 5; we defer the method details and main
+evaluation to later sections. Standard mixed-
+modality RL treats each view as an independent RL prompt and relies on shared policy updates to
+induce transfer across modalities. RL trained on a single view of the underlying problem removes
+this cross-view heterogeneity and optimizes only on a single student view.
+As shown in Figure 2, naive mixed-modality RL (GRPO) achieves the lowest training reward on both
+text-dominant and image-dominant student views. Training GRPO on heterogeneous input views of
+the same questions can therefore inhibit performance gains on each view, rather than automatically
+transferring successful reasoning across views. In contrast, our approach MIRROR, introduced in the
+next section, achieves the highest training reward for both student views. This ordering indicates
+that incorporating multiple views of the same question in RL is not automatically beneficial. We
+next introduce MIRROR, which converts the strongest view of each problem into a teacher signal for
+training the student views.
+5
+
+--- Page 6 ---
+
+5 Our Approach:MIRROR
+Our goal is to improve reasoning under a student view, either the text-dominant view or the image-
+dominant view. Section 4 shows that no single view is uniformly best, and MIRROR converts this
+view-dependent heterogeneity into a self-supervision signal. For each problem, it selects the view on
+which the current model performs the best as a problem-specific teacher. The restricted-view student
+is trained with standard outcome-reward RL plus an auxiliary reverse-KL regularizer. Crucially, the
+student always generates rollouts from its own restricted view; the selected teacher view is used only
+to score those student-generated trajectories.
+Best-modality teacher selection.Each problem has three candidate teacher views: text-
+dominant xtext, image-dominant ximg, and combined image+text xcomb = (x text,x img). Let
+M={text,img,comb} denote the candidate teacher views. Teacher selection is performed online
+during training using the current policy model. For each problem x and each candidate view j∈ M ,
+we sample K= 16 rollouts and estimate the view-specific success rate. We then select the best-
+performing view, breaking ties uniformly at random. The teacher distribution is then defined as a slow-
+moving copy of the model conditioned on the selected teacher view, πteach(· |x) =π ¯θ(· |x (j⋆(x))),
+where ¯θ is an exponential moving average (EMA) of the policy parameters, described below. Thus,
+the teacher direction is selected independently for each problem and can adapt throughout training,
+rather than being fixed globally or precomputed from the base model. Although teacher selection
+considers three candidate views, the text-dominant and image-dominant rollouts are already generated
+as standard online GRPO rollouts; thus, the only additional rollout generation required by MIRROR is
+for the combined image+text view, which introduces negligible computational overhead. We provide
+a FLOPs comparison with mixed-modality GRPO in Appendix A.
+Training under a restricted view.For a restricted view m∈ {text,img} , the student receives the
+corresponding input x(m) and samples rollouts y∼π θ(· |x (m)). The selected teacher may condition
+on a different viewx (j⋆(x)), including the combined image+text view. The challenge is therefore to
+use the stronger teacher view without training the student on off-policy teacher-generated trajectories
+or forcing it to rely on information unavailable from its restricted input. We address this by optimizing
+aweighted sum of outcome-reward RL and an on-policy reverse-KL regularizer:
+L(θ;m) =L RL(θ;m) +λ KLLrKL(θ;m),(1)
+where λKL ≥0 controls the strength of teacher guidance. The RL term is a GRPO-style on-policy
+objective that optimizes final-answer correctness under the restricted student view. The reverse-KL
+term, defined below, transfers token-level preferences from the selected teacher view while keeping
+rollouts on-policy with respect to the restricted-view student.
+Reverse KL for self-supervised, on-policy distillation.The auxiliary loss distills the selected
+teacher’s reasoning preferences into the restricted-view student without sampling trajectories from
+the teacher. For a student view m∈ {text,img} , we first sample a rollout from the policy being
+trained: y∼π θ(· |x (m)). We then keep this student-generated token sequence fixed and evaluate
+how likely each sampled token would be under the selected teacher view. Specifically, at each prefix
+y1:t, we compare the student’s next-token log-probability under the restricted input x(m) with the
+teacher-view log-probability of the same sampled token underx (j⋆(x)):
+LrKL(θ;m) =E x,y∼πθ(·|x(m))
+
+
+|y|−1X
+t=1
+
+logπ θ(yt+1 |x (m), y1:t)−logπ ¯θ(yt+1 |x (j⋆(x)), y1:t)
+
+
+ .
+(2)
+Because the expectation is over y∼π θ(· |x (m)), Equation 2 is an on-policy Monte Carlo esti-
+mate of a reverse-KL-style objective from the restricted-view student to the selected teacher view.
+Operationally, the teacher is used only to rescore the student’s own sampled trajectory: we ask
+how compatible the student’s tokens are with the stronger teacher view. This avoids unnecessary
+distribution shift because optimization occurs only on states induced by the policy being trained.
+EMA teacher.Because the teacher in Equation 2 is derived from the same network being trained,
+the most direct choice is to score the teacher term with the current parameters θ. However, this
+makes the distillation target move every step: the student chases a target that its own updates displace.
+Empirically, this self-referential coupling induces a slow inflation of policy entropy and reference-
+policy KL that eventually destabilizes long-horizon training (Section 6). We therefore parameterize
+6
+
+--- Page 7 ---
+
+Table 2: MIRROR improves single-view reasoning over standard GRPO.We report pass@1 and pass@16 on held-out
+image/text ODA-Val problems and GeoInt, and mean judge score on MathVerse. Training data denotes the reported number of
+post-training samples; training stages are shown where applicable. Green tags indicate improvement and pink rounded tags
+indicate degradation relative to the Qwen3-VL-4B Instruct base model.Boldnumbers indicate the best result.
+Approach Training data ODA-Val Image ODA-Val Text GeoInt MathVerse
+post-train pass@1 pass@16 pass@1 pass@16 pass@1 pass@16 mean
+Existing models
+Vision-R1-7B (Qwen2.5-VL) 210K 7.41 19.48 9.67 29.35 23.30 52.80 47.21
+PAPO-7B (Qwen2.5-VL) 39K 11.38 25.77 16.88 39.57 29.90 60.30 48.50
+Vero-8B (Qwen3-VL) 600K 16.16 39.74 35.48 71.7367.3077.4269.33
+Base model
+Qwen3-VL-4B Instruct 12.30 42.57 32.91 80.22 58.62 70.79 41.31
+Standard GRPO2K
+text-dominant GRPO 17.32 +5.02 43.29+0.72 39.92+7.01 81.06+0.84 63.02+4.40 78.95+8.16 45.22+3.91
+image-dominant GRPO 20.38 +8.08 48.78+6.21 41.06+8.15 83.16+2.94 62.30+3.68 79.69+8.90 39.47−1.84
+mixed-modality GRPO 17.99 +5.69 45.68+3.11 39.18+6.27 81.66+1.44 61.68+3.06 75.21+4.42 44.25+2.94
+MIRROR23.57 +11.27 57.06+14.49 45.67+12.76 86.10+5.88 66.15+7.53 78.38+7.59 46.53+5.22
+the teacher with an exponential moving average (Polyak average) of the policy parameters,
+¯θ←α ¯θ+ (1−α)θ,(3)
+applied after every policy update, with ¯θ initialized to θ at begining. The EMA teacher is used only
+to rescore the student’s sampled tokens under the selected teacher view (forward-only, no gradients);
+teacher selection still uses the current policy’s rollouts. This mirrors target networks in value-based
+RL [26, 30] and weight-averaged teachers in self-supervised learning [15, 17, 41]: the teacher tracks
+the improving policy on a slower timescale, providing a slowly improving but stable target. Gradients
+are applied only through the student-view log-probabilities, while the teacher-view log-probabilities
+are treated as stop-gradient targets.
+The two terms in Equation 1 play complementary roles: the GRPO term optimizes final-answer
+correctness under the restricted view, while the reverse-KL term provides dense token-level guidance
+from the strongest view on the student’s own trajectories. Unlike methods that sample from or imitate
+an external teacher distribution, MIRROR keeps rollouts on-policy with respect to the restricted-view
+student and uses the selected teacher view only as a supervision signal. Please see Algorithm 1 for
+the full pseudocode ofMIRRORupdate.
+6 Experimental Evaluation
+The goal of our experiments is to evaluate whetherMIRROR can turn asymmetries across views into an
+effective self-supervision signal for improving multimodal reasoning. We answer four questions in this
+section:(1)Does MIRROR improve restricted-view reasoning over single-view and mixed-modality
+GRPO baselines?(2)Does selecting the teacher view separately for each problem outperform using
+a fixed global teacher view?(3)Does MIRROR expand the set of solvable problem instances after
+training?(4)Are modality-asymmetric training examples more useful than random paired examples,
+and how sensitive is MIRROR to the cross-view KL coefficient λKL and to the parameterization of the
+teacher (current policy vs. slow-moving EMA)?
+Experimental setup.We post-train Qwen3-VL-4B-Instruct and implement MIRROR in verl [38].
+Models are trained with maximum response length16,384, sampling temperature 0.8, GRPO clipping
+range ϵlow = 0.2, ϵhigh = 0.26, reference-policy KL coefficient 0.001, and entropy coefficient 0.001.
+MIRROR uses a reverse-KL coefficient of 0.01 and EMA weights α= 0.99 . Our in-distribution
+evaluation uses ODA-Val, where paired views preserve problem identity and allow us to measure
+pass@k under each view and track how training changes problem-level solvability across views. We
+additionally evaluate on public multimodal geometry benchmarks GeoInt [47] and MathVerse [57].
+For GeoInt, we consider only answer-based question. We evaluate final-answer correctness with
+pass@1 and pass@16 estimated by 32 rollouts. For MathVerse, we use gpt-4o-2024-11-20 [21]
+as the judge through the LMMs-Eval suite [56] and report judge score [61].
+Baselines and comparisons.We compare MIRROR against three groups of baselines. First, we
+evaluate the base Qwen3-VL-4B-Instruct model and existing multimodal reasoning models with
+different training objectives. Vision-R1-7B [20] is initialized from Qwen2.5-VL-7B-Instruct
+7
+
+--- Page 8 ---
+
+and targets visual mathematical reasoning with a two-stage cold-start and RL recipe. PAPO-7B [46] is
+initialized from Qwen2.5-VL-7B-Instruct and improves visual grounding during RL by contrast-
+ing original and masked-image rollouts with a perception-aware objective.Vero-8B [34] is initialized
+from Qwen3-VL-8B-Instruct and uses a broad general visual reasoning recipe with task-routed
+verifiers across diverse multimodal domains. Second, we compare against standard GRPO baselines
+trained on ODA-Train using a single view: text-dominant GRPO is trained only on text-dominant
+prompts, and image-dominant GRPO is trained only on image-dominant prompts. Third, we compare
+against mixed-modality GRPO, which is trained on the full ODA-Train mixture containing both
+text-dominant and image-dominant views. This baseline tests whether cross-view transfer emerges
+simply from standard RL when both modalities are present in the training prompts. MIRROR is trained
+on the same full mixture of student views. Finally, we include fixed-teacher variants of MIRROR,
+where the teacher is always the same view.
+Result 1: MIRROR improves over standard and mixed-modality GRPO.Table 2 compares MIRROR
+with the base model, existing reasoning-based VLMs, and standard RL baselines. On ODA-Val,
+MIRRORachieves the best performance across all image and text validation metrics. Compared with
+the strongest single-view GRPO baseline, MIRROR improves image pass@16 from 48.78% to 57.06%
+and text pass@16 from 83.16% to 86.10%, corresponding to absolute gains of +8.28% and +2.94%,
+respectively. Compared with mixed-modality GRPO, the gains are larger: +11.38% on image
+pass@16 and +4.44% on text pass@16. These gains also transfer beyond ODA-Val. On GeoInt,
+MIRROR improves pass@1 over the base model from58.62% to 66.15% and pass@16 from 70.79% to
+78.38%, yielding gains of +7.53% and +7.59%. Notably, MIRROR is competitive with substantially
+larger-data post-trained VLMs: it outperforms Vision-R1-7B and PAPO-7B on all ODA-Val and
+GeoInt metrics, and exceeds Vero-8B on all ODA-Val image/text validation metrics, despite using only
+2K training samples. In contrast, Vision-R1-7B uses 200K multimodal CoT cold-start samples and
+10K multimodal math RL samples, PAPO-7B is trained on 38.9K multimodal reasoning samples, and
+Vero-8B is post-trained on roughly 600K samples. Vero-8B remains strongest on MathVerse, while
+MIRROR improves the Qwen3-VL-4B base from 41.31% to 46.53%. Together, these results suggest
+that cross-view asymmetry provides a useful training signal beyond the in-distribution validation set
+and can substantially improve a smaller base model using orders of magnitude less post-training data
+than prior multimodal reasoning models.
+Figure 3:Mixed-modality GRPO does not automatically
+transfer reasoning across views.With full-dataset training,
+mixed-view GRPO underperforms GRPO trained directly on
+the corresponding restricted view, while MIRROR obtains the
+strongest training reward by using paired views directionally.
+Mixed-modality GRPO is the most direct test
+of whether paired views are sufficient by them-
+selves. Although this baseline trains on both text-
+dominant and image-dominant views of the same
+underlying problems, it treats each view as an
+independent RL prompt and relies on transfer
+emerging implicitly through shared parameters.
+Figure 2 and 3 show that this is not reliable:
+mixed-view GRPO obtains lower training reward
+than single-view GRPO in both the controlled
+setting and full-dataset training. This behavior
+is also consistent withray interferencein het-
+erogeneous on-policy RL mixtures [33]. In our
+setting, views differ in grounding requirements,
+and access to explicit relations. Optimizing all
+views with sparse outcome rewards does not guarantee that updates from an easier view teach the
+harder restricted view. MIRROR addresses this by specifying the direction of transfer: it selects the
+strongest-performing view to regularize the restricted-view student toward its teacher distribution. As
+detailed in Appendix A, MIRROR incurs approximately 37.5% more FLOPs per update than standard
+mixed-modality GRPO. To control for this difference, we compare MIRROR at step 150 with GRPO
+at step 200, which correspond to roughly matched cumulative compute. Even under this compute-
+matched comparison, MIRROR achieves higher image reward (0.2625 vs. 0.2368) and text reward
+(0.4581vs.0.4387), indicating that its gains cannot be explained by additional computation alone.
+Result 2: Adaptive teacher selection provides the most consistent gains.We next evaluate whether
+the teacher view should be fixed globally or selected adaptively per problem. Table 3 compares
+MIRROR with three fixed-teacher variants: always using a text-dominant teacher, always using an
+image-dominant teacher, and always using a combined image+text teacher. The fixed-teacher variants
+8
+
+--- Page 9 ---
+
+Table 3:Adaptive teacher choice outperforms fixed cross-modal teachers.We compare fixed teacher choices against
+MIRROR, which adaptively selects the strongest modality-specific teacher for each problem. Using a single fixed teacher can
+improve certain student views but is sensitive to which modality is chosen as the teacher. By selecting the teacher per problem,
+MIRRORbetter exploits modality-dependent strengths and provides more consistent cross-modal guidance.
+Teacher choice ODA-Val Image ODA-Val Text GeoInt MathVerse
+pass@1 pass@16 pass@1 pass@16 pass@1 pass@16 mean
+text-dominant teacher 19.12 51.03 39.78 83.59 64.4179.5945.56
+image-dominant teacher 18.95 49.10 43.43 83.77 63.80 79.50 43.13
+combined image+text teacher 20.99 52.28 43.35 82.33 64.56 78.7747.19
+Adaptive teacher (MIRROR)23.57 57.06 45.67 86.10 66.1578.38 46.53
+Table 4:Ablation on the reverse-KL coefficient.We sweep the strength of the cross-modal reverse-KL regularizer used in
+MIRROR while keeping all other components fixed and let it ran for 100 steps. This ablation tests how sensitive MIRROR is to
+the alignment strength and identifies the regime that best balances on-policy RL with cross-modal distillation.
+Reverse KL coefficient ODA-Val Image ODA-Val Text GeoInt MathVerse
+pass@1 pass@16 pass@1 pass@16 pass@1 pass@16 mean
+λKL = 0.00118.26 49.98 42.03 85.21 62.30 77.24 44.50
+λKL = 0.00517.74 49.45 40.8386.7062.13 76.71 45.41
+λKL = 0.0121.7452.3644.4485.2564.58 79.7046.57
+λKL = 0.0518.7554.7339.67 85.07 61.46 77.1746.62
+exhibit complementary strengths, but none is uniformly best. For image-dominant evaluation, the text-
+dominant teacher outperforms the image-dominant teacher; conversely, for text-dominant evaluation,
+the image-dominant teacher outperforms the text-dominant teacher. This pattern suggests that cross-
+view supervision can be more useful than simply reinforcing the student’s own view. However, the
+combined image+text teacher performs best on MathVerse, showing that the most useful teacher
+signal can also come from jointly conditioning on both modalities. These mixed preferences indicate
+that the optimal supervision source is problem-dependent. Rather than committing to a single global
+transfer direction, MIRROR selects the strongest-performing view per problem, matching the teacher to
+the observed modality asymmetry. This adaptive strategy yields the best result on most validation and
+GeoInt metrics. Together, these results support the central design principle of MIRROR: cross-view
+supervision is most effective when the teacher is selected adaptively rather than fixed globally.
+Figure 4:Net solvability gain after training.Each bar
+shows the change in the fraction of solved examples relative
+to the base model across 3 random seeds. Each random seed
+samples 309 problems which is the same size as the validation
+set. Error bars indicate the min and max values across seeds.
+MIRRORproduces the largest net increase.
+Result 3: MIRROR expands solvability and
+improves cross-view consistency.Aggregate
+pass@k scores do not fully capture how post-
+training changes the set of problems a model
+can solve. We therefore measure solvability on
+ODA-Train before and after training. Net solv-
+ability gain is the before-to-after change in the
+percentage of sampled problems with at least
+one successful rollout. As shown in Figure 4,
+all GRPO variants improve net solvability, but
+MIRROR achieves the largest gain at +8.95%. Be-
+yond expanding the set of solvable examples,
+MIRROR also improves cross-view consistency.
+On ODA-Train, only42.5% of problems are solv-
+able under both the text-dominant and image-
+dominant views by the base model. Standard
+GRPO improves this both-view solvability rate
+to 53.6%, while MIRROR further increases it to 60.7%. This shows that MIRROR not only improves
+marginal accuracy under each restricted view, but also makes the model more likely to solve the same
+underlying problem consistently across modalities.
+Ablation 1: Alignment is most effective with modality-asymmetric pairs.As described in Sec-
+tion 4, ODA-Data contains problems that exhibit modality asymmetry. To test whether this asymmetry
+is important, we compare MIRROR with a control model trained on the same number of properly
+paired examples that do not exhibit clear modality asymmetry, using identical hyperparameters.
+9
+
+--- Page 10 ---
+
+Figure 5:The EMA teacher prevents long-horizon collapse.Training MIRROR with the teacher scored by the current
+policy (no EMA) vs. the EMA teacher (α=0.99), otherwise identical. Left: policy entropy. Middle: reference-policy KL.
+Right: training reward averaged across image and text modalities. The current-policy teacher destabilizes after ∼90 steps and
+collapses by step∼170; the EMA teacher stays stable and reaches higher reward.
+Training on asymmetric examples improves text-dominant validation pass@1 by4.43% relative to the
+paired-control set, while the control performs 22.15% worse on image-dominant validation. These
+results show that paired representations alone are insufficient. The useful supervision arises when a
+successful view can provide problem-specific guidance to a view that fails, supporting our hypothesis
+that modality asymmetry is the primary source of self-supervision inMIRROR.
+Ablation 2: effect of the reverse-KL coefficient.Table 4 studies the strength of the reverse-KL
+regularizer while keeping all other training components fixed for 100 steps. We found thatλKL = 0.01
+achieves the best rank overall and therefore use it for continue training. Larger coefficients such as
+0.1caused training collapse, indicating that excessive alignment can overpower the RL objective.
+Ablation 3: a slow-moving EMA teacher is necessary for long-horizon stability.Figure 5
+compares MIRROR’s EMA teacher (α= 0.99 ) with a teacher evaluated using the current policy
+parameters θ, under otherwise identical settings ( λKL = 0.01). The runs behave similarly for the
+first ∼50 steps, after which the current-policy teacher exhibits self-reinforcing drift: entropy rises
+from ∼0.3 to 3.9, reference-policy KL reaches 0.33, response length falls from ∼9,000 to ∼3,700
+tokens, and reward drops from0.34 to 0.21 by step ∼165. In contrast, the EMA teacher keeps entropy
+and reference KL near 0.29 and 0.02, while reward continues improving to 0.48 at step 290. We
+interpret the failure of the current-policy teacher as a moving-target effect analogous to the instability
+addressed by target networks in value-based RL [ 30]: decoupling the target’s timescale from the
+student’s stabilizes optimization without sacrificing asymptotic performance.
+7 Discussion and Perspectives on Future Work
+In this work, we identify reasoning asymmetry across modalities as a source of self-supervision for
+multimodal reasoning. We introduceModality-Informed Reciprocal Reasoning Optimization
+(MIRROR), which selects the strongest-performing view of each problem as an internal teacher and
+regularizing the student-view policy toward it during RL. Our results show that paired multimodal
+data is most effective when the training objective explicitly exploits the correspondence between
+views. Simply mixing text-dominant and image-dominant views into the RL distribution does not
+reliably transfer reasoning, because each view is still optimized as an independent prompt. In contrast,
+MIRROR makes the transfer direction explicit: the view that succeeds provides guidance for the
+view being trained. This yields stronger and more consistent reasoning, with the largest gains on
+modality-asymmetric examples where one view succeeds and another fails.
+More broadly, our findings suggest a different way to use multimodal data. Rather than treating
+different input formats as independent examples, we can treat them as alternative views of the same
+latent problem and use their disagreements to expose missing reasoning capabilities. This perspective
+opens several directions for future work. Extending beyond geometry to scientific figures, charts,
+tables, robotics observations, or broader visual reasoning will require reliable ways to construct
+information-equivalent views. Teacher selection could also be improved with uncertainty-aware
+weighting or alignment at intermediate reasoning steps, rather than relying only on rollout rewards.
+Overall, our findings point to a broader opportunity: cross-modal inconsistency can be transformed
+from a robustness concern into a useful training signal for learning multimodal reasoners that are
+stronger and less sensitive to how information is represented.
+10
+
+--- Page 11 ---
+
+References
+[1] Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos, Matthieu
+Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-
+generated mistakes, 2024. URLhttps://arxiv.org/abs/2306.13649.
+[2] Aishwarya Agrawal, Jiasen Lu, Stanislaw Antol, Margaret Mitchell, C. Lawrence Zitnick,
+Dhruv Batra, and Devi Parikh. Vqa: Visual question answering, 2016. URL https://arxiv.
+org/abs/1505.00468.
+[3] Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang
+Zhou, and Jingren Zhou. Qwen-vl: A versatile vision-language model for understanding,
+localization, text reading, and beyond, 2023. URLhttps://arxiv.org/abs/2308.12966.
+[4] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao
+Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhifang Guo, Qidong Huang, Jie
+Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, Mei Li, Kaixin
+Li, Zicheng Lin, Junyang Lin, Xuejing Liu, Jiawei Liu, Chenglong Liu, Yang Liu, Dayiheng
+Liu, Shixuan Liu, Dunjie Lu, Ruilin Luo, Chenxu Lv, Rui Men, Lingchen Meng, Xuancheng
+Ren, Xingzhang Ren, Sibo Song, Yuchong Sun, Jun Tang, Jianhong Tu, Jianqiang Wan, Peng
+Wang, Pengfei Wang, Qiuyue Wang, Yuxuan Wang, Tianbao Xie, Yiheng Xu, Haiyang Xu, Jin
+Xu, Zhibo Yang, Mingkun Yang, Jianxin Yang, An Yang, Bowen Yu, Fei Zhang, Hang Zhang,
+Xi Zhang, Bo Zheng, Humen Zhong, Jingren Zhou, Fan Zhou, Jing Zhou, Yuanzhi Zhu, and
+Ke Zhu. Qwen3-vl technical report, 2025. URLhttps://arxiv.org/abs/2511.21631.
+[5] Walid Bousselham, Hilde Kuehne, and Cordelia Schmid. V old: Reasoning transfer from llms
+to vision-language models via on-policy distillation, 2025. URL https://arxiv.org/abs/
+2510.23497.
+[6] Mengzhang Cai, Xin Gao, Yu Li, Honglin Lin, Zheng Liu, Zhuoshi Pan, Qizhi Pei, Xiao-
+ran Shang, Mengyuan Sun, Zinan Tang, et al. Opendataarena: A fair and open arena for
+benchmarking post-training dataset value.arXiv preprint arXiv:2512.14051, 2025.
+[7] Jianlong Chen, Daocheng Fu, Shengze Xu, Jiawei Chen, Yuan Feng, Yue Yang, Junchi Yan,
+Hongyuan Zha, and Renqiu Xia. Milestones over outcome: Unlocking geometric reasoning
+with sub-goal verifiable reward, 2026. URLhttps://arxiv.org/abs/2601.05073.
+[8] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto,
+Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul
+Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke
+Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad
+Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias
+Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-V oss, William Hebgen Guss, Alex
+Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain,
+William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant
+Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie
+Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and
+Wojciech Zaremba. Evaluating large language models trained on code, 2021. URL https:
+//arxiv.org/abs/2107.03374.
+[9] Yiqun Chen, Wei Yang, Erhan Zhang, Shijie Wang, Qi Liu, Zechun Niu, Bin Zhang, Haitao Li,
+Rui Li, Lingyong Yan, et al. Unitymas-o: A general rl optimization framework for llm-based
+multi-agent systems.arXiv preprint arXiv:2605.26646, 2026.
+[10] Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong
+Zhang, Xizhou Zhu, Lewei Lu, Bin Li, Ping Luo, Tong Lu, Yu Qiao, and Jifeng Dai. Internvl:
+Scaling up vision foundation models and aligning for generic visual-linguistic tasks, 2024. URL
+https://arxiv.org/abs/2312.14238.
+[11] Xiaoteng Cui and Yi Liu. Plane geometry diagram formalization via vision-language models.
+In2nd AI for Math Workshop@ ICML 2025, 2025.
+11
+
+--- Page 12 ---
+
+[12] Xingjian Diao, Zheyuan Liu, Chunhui Zhang, Weiyi Wu, Keyi Kong, Lin Shi, Kaize Ding,
+Soroush V osoughi, and Jiang Gui. Addressing overthinking in large vision-language models
+via gated perception-reasoning optimization, 2026. URL https://arxiv.org/abs/2601.
+04442.
+[13] Yuhao Dong, Zuyan Liu, Hai-Long Sun, Jingkang Yang, Winston Hu, Yongming Rao, and
+Ziwei Liu. Insight-v: Exploring long-chain visual reasoning with multimodal large language
+models, 2025. URLhttps://arxiv.org/abs/2411.14432.
+[14] Google DeepMind. Gemini 3 pro model card. https://storage.googleapis.
+com/deepmind-media/Model-Cards/Gemini-3-Pro-Model-Card.pdf , December 2025.
+Model card for Gemini 3 Pro.
+[15] Jean-Bastien Grill, Florian Strub, Florent Altch ´e, Corentin Tallec, Pierre Richemond, Elena
+Buchatskaya, Carl Doersch, Bernardo Avila Pires, Zhaohan Guo, Mohammad Gheshlaghi Azar,
+et al. Bootstrap your own latent-a new approach to self-supervised learning.Advances in neural
+information processing systems, 33:21271–21284, 2020.
+[16] Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: On-policy distillation of large
+language models, 2026. URLhttps://arxiv.org/abs/2306.08543.
+[17] Kaiming He, Haoqi Fan, Yuxin Wu, Saining Xie, and Ross Girshick. Momentum contrast for
+unsupervised visual representation learning. InProceedings of the IEEE/CVF conference on
+computer vision and pattern recognition, pages 9729–9738, 2020.
+[18] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza
+Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, Tom
+Hennigan, Eric Noland, Katie Millican, George van den Driessche, Bogdan Damoc, Aurelia
+Guy, Simon Osindero, Karen Simonyan, Erich Elsen, Jack W. Rae, Oriol Vinyals, and Laurent
+Sifre. Training compute-optimal large language models, 2022. URL https://arxiv.org/
+abs/2203.15556.
+[19] Wenjin Hou, Shangpin Peng, Weinong Wang, Zheng Ruan, Yue Zhang, Zhenglin Zhou, Mingqi
+Gao, Yifei Chen, Kaiqi Wang, Hongming Yang, Chengquan Zhang, Zhuotao Tian, Han Hu,
+Yi Yang, Fei Wu, and Hehe Fan. Uni-opd: Unifying on-policy distillation with a dual-perspective
+recipe, 2026. URLhttps://arxiv.org/abs/2605.03677.
+[20] Wenxuan Huang, Bohan Jia, Zijie Zhai, Shaosheng Cao, Zheyu Ye, Fei Zhao, Zhe Xu, Xu Tang,
+Yao Hu, and Shaohui Lin. Vision-r1: Incentivizing reasoning capability in multimodal large
+language models, 2026. URLhttps://arxiv.org/abs/2503.06749.
+[21] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark,
+AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card.arXiv
+preprint arXiv:2410.21276, 2024.
+[22] Jonas H ¨ubotter, Frederike L ¨ubeck, Lejs Behric, Anton Baumann, Marco Bagatella, Daniel
+Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Carlos Guestrin, and Andreas
+Krause. Reinforcement learning via self-distillation.arXiv preprint arXiv:2601.20802, 2026.
+[23] Mohamed Insaf Ismithdeen, Muhammad Uzair Khattak, and Salman Khan. Promptception:
+How sensitive are large multimodal models to prompts?, 2025. URL https://arxiv.org/
+abs/2509.03986.
+[24] Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu,
+Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, et al. Rethinking on-policy distillation of large
+language models: Phenomenology, mechanism, and recipe.arXiv preprint arXiv:2604.13016,
+2026.
+[25] Zongxia Li, Xiyang Wu, Hongyang Du, Fuxiao Liu, Huy Nghiem, and Guangyao Shi. A
+survey of state of the art large vision language models: Alignment, benchmark, evaluations and
+challenges, 2025. URLhttps://arxiv.org/abs/2501.02189.
+12
+
+--- Page 13 ---
+
+[26] Timothy P. Lillicrap, Jonathan J. Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval
+Tassa, David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning,
+2019. URLhttps://arxiv.org/abs/1509.02971.
+[27] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning, 2023.
+URLhttps://arxiv.org/abs/2304.08485.
+[28] Martin Q Ma, Yuxiao Qu, Aditya Agrawal, Willis Guo, Paul Pu Liang, Ruslan Salakhutdinov,
+and Louis-Philippe Morency. Act2see: Emergent active visual perception for video reasoning.
+InProceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pages 5455–5464, 2026.
+[29] Ahmed Masry, Do Xuan Long, Jia Qing Tan, Shafiq Joty, and Enamul Hoque. Chartqa: A
+benchmark for question answering about charts with visual and logical reasoning, 2022. URL
+https://arxiv.org/abs/2203.10244.
+[30] V olodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G
+Bellemare, Alex Graves, Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski, et al.
+Human-level control through deep reinforcement learning.nature, 518(7540):529–533, 2015.
+[31] Shuai Peng, Di Fu, Liangcai Gao, Xiuqin Zhong, Hongguang Fu, and Zhi Tang. Multimath:
+Bridging visual and mathematical reasoning for large language models, 2024. URL https:
+//arxiv.org/abs/2409.00147.
+[32] Yuxiao Qu, Tianjun Zhang, Naman Garg, and Aviral Kumar. Recursive introspection: Teaching
+language model agents how to self-improve.Advances in Neural Information Processing
+Systems, 37:55249–55285, 2024.
+[33] Yuxiao Qu, Amrith Setlur, Virginia Smith, Ruslan Salakhutdinov, and Aviral Kumar. Pope:
+Learning to reason on hard problems via privileged on-policy exploration, 2026. URLhttps:
+//arxiv.org/abs/2601.18779.
+[34] Gabriel Sarch, Linrong Cai, Qunzhong Wang, Haoyang Wu, Danqi Chen, and Zhuang Liu.
+Vero: An open rl recipe for general visual reasoning, 2026. URL https://arxiv.org/abs/
+2604.04917.
+[35] Nikhil Sardana, Jacob Portes, Sasha Doubov, and Jonathan Frankle. Beyond chinchilla-optimal:
+Accounting for inference in language model scaling laws, 2025. URL https://arxiv.org/
+abs/2401.00448.
+[36] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, Y . K. Li, Y . Wu, and Daya Guo. Deepseekmath: Pushing the limits of
+mathematical reasoning in open language models, 2024. URL https://arxiv.org/abs/
+2402.03300.
+[37] Idan Shenfeld, Mehul Damani, Jonas H¨ubotter, and Pulkit Agrawal. Self-distillation enables
+continual learning, 2026. URLhttps://arxiv.org/abs/2601.19897.
+[38] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua
+Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In
+Proceedings of the Twentieth European Conference on Computer Systems, pages 1279–1297,
+2025.
+[39] Wenhao Shi, Zhiqiang Hu, Yi Bin, Junhua Liu, Yang Yang, See-Kiong Ng, Lidong Bing, and
+Roy Ka-Wei Lee. Math-llava: Bootstrapping mathematical reasoning for multimodal large
+language models, 2024. URLhttps://arxiv.org/abs/2406.17294.
+[40] Chendong Song, Zihan Wang, Frederick Pu, Haiming Wang, Xiaohan Lin, Junqi Liu, Jia Li,
+and Zhengying Liu. Leangeo: Formalizing competitional geometry problems in lean, 2025.
+URLhttps://arxiv.org/abs/2508.14644.
+[41] Antti Tarvainen and Harri Valpola. Mean teachers are better role models: Weight-averaged con-
+sistency targets improve semi-supervised deep learning results.Advances in neural information
+processing systems, 30, 2017.
+13
+
+--- Page 14 ---
+
+[42] Core Team, Bangjun Xiao, Bingquan Xia, Bo Yang, Bofei Gao, Bowen Shen, Chen Zhang,
+Chenhong He, Chiheng Lou, Fuli Luo, Gang Wang, Gang Xie, Hailin Zhang, Hanglong Lv,
+Hanyu Li, Heyu Chen, Hongshen Xu, Houbin Zhang, Huaqiu Liu, Jiangshan Duo, Jianyu Wei,
+Jiebao Xiao, Jinhao Dong, Jun Shi, Junhao Hu, Kainan Bao, Kang Zhou, Lei Li, Liang Zhao,
+Linghao Zhang, Peidian Li, Qianli Chen, Shaohui Liu, Shihua Yu, Shijie Cao, Shimao Chen,
+Shouqiu Yu, Shuo Liu, Tianling Zhou, Weijiang Su, Weikun Wang, Wenhan Ma, Xiangwei
+Deng, Bohan Mao, Bowen Ye, Can Cai, Chenghua Wang, Chengxuan Zhu, Chong Ma, Chun
+Chen, Chunan Li, Dawei Zhu, Deshan Xiao, Dong Zhang, Duo Zhang, Fangyue Liu, Feiyu
+Yang, Fengyuan Shi, Guoan Wang, Hao Tian, Hao Wu, Heng Qu, Hongfei Yi, Hongxu An,
+Hongyi Guan, Xing Zhang, Yifan Song, Yihan Yan, Yihao Zhao, Yingchun Lai, Yizhao Gao,
+Yu Cheng, Yuanyuan Tian, Yudong Wang, Zhen Tang, Zhengju Tang, Zhengtao Wen, Zhichao
+Song, Zhixian Zheng, Zihan Jiang, Jian Wen, Jiarui Sun, Jiawei Li, Jinlong Xue, Jun Xia, Kai
+Fang, Menghang Zhu, Nuo Chen, Qian Tu, Qihao Zhang, Qiying Wang, Rang Li, Rui Ma,
+Shaolei Zhang, Shengfan Wang, Shicheng Li, Shuhao Gu, Shuhuai Ren, Sirui Deng, Tao Guo,
+Tianyang Lu, Weiji Zhuang, Weikang Zhang, Weimin Xiong, Wenshan Huang, Wenyu Yang,
+Xin Zhang, Xing Yong, Xu Wang, Xueyang Xie, Yilin Jiang, Yixin Yang, Yongzhe He, Yu Tu,
+Yuanliang Dong, Yuchen Liu, Yue Ma, Yue Yu, Yuxing Xiang, Zhaojun Huang, Zhenru Lin,
+Zhipeng Xu, Zhiyang Chen, Zhonghua Deng, Zihan Zhang, and Zihao Yue. Mimo-v2-flash
+technical report, 2026. URLhttps://arxiv.org/abs/2601.02780.
+[43] Jianze Wang, Ying Liu, Jinlong Chen, Xuchun Hu, Qilong Zhang, Yu Cao, Jun Wang, Hua
+Yang, Yong Xie, and Qianglong Chen. Mad-opd: Breaking the ceiling in on-policy distillation
+via multi-agent debate, 2026. URLhttps://arxiv.org/abs/2605.01347.
+[44] Ke Wang, Junting Pan, Weikang Shi, Zimu Lu, Mingjie Zhan, and Hongsheng Li. Measuring
+multimodal mathematical reasoning with math-vision dataset, 2024. URL https://arxiv.
+org/abs/2402.14804.
+[45] Ke Wang, Junting Pan, Linda Wei, Aojun Zhou, Weikang Shi, Zimu Lu, Han Xiao, Yunqiao
+Yang, Houxing Ren, Mingjie Zhan, and Hongsheng Li. Mathcoder-vl: Bridging vision and
+code for enhanced multimodal mathematical reasoning, 2025. URL https://arxiv.org/
+abs/2505.10557.
+[46] Zhenhailong Wang, Xuehang Guo, Sofia Stoica, Haiyang Xu, Hongru Wang, Hyeonjeong Ha,
+Xiusi Chen, Yangyi Chen, Ming Yan, Fei Huang, et al. Perception-aware policy optimization
+for multimodal reasoning.arXiv preprint arXiv:2507.06448, 2025.
+[47] Jingxuan Wei, Caijun Jia, Qi Chen, Honghao He, Linzhuang Sun, Conghui He, Lijun Wu, Bihui
+Yu, and Cheng Tan. Geoint-r1: Formalizing multimodal geometric reasoning with dynamic
+auxiliary constructions.arXiv preprint arXiv:2508.03173, 2025.
+[48] Jingxuan Wei, Caijun Jia, Qi Chen, Honghao He, Linzhuang Sun, Conghui He, Lijun Wu, Bihui
+Yu, and Cheng Tan. Geoint-r1: Formalizing multimodal geometric reasoning with dynamic
+auxiliary constructions, 2025. URLhttps://arxiv.org/abs/2508.03173.
+[49] Yige Xu, Yongjie Wang, Zizhuo Wu, Kaisong Song, Jun Lin, and Zhiqi Shen. Do vision-
+language models truly perform vision reasoning? a rigorous study of the modality gap, 2026.
+URLhttps://arxiv.org/abs/2604.16256.
+[50] Wei Yang and Jesse Thomason. Learning to deliberate: Meta-policy collaboration for agentic
+llms with multi-agent reinforcement learning.arXiv preprint arXiv:2509.03817, 2025.
+[51] Wei Yang, Jiacheng Pang, Shixuan Li, Paul Bogdan, Stephen Tu, and Jesse Thomason. Maestro:
+Learning to collaborate via conditional listwise policy optimization for multi-agent llms.arXiv
+preprint arXiv:2511.06134, 2025.
+[52] Wei Yang, Shixuan Li, Heng Ping, Peiyu Zhang, Paul Bogdan, and Jesse Thomason. Auditing
+multi-agent llm reasoning trees outperforms majority vote and llm-as-judge.arXiv preprint
+arXiv:2602.09341, 2026.
+[53] Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin. Learning
+beyond teacher: Generalized on-policy distillation with reward extrapolation, 2026. URL
+https://arxiv.org/abs/2602.12125.
+14
+
+--- Page 15 ---
+
+[54] Yi Yang, Xiaoxuan He, Hongkun Pan, Xiyan Jiang, Yan Deng, Xingtao Yang, Haoyu Lu,
+Dacheng Yin, Fengyun Rao, Minfeng Zhu, Bo Zhang, and Wei Chen. R1-onevision: Advancing
+generalized multimodal reasoning through cross-modal formalization, 2025. URL https:
+//arxiv.org/abs/2503.10615.
+[55] Ruilin Yao, Bo Zhang, Jirui Huang, Xinwei Long, Yifang Zhang, Tianyu Zou, Yufei Wu,
+Shichao Su, Yifan Xu, Wenxi Zeng, Zhaoyu Yang, Guoyou Li, Shilan Zhang, Zichan Li,
+Yaxiong Chen, Shengwu Xiong, Peng Xu, Jiajun Zhang, Bowen Zhou, David Clifton, and
+Luc Van Gool. Lens: Multi-level evaluation of multimodal reasoning with large language
+models, 2025. URLhttps://arxiv.org/abs/2505.15616.
+[56] Kaichen Zhang, Bo Li, Peiyuan Zhang, Fanyi Pu, Joshua Adrian Cahyono, Kairui Hu, Shuai Liu,
+Yuanhan Zhang, Jingkang Yang, Chunyuan Li, and Ziwei Liu. Lmms-eval: Reality check on the
+evaluation of large multimodal models, 2024. URL https://arxiv.org/abs/2407.12772.
+[57] Renrui Zhang, Dongzhi Jiang, Yichi Zhang, Haokun Lin, Ziyu Guo, Pengshuo Qiu, Aojun Zhou,
+Pan Lu, Kai-Wei Chang, Peng Gao, and Hongsheng Li. Mathverse: Does your multi-modal
+llm truly see the diagrams in visual math problems?, 2024. URL https://arxiv.org/abs/
+2403.14624.
+[58] Shan Zhang, Aotian Chen, Yanpeng Sun, Jindong Gu, Yi-Yu Zheng, Piotr Koniusz, Kai Zou,
+Anton van den Hengel, and Yuan Xue. Open eyes, then reason: Fine-grained visual mathematical
+understanding in mllms, 2025. URLhttps://arxiv.org/abs/2501.06430.
+[59] Zhuosheng Zhang, Aston Zhang, Mu Li, Hai Zhao, George Karypis, and Alex Smola. Mul-
+timodal chain-of-thought reasoning in language models, 2024. URL https://arxiv.org/
+abs/2302.00923.
+[60] Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya
+Grover. Self-distilled reasoner: On-policy self-distillation for large language models, 2026.
+URLhttps://arxiv.org/abs/2601.18734.
+[61] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang,
+Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica.
+Judging llm-as-a-judge with mt-bench and chatbot arena, 2023. URL https://arxiv.org/
+abs/2306.05685.
+15
+
+--- Page 16 ---
+
+Appendices
+A FLOPs Estimation
+We estimate the computational overhead of MIRROR relative to standard mixed-modality GRPO.
+Following the common approximation used in language-model scaling analyses, we count one
+forward-only pass over D tokens as approximately 2N D FLOPs [35], where N is the number of
+model parameters, and one training pass with forward and backward propagation as approximately
+6N D FLOPs [18]. This gives a coarse but useful estimate of the relative cost between rollout
+generation, teacher-logit evaluation, and gradient updates.
+Setup.Standard mixed-modality GRPO trains on two restricted student views: text-dominant and
+image-dominant. For each problem, it samples K rollouts from each view, giving 2K online student
+rollouts. MIRROR uses the same two restricted views for student RL training, but performs teacher
+selection over three candidate views:
+M={text,img,comb}
+The text-dominant and image-dominant candidate rollouts are exactly the online rollouts already
+generated for GRPO, so they do not need to be recomputed. Therefore, the only additional rollout
+generation required byMIRRORis theKrollouts from the combined image+text view.
+Mixed-modality GRPO cost.Let D denote the average rollout length. Standard mixed-modality
+GRPO generates 2K rollouts per problem, so its forward-only rollout-generation cost is approximately
+Cmixed-GRPO,gen ≈2K·2N D= 4KN D.(4)
+It then performs one student-side policy update on these 2K rollouts. Using the standard training
+approximation, the forward-backward update cost is
+Cmixed-GRPO,train ≈2K·6N D= 12KN D.(5)
+Thus, ignoring implementation-specific constants, the total cost is
+Cmixed-GRPO ≈4KN D+ 12KN D= 16KN D.(6)
+MIRROR cost. MIRROR reuses the same 2K text-dominant and image-dominant student rollouts
+as mixed-modality GRPO. It additionally samples K combined-view rollouts for online teacher
+selection. Therefore, its rollout-generation cost is
+CMIRROR,gen ≈3K·2N D= 6KN D.(7)
+After selecting the teacher view,MIRROR computes the reverse-KL regularizer on the2K student-view
+rollouts. This requires a teacher-forced forward pass under the selected teacher view to compute
+teacher log-probabilities on the same generated tokens using the EMA teacher weights. Since this is
+forward-only and stop-gradient, its cost is approximately
+CMIRROR,KL-eval ≈2K·2N D= 4KN D.(8)
+The student-side GRPO update is unchanged from mixed-modality GRPO:
+CMIRROR,train ≈2K·6N D= 12KN D.(9)
+Therefore, the total cost ofMIRRORis approximately
+CMIRROR ≈6KN D+ 4KN D+ 12KN D= 22KN D.(10)
+Relative overhead.Under this coarse FLOPs model, the relative cost of MIRROR compared with
+standard mixed-modality GRPO is
+CMIRROR
+Cmixed-GRPO
+≈ 22KN D
+16KN D = 1.375.(11)
+16
+
+--- Page 17 ---
+
+Thus, MIRROR adds roughly 37.5% FLOPs over standard mixed-modality GRPO under a single-update
+accounting. This overhead comes only from forward-only computation: K additional combined-
+view rollouts for teacher selection and a teacher-logit evaluation pass for the reverse-KL regularizer.
+MIRROR uses the same trainable model, the same 2K student-view RL rollouts, and the same number
+of backward updates as mixed-modality GRPO. To examine whether standard GRPO would obtain
+similar optimization gains under comparable compute, we inspect the running-average training re-
+wards at MIRROR step 150 and GRPO step 200 shown in figure 3, which correspond to approximately
+similar cumulative FLOPs. At these points in training,MIRRORhas higher image reward (0.2625vs.
+0.2368) and text reward (0.4581 vs. 0.4387). This suggests that the advantage is not solely due to the
+additional per-update computation.
+EMA teacher overhead.The EMA teacher does not change the FLOPs accounting above: the
+teacher-logit evaluation pass (CMIRROR,KL-eval ≈4KN D) is simply executed with the EMA weights
+¯θ instead of the current weights θ, and the Polyak update in Equation 3 is a single O(N) elementwise
+operation per training step (under one second per step in our runs, versus roughly 20 minutes per full
+training step). The main cost is memory: one additional forward-only copy of the policy parameters,
+kept in fp32 for numerically stable high-decay averaging and offloaded to CPU between teacher
+evaluations. Checkpoints additionally store the EMA parameters so that training resumes exactly.
+B Training Details
+We train all models using GRPO with verl [ 38]. Unless otherwise specified, experiments use
+Qwen3-VL-4B-Instruct as the base model, vLLM as the rollout engine, and 8 nodes with 8 H200
+GPUs per node. Each training run uses a maximum prompt length of 4096 tokens and a maximum
+response length of 16,384 tokens. We use a sampling temperature of0.8 and generate n= 16 rollouts
+per prompt. The training batch size is 256, with PPO mini-batch size 128 and micro-batch size 1 per
+GPU. We use GRPO with clipping thresholds ϵlow = 0.2 and ϵhigh = 0.26. We train with learning
+rate 1×10 −6, entropy coefficient 0.001, and a reference-policy KL loss coefficient of0.001 using
+the low-variance KL estimator. For MIRROR, we additionally enable the cross-modal reverse-KL
+regularizer with coefficient λKL = 0.01 by default, and compute the teacher target log-probabilities
+from an EMA copy of the policy with decay α= 0.99 , updated after every actor step. The EMA
+copy is kept in fp32 and is forward-only (no optimizer state); it is saved with each checkpoint so
+training resumes exactly.
+Each RL training job uses 8 nodes with 8 H200 GPUs per node, runs at approximately 20 minutes
+per training step, and is trained for at least 200 steps, corresponding to roughly 67 wall-clock hours
+or about4,267H200 GPU-hours per model.
+17
+
+--- Page 18 ---
+
+Category Setting
+Base modelQwen/Qwen3-VL-4B-Instruct
+Training framework verl [38]
+RL algorithm GRPO
+Rollout engine vLLM
+Maximum prompt length4096tokens
+Maximum response length16,384tokens
+Rollouts per prompt16
+Sampling temperature0.8
+Train batch size256
+PPO mini-batch size128
+PPO micro-batch size per GPU1
+Learning rate1×10 −6
+Clip ratio low0.2
+Clip ratio high0.26
+Entropy coefficient0.001
+Reference KL loss Enabled
+Reference KL coefficient0.001
+Reference KL type Low-variance KL
+Total epochs200
+Cross-modal reverse-KL coefficientλ KL 0.01(MIRRORonly)
+EMA teacher decayα0.99(MIRRORonly)
+EMA teacher precision fp32, forward-only
+Table 5:Main training hyperparameters.Unless otherwise specified, all MIRROR and GRPO baselines use the same
+training configuration. The only method-specific differences are whether the cross-modal reverse-KL regularizer is enabled
+and its EMA teacher (decay0.99).
+C ODA-Data Construction
+To study modality-dependent reasoning while holding the underlying problem fixed, we construct
+ODA-Data, a paired multimodal geometry dataset in which each problem is represented in two
+aligned views: a text-dominant view and an image-dominant view. Starting from 97K geometry-style
+problems from OpenDataArena/ODA-Math-460k [6], we first apply a difficulty filter that removes
+easy questions with annotated pass@5=1, yielding 16K candidate questions. For each candidate, we
+prompt an LLM to generate a diagram as TikZ code, a standard LaTeX package for programmatic
+vector graphics. We retain only diagrams whose TikZ code compiles successfully and use an LLM
+judge to verify that the generated diagram is semantically aligned with the original problem statement.
+To construct the image-dominant view, we further prompt the judge to remove from the text any
+information already presented in the diagram, so that the remaining text and image provide com-
+plementary information. All LLM-based generation and judging steps use Gemini-3-Pro-Preview.
+We then perform modality-specific rollout evaluations using the base model and remove questions
+that the base model reliably solves under both the text-dominant and image-dominant views, so that
+the final dataset emphasizes problems whose solvability depends on the input representation. This
+process yields approximately 2K curated paired multimodal examples.
+We split these examples intoODA-TrainandODA-Valusing an 85:15 split, with 15% of the
+dataset held out for validation.ODA-Trainis used for cross-modal post-training, whileODA-
+Valserves as a held-out benchmark for evaluating modality-dependent reasoning, cross-modal
+consistency, and one-sided solvability. Each example contains the original text problem, generated
+diagram, image-dominant prompt, text-dominant prompt, answer annotations, and modality-specific
+rollout/evaluation metadata. This structure makes ODA-Data useful not only for training MIRROR, but
+also for studying whether VLMs solve the same mathematical problem consistently across textual
+and visual representations.
+For Tikz code generation, the prompt is:
+Prompt for Tikz Code Generation
+<question>
+18
+
+--- Page 19 ---
+
+Your task is to generateonly the TikZ (LaTeX) codethat draws the geometric diagram described
+in the problem.
+Important rules:
+• Do NOT solve the problem.
+• You may use colors (e.g., for clarity or emphasis), but:
+–Do NOT use solid fills that completely cover underlying lines or shapes.
+– If you use ‘fill’, it must include an ‘opacity’ value (e.g., ‘fill opacity=0.2’) or be
+very light.
+–Prefer ‘draw’, ‘dashed’, ‘thick’, or colorized outlines over filled regions.
+• Avoid unnecessary decorations or stylistic choices not implied by the problem.
+• Ensure the diagram is clear, uncluttered, and geometrically consistent.
+Return only the TikZ code in alatexblock.
+For verifying the tikz compiled image against the question, the prompt is:
+Prompt for Image Verification
+You are a strict geometry diagram judge.
+You are given:
+1. A geometry problem described in text
+2. A diagram image intended to represent that problem
+Your task is to judge whether the diagram is an accurate and faithful representation of the problem
+text.
+Check carefully that:
+1. All geometric entities mentioned in the text (points, lines, angles, shapes, objects) appear
+in the diagram.
+2. Spatial relationships match the text (relative positions, intersections, parallelism, perpen-
+dicularity, containment, motion if described).
+3. Angle markings are correct:
+• Angles are marked at the correct vertex.
+• The marked angle corresponds to the intended angle, not its complementary or
+supplementary angle.
+• The rays defining the angle match the textual description.
+4. Any stated angle measures or symbols (e.g., 90◦, 100◦, α, β) are applied to the correct
+geometric region.
+5. The diagram does not introduce misleading constructions, extra constraints, or alternative
+interpretations that contradict the text.
+6. Do NOT judge based on visual scale accuracy:
+• Differences in segment lengths, proportions, or drawing scale (e.g., a segment of
+length 15 not appearing longer than one of length 13) should NOT be treated as
+errors unless relative length ordering is explicitly required by the text.
+If any required element is missing, incorrectly marked, ambiguously represented, or misleading,
+judge the diagram as inaccurate.
+Respond with exactly the following format:
+Judgement: Accurate or Inaccurate
+Reason: A brief explanation (1–2 sentences) identifying the key correctness or primary issue.
+Now evaluate the following.
+[PROBLEM TEXT]
+<QUESTION TEXT>
+[DIAGRAM IMAGE]
+<IMAGE>
+19
+
+--- Page 20 ---
+
+For rewriting image questions to remove information present in the diagram from the question, the
+prompt is:
+Prompt for Tikz Code Generation
+You are given a math question that is accompanied by a diagram/image. Your task is to rewrite
+the question text so that informationalready visible in the imageis removed from the text.
+## Rules:
+1. Removetextual descriptions of geometric configurations, diagrams, shapes, angles, side
+lengths, point positions, or any other information that a reader could extract from the
+image.
+2. Only remove properties that are explicitly marked in the image.For example, if
+the text says ‘isosceles triangle’ and the diagram shows a triangle that look isosceles
+but does NOT have explicit markings (e.g., tick marks on equal sides, or a label saying
+‘isosceles’), you must KEEP ‘isosceles triangle’ in the text. The same applies to right
+angles (keep unless a square corner mark is shown), parallel lines (keep unless arrow
+marks are shown), equal segments (keep unless tick marks are shown), etc.
+3. Always keepthe final question being asked (e.g., ‘Find the length of...’, ‘What is the
+value of...’, ‘Determine...’).
+4. Always keepany answer format instructions (e.g., ‘put your final answer in ’, ‘Final
+Answer: ’).
+5. Keepany mathematical constraints or conditions that are purely algebraic and NOT
+depicted in the image.
+6. If the question is purely algebraic with no visual information to remove, return it
+UNCHANGED.
+7. Do NOT add any new information or rephrase the question – only remove redundant
+parts.
+8. Return ONLY the rewritten question text, nothing else.
+9. Do not add placeholder tokens such as ¡image¿.
+## Original question:<question>
+## Rewritten question (visual-redundant info removed):
+D Examples
+D.1 Example 1
+Summary
+The correct answer is 3
+√
+2 + 2
+√
+5. The image-dominant response realizes that P should sit on the
+intersection of AC and BD to minimize |P A|+|P B|+|P C|+|P D| because this is intuitive
+from the diagram. The text-dominant response never realizes this and simply guess and exhausts
+different locations of P and only reaches a rough estimate of|P A|+|P B|+|P C|+|P D| ≈8.74
+Image-dominant Prompt
+In the Cartesian coordinate plane, there are four fixed points A, B, C, D and a moving point P .
+What is the minimum value of|P A|+|P B|+|P C|+|P D|?
+20
+
+--- Page 21 ---
+
+Image-dominant Response
+[...]
+Step 25: Consider that the optimal point may be the intersection of the perpendicular bisectors or
+something else
+[...]
+Final Answer:3
+√
+2 + 2
+√
+5✓
+Text-dominant Prompt
+In the Cartesian coordinate plane, there are four fixed points A(−3,0) , B(1,−1) , C(0,3) ,
+D(−1,3) and a moving point P . What is the minimum value of |P A|+|P B|+|P C|+|P D| ?
+Text-dominant Response
+[...]
+Let me try P = (0, 3) — 9.36
+Or try P = (0, 2) — 9.18
+Or try P = (-1, 2) — 8.848
+Or try P = (0, 2.5) — 8.756
+Or try P = (-0.5, 2.5) — 8.756
+Or try P = (-0.5, 2.4) — 8.744
+Or try P = (-0.5, 2.34) — 8.741
+So perhaps the minimum is 8.74.
+Maybe the answer is 8.74✗
+D.2 Example 2
+Summary
+The correct answer is 873. The text-dominant response successfully reasons through the set up of
+this question while the image-dominant response misreads the radii of each semicircle as half
+of the side length of the triangle. The text-dominant response realizes that for a semicircle with
+diameter on one side of the triangle and be tangent to the other two sides, its diameter must be
+less than the side of the triangle it sits on.
+Image-dominant Prompt
+In a triangle, three semicircles can be drawn such that the diameter of each lies on a side of the
+triangle and each semicircle is tangent to the other two sides. The product of the areas of these
+three semicircles is numerically equal to the cube of the surface area of a certain sphere. The
+volume of this sphere can be expressed as aπ
+√
+b
+c , where a and c are relatively prime integers and
+bis the product of distinct primes. Finda+b+c.
+21
+
+--- Page 22 ---
+
+Image-dominant Response
+Let’s consider the semicircle drawn on sideAB as diameter. Let M be the midpoint of AB. The
+semicircle with diameter AB has center M, radius r= AB
+2 = 7.5. For this semicircle to be
+tangent to sides AC and BC, the distance from point M to lines AC and BC must equal the
+radiusr= 7.5.
+[...]
+So a + b + c = 455 + 2730 + 64 = 3249
+3249✗
+Text-dominant Prompt
+In a triangle with side lengths 13, 14, and 15, three semicircles can be drawn such that the
+diameter of each lies on a side of the triangle and each semicircle is tangent to the other two sides.
+The product of the areas of these three semicircles is numerically equal to the cube of the surface
+area of a certain sphere. The volume of this sphere can be expressed as aπ
+√
+b
+c , where a and c are
+relatively prime integers andbis the product of distinct primes. Finda+b+c.
+Text-dominant Response
+[...]
+But wait — in a triangle, if you draw a semicircle with diameter on side AB, and you want it to
+be tangent to sides AC and BC, then the semicircle must lie **inside** the triangle, and its center
+lies on AB, and it touches AC and BC.
+[...]
+So a = 784, b = 2, c = 87, a + b + c = 784 + 2 + 87 = 873
+So 873✓
+D.3 Example 3
+Summary
+The correct answer is A. The privileged response correctly reaches the answer because it has all
+the necessary condition. The image-dominant response, though having all necessary condition, it
+did not read theAP=ADcondition from the diagram and reached the wrong asnwer B
+Image-dominant Prompt
+In the circleO, the length ofABis twice the radiusR. Then
+(A)AP 2 =P B·AB.
+(B)AP·DO=P B·AD.
+(C)AB 2 =AD·DE.
+(D)AB·AD=OB·AO.
+(E) None of the above.
+22
+
+--- Page 23 ---
+
+Image-dominant Response
+We are given a circle with center O, and a point A outside the circle such that AB is a tangent to
+the circle at pointB, andAB= 2R, whereRis the radius.
+Also, AB⊥OB , since a tangent is perpendicular to the radius at the point of contact. So triangle
+ABOis a right triangle with right angle atB.
+Moreover, D is a point on the circle and also on AO, so D lies on the line segment from A to
+O, and since O is the center, OD=R (radius), and since AO is a line from A to the center, and
+AB= 2R , then AO is the hypotenuse of right triangle ABO, with legs AB= 2R and OB=R .
+Let’s computeAO:
+In right triangleABO:
+AO=
+p
+AB2 +OB 2 =
+p
+(2R)2 +R 2 =
+p
+4R2 +R 2 =
+√
+5R2 =R
+√
+5
+Now, point D lies on AO, and OD=R , so since AO=R
+√
+5, then AD=AO−OD=
+R
+√
+5−R=R(
+√
+5−1).
+We are to check which of the given options is true.
+—
+Let’s analyze each option one by one.
+—
+[...]
+—
+Therefore, the correct answer is(B).
+—
+Final Answer: (B)✗
+Combined Image+Text Prompt
+In the circle O, BC is the diameter of the circle, and AB⊥BC . Also, ADOE is a straight line,
+AP=AD, and the length ofABis twice the radiusR. Then
+(A)AP 2 =P B·AB.
+(B)AP·DO=P B·AD.
+(C)AB 2 =AD·DE.
+(D)AB·AD=OB·AO.
+(E) None of the above.
+23
+
+--- Page 24 ---
+
+Combined Image+Text Response
+Step 1: Understand the diagram and given data
+•BCis the diameter→soBC= 2R, andOis the midpoint ofBC.
+•AB⊥BC→so triangleABCis a right triangle atB.
+•ADOEis a straight line→pointsA,D,O,Eare colinear.
+•AP=AD→pointPlies onAB, andAP=AD.
+•AB= 2R.
+[...]
+—
+Therefore, only(A)is correct.
+—
+Final Answer: (A)✓
+D.4 Example 4
+Summary
+The image-dominant response wrongly reads the 5
+√
+2 segment as AF instead of HF. Without the
+necessary and correct information, the image-dominant response never reaches a solution.
+Image-dominant Prompt
+Given that E is a point on the extension of side BC of square ABCD , and a square AEF G is
+constructed withAEas one side. Then the length ofBEis?
+24
+
+--- Page 25 ---
+
+Image-dominant Response
+We are given:
+- Square ABCD , so all sides are equal and all angles are 90°. - Point E lies on the **extension**
+of side BC, meaning beyond point C. - A square AEF G is constructed with side AE. - We are
+given the length AF= 5
+√
+2, and also the length DH=
+√
+2 (where H is the point on AF such
+thatDHis drawn and labeled as
+√
+2).
+We are to find the length ofBE.
+[...]
+✗
+Text-dominant Prompt
+Given that E is a point on the extension of side BC of square ABCD , and a square AEF G is
+constructed with AE as one side, such that points A and G are on the same side of BE. The
+extension of BD intersects AF at point H, with HD=
+√
+2 and F H= 5
+√
+2. Then the length of
+BEis?
+Text-dominant Response
+We are given a square ABCD , and point E is on the extension of side BC. A square AEF G
+is constructed with AE as one side, and points A and G are on the same side of line BE. The
+extension of diagonal BD intersects line AF at point H, with HD=
+√
+2 and F H= 5
+√
+2. We
+are to find the length ofBE. [...]
+Final Answer:8✓
+D.5 Example 5
+Summary
+The text-dominant response treats ’Square A and B share a common side’ as side length equal
+and could never solve the problem.
+Text-dominant Prompt
+Square A, with side length 20 meters, has an area equal to the areas of square B and square C
+combined. Square A and square B share a common side. Square B and square C share a common
+side as well. What is the sum, in meters, of the combined perimeters of square B and square C?
+Text-dominant Response
+We are given:
+- Square A has side length **20 meters**, so its area is:
+AreaA = 20×20 = 400m 2
+- The area of square A equals the **combined areas** of square B and square C:
+AreaB +Area C = 400
+- Square A and square B **share a common side**, meaning they are adjacent — likely side by
+side or stacked, but since both are squares and share a side, **their side lengths must be equal**.
+Why? Because if two squares share a side, that side must have the same length for both squares.
+So:
+Side length of square B=Side length of square A= 20meters
+25
+
+--- Page 26 ---
+
+Wait — but that would make area of B = 400 m², and then area of C would be 0, which is
+impossible.
+So maybe they don’t share a side of equal length? But the problem says “share a common side”.
+That implies that the side that is common must be of the same length for both squares.
+So if square A and square B share a side, then they must both have that side as their side length.
+But then square B would also have side 20, so area = 400, and C would have area 0 — impossible.
+Therefore, perhaps the common side is **not** the side of the square — that doesn’t make sense.
+[...]
+✗
+Text-dominant Prompt
+Square A has an area equal to the areas of square B and square C combined. What is the sum, in
+meters, of the combined perimeters of square B and square C?
+Image-dominant Response
+We are given that Square A has an area equal to the combined areas of Square B and Square C.
+Also, the side length of Square A is given as **20 meters**.
+—
+Step 1: Find the area of Square A
+[...]
+Final Answer:112meters✓
+E Pseudocode forMIRROR
+Algorithm 1 outlines the training loop ofMIRROR.
+26
+
+--- Page 27 ---
+
+Algorithm 1MIRRORupdate loop
+Require: policy πθ, frozen reference policy πref, EMA teacher decay α, paired dataset D, rollouts
+per promptK, reverse-KL coefficientλ KL, learning rateη
+1: Dataset.Each problem has paired text-dominant xtext and image-dominant ximage views,
+sharing the same pair identifier. Each row also has a fixed combined image+text input xcomb
+precomputed at dataset construction time.
+2: Sampler.Construct minibatches so that paired rows from the same problem appear in the same
+minibatch and on the same data-parallel rank.
+3:EMA teacher.Initialize EMA parameters ¯θ←θ.
+4:foreach epochdo
+5:foreach minibatchBdo
+6:Setπ old ←π θ.
+7:Standard rollouts from student views.
+8:foreach rowx∈Bdo
+9:SampleNresponses{y i}N
+i=1 ∼π old(· |x).
+10:Compute rewardsr i ←R(x, y i)fori= 1, . . . , K.
+11:end for
+12:combined view rollouts.
+13:foreach rowx∈Bdo
+14:SampleNresponses{y comb
+j }K
+j=1 ∼π old(· |x comb).
+15:Compute rewardsr comb
+j ←R(x comb, ycomb
+j )forj= 1, . . . , K.
+16:end for
+17:Teacher selection.
+18:foreach rowx∈Bdo
+19:Letx pair be the paired view of the same problem.
+20: Let T(x) contain three candidates: the current rollout πold(· |x) , the paired-view
+rolloutπ old(· |x pair)and the combined-view rolloutπ old(· |x comb).
+21:Score each candidate using its rollout rewards.
+22: Select the highest-scoring valid candidate view xsel; define the teacher as the EMA
+model under that view:π T (· |x)←π ¯θ(· |x sel).
+23:If the selected teacher is the current view, excludexfrom the reverse-KL loss.
+24:end for
+25:GRPO loss.
+26:Compute GRPO advantages from the standard rollout rewards{r i}K
+i=1.
+27:ComputeL GRPO usingπ θ,π old,π ref, and the standard rollouts.
+28:Reverse-KL loss.
+29:ComputeL rKL ←E x:πT (·|x) defined [DKL (πθ(· |x)∥π T (· |x))].
+30:Update.
+31:L total ← LGRPO +λ KLLrKL.
+32:Updateθby minimizingL total with learning rateη.
+33: ¯θ←α ¯θ+ (1−α)θ ▷EMA teacher update
+34:end for
+35:end for
+27
