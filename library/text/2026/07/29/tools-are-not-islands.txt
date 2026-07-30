@@ -1,0 +1,889 @@
+--- Page 1 ---
+
+Tools Are Not Islands: Set-Level Tool Retrieval for LLM Agents via
+Query-Conditioned Hyperedge Prediction
+Xinyi Hong1, Pinjun Dong2, Xinyang Yu2, Binyan Jiang2∗
+1School of Mathematical Sciences, Shanghai Jiao Tong University
+2Department of Data Science and Artificial Intelligence, The Hong Kong Polytechnic University
+xinyi.hong@sjtu.edu.cn, pin-jun.dong@connect.polyu.hk, X.Yu59@lse.ac.uk, by.jiang@polyu.edu.hk
+Live Demo/gtbGitHub
+ Hugging Face
+Abstract
+Large language model (LLM) agents increasingly rely on
+invoking external tools to complete real-world tasks. Tool
+retrieval, which selects a small task-relevant subset from a
+library of thousands of tools before the agent acts, has there-
+fore become a critical component of LLM agent pipelines.
+However, existing retrievers either score each tool in isolation
+or assemble the tool set sequentially, so the joint utility of a
+candidate set is never evaluated as a whole. In this paper, we
+proposeHYSET, short forHYperedge-basedSEt-levelTool
+retrieval. Ourcontributions arethreefold: (i)we formulate tool
+retrieval as query-conditioned hyperedge prediction on a tool
+co-invocation hypergraph, under which the tool set itself be-
+comestheunitofscoringandmostexistingretrievalparadigms
+reduce to restricted instances; (ii) we capture size-dependent
+tool compatibility through cardinality-specific interactions;
+and(iii)wedesignHYSETasapre-selectionmodulerequiring
+no modification to the downstream agent. Experiments on
+ToolBench demonstrate that HYSET consistently outperforms
+state-of-the-art baselines in both tool retrieval performance
+and end-to-end task success. Beyond the in-domain setting,
+HYSET further supports zero-shot/few-shot transfer, general-
+izing to held-out tools/categories and unseen domains with
+minimal supervision.
+1 Introduction
+Large language models (LLMs) are increasingly deployed
+as autonomous agents capable of invoking external tools to
+complete real-world tasks (Schick et al. 2023; Shen et al.
+2023; Patil et al. 2023; Yao et al. 2022). As agents grow
+more capable and their invocation demands expand, tool
+libraries have scaled from dozens of handcrafted functions
+to large-scale API ecosystems containing thousands of real-
+world endpoints. ToolBench (Qin et al. 2023), for instance,
+includes 16,464 API endpoints spanning 49 categories from
+the RapidAPI Hub, a scale that renders exhaustive in-context
+presentation of every tool description impractical. One might
+expect that increasingly long context windows would eventu-
+ally eliminate the need for explicit tool selection. However,
+empiricalevidenceshowsthattheeffectiveuseofinformation
+degrades sharply when context exceeds tens of thousands of
+tokens (Liu et al. 2023), and injecting the full tool library
+∗Corresponding author.
+into every prompt would incur prohibitive latency and cost at
+agent scale. Moreover, the difficulty is not one of scale alone.
+Real-world tasks rarely depend on a single API, and a query
+is typically resolved by several APIs invoked jointly (Qin
+et al. 2023; Qu et al. 2024), so what must be retrieved is
+not a ranked list of individually relevant tools but a jointly
+useful tool set. Tool retrieval, which selects such a small
+task-relevant subset from a large API library before the agent
+acts, therefore remains a persistent infrastructure bottleneck
+rather than a transitional one.
+Existing tool retrievers address this bottleneck through
+three representative paradigms. The most common paradigm,
+semantic-matching retrieval, scores each API independently
+against the query. Sparse methods such as BM25 (Robert-
+son and Zaragoza 2009) rank APIs by lexical overlap, while
+dense bi-encoders such as Contriever (Izacard et al. 2021)
+and Sentence-BERT-style models (Reimers and Gurevych
+2019; Qin et al. 2023) score APIs by cosine similarity in a
+shared embedding space. All such methods treat each tool as
+an independently scorable item, so the score of a candidate
+set is simply an aggregate of per-tool signals. This treatment
+breaks down whenever tool utility is a joint property of the
+set rather than a sum of individual values. A tool that ranks
+low in isolation may become indispensable alongside other
+selected APIs, and a group of individually high-scoring tools
+maycollectivelyfailtocoverthefullscopeofatask.Thisgap
+is evident in practice. On ToolBench, a fine-tuned Contriever
+retriever reported by Qu et al. (2024) attains a Recall@3 of
+68.6%, yet its COMP@3, the fraction of queries whose com-
+plete required tool set is covered by the top-3 results, is only
+39.7%. To move beyond such independent scoring, the other
+two paradigms have recently been explored. Graph-enhanced
+retrievers such as COLT (Qu et al. 2024) augment semantic
+matching with dual-view collaborative learning over a bipar-
+tite query-scene-tool graph, improving the recovery of the
+complete required tool set. Nevertheless, their collaborative
+signal is distilled into per-tool embeddings during training,
+and inference still reduces to independent top-k ranking, so
+set-level coherence is only approximated rather than scored
+explicitly. Generative retrievers such as ToolGen (Wang et al.
+2024), building on generative retrieval (Tay et al. 2022), in-
+stead emit tool identifiers directly from the language model.
+However, the tool set is assembled step by step from local
+arXiv:2607.25718v1  [cs.LG]  28 Jul 2026
+
+--- Page 2 ---
+
+(a) Overview of tool retrieval for LLM agents
+(b) Existing retrievers
+(c) HYSET view
+Isolated relevance scoringSemantic Matching
+Implicit set coherenceGraph-Enhanced
+Order-sensitive sequential assemblyGenerative
+query   scene   tool
+query
+tool 1 tool 2 …tool Kcompute cosine similarityand select Top-K
+ToolCo-invocation Hypergraph
+tool 1 tool 2 …tool KSet-level Tool Retrieval
+(b) Existing retrievers
+Figure 1:Overview and motivation of HYSET.(a) Tool-retrieval pipeline; (b) limitations of existing retrievers; and (c) our
+set-level view as query-conditioned hyperedge prediction.
+conditional probabilities under a sequence-likelihood objec-
+tive,socompletecandidatesetsareneverexplicitlycompared,
+and whether the assembled set is coherent and complete can
+only be judged after generation ends. Figure 1 contrasts these
+paradigms with our set-level view. Supplementary Material
+H gives extended related work.
+Across all three paradigms, tools are either scored inde-
+pendently or generated sequentially, and no candidate set
+is ever assessed as a whole. We therefore argue thattools
+are not islands, and tool retrieval is inherently a set-
+level problem. This position raises two questions.(Q1)Can
+tool sets be scored as a whole, and does this improve re-
+trieval?(Q2)Do tool co-invocation patterns vary with set
+size, and does modeling these differences help?Both are
+grounded in a representative ToolBench example. For the
+travel-planning query “I am flying from Chicago to Tokyo for
+five days next month. Find round-trip flights, book a hotel
+near Shinjuku, check the weather for those dates, and convert
+my 2,000 USD budget into yen”, whose ground-truth tools
+are {Flight,Hotel,Weather,Currency} , flight terms domi-
+natethewordingandafine-tuneddenseretrieverscoresFlight,
+CheapFlight,FlightTracker,Hotel,WeatherandCurrencyat
+0.92, 0.89, 0.87, 0.80, 0.55 and 0.32. Top-4 retrieval there-
+fore returns{Flight,CheapFlight,FlightTracker,Hotel} and
+leavestwosubtasksuncovered.Thefailureisstructuralrather
+than a matter of calibration. OnceFlightis selected, a second
+flight API contributes almost nothing, yet each per-tool score
+isassignedinignoranceofwhatelsehasbeenselected,which
+is the concern of(Q1)and is visible only when tools are
+scored as a whole. However, scoring the set jointly is still
+not enough, because the interaction among tools must itself
+depend on the cardinality of the set. A currency converter
+and a weather lookup belong together in the four-tool request
+above, but in a two-tool task they are co-invoked only under
+a contrived query such as “convert my budget into yen and
+tell me whether it will rain in Tokyo”. On ToolBench the two
+co-occur in 0.4% of two-tool sets but in23% of four-tool
+sets, a gap far wider than the mechanical increase in pair
+count with set size would explain. This underlies(Q2)and
+motivates cardinality-specific interaction modeling.
+WethereforeproposeHYSET,shortforHYperedge-based
+SEt-levelTool retrieval. Our main contributions are summa-
+rized as follows:
+• Formulation.To the best of our knowledge, we are the
+first to recast tool retrieval for LLM agents as query-
+conditionedhyperedgepredictionoveratoolco-invocation
+hypergraph, making the tool set itself the unit of scoring.
+We further provide a unified view where existing tool-
+retrieval paradigms arise as restricted instances.
+• Method.We design HYSET as a pre-selection module
+requiring no modification to the downstream agent, which
+scores candidate tool sets via cardinality-specific interac-
+tion matrices so that tool compatibility can vary with set
+size.
+• Experiments.On ToolBench, HYSET consistently out-
+performs strong baselines from all three paradigms, with
+relative improvements of11.6%in COMP@5 and up to
+13.1%in end-to-end pass rate over the strongest base-
+lines. It further transfers zero-shot to held-out tools and
+categories, and recovers93.2%of fully supervised perfor-
+mance with only5labeled examples per category.
+2 Methodology
+2.1 Preliminaries
+Let T={t 1, . . . , tNT } be a tool library. We assume each
+query xinthenatural-languagequeryspace X canbefulfilled
+by jointly invoking a subsetE⊆ T , and we assume access
+
+--- Page 3 ---
+
+One Query❄PPre-trained LanguageEncoder
+…
+Query Embedding
+Tool Library
+𝐹!"#$%rZ
+r Cross-AttentionPooling
+🔥
+🔥Embed into query space
+Joint ScoreShared Tool Embeddings
+Cardinality-Specific Interaction
+𝐹&'(
+Z
+🔥…
+Tool Embeddings
+…Embedding Lookup
+…
+Final ResponseLLM AgentTool Retrieval ❄Execution and Reward Module
+LLM-as-Judge(e.g., GPT-4)
+✅
+❌
+Set-level Retrieval Loss
+Set-Level Scoring
+Reward-Weighted Self-Training LossHYSET
+❄Frozen Module
+🔥Trainable ParameterPass
+✅
+❌FailTraining Feedback
+2 tools𝐌!
+🔥3 tools𝐌"
+🔥…m tools𝐌#
+🔥
+…
+Tool-Set Interaction Module
+/
+Reward
+Figure 2:HYSET framework.HYSET consists of two components: query-set alignment, measuring relevance to the input query,
+and set-level scoring, treating each candidate set as a hyperedge and modeling cardinality-specific interactions among its tools.
+to a training set Dtr ={(x i, E⋆
+i )}N
+i=1, where E⋆
+i is the
+annotated tool set forxi. EachE⋆
+i is the ground truth forxi
+but need not be the unique feasible set, and it is unordered
+because invocation order is decided by the downstream agent
+rather than by the retriever. These sets admit a hypergraph
+representation (Battiston et al. 2020) that we call the tool co-
+invocation hypergraphH= (V,E) , whose node setV=T
+collects all tools and whose hyperedgesE are the observed
+E⋆
+i, so the unit of supervision shifts from the relevance of
+an individual tool to the joint utility of an entire set. Writing
+M= max i |E⋆
+i | for the largest observed tool-set size, the
+admissiblecandidatehyperedgespace EM collectsall E⊆ V
+with 1≤ |E| ≤M , assuming that tool sets required at
+inference do not exceedM.
+2.2 Problem Formulation
+Set-level tool retrieval seeks a mappingR:X → E M
+returning the complete tool set for a query. SinceV=T ,
+every candidate setE∈ E M is a hyperedge overV, so the
+task is query-conditioned hyperedge prediction. We model
+it through a parametric scoring familyFθ :X × E M →R ,
+where Fθ(x, E)measuresthejointutilityofselecting E for x,
+andestimate bθ= arg min θ∈Θ L(θ;D tr)with Ltheempirical
+lossofSection2.4.Foranewquery xnew,thelearnedscoring
+function bF=F bθ predicts
+bE(xnew) = arg max
+E∈EM
+Fbθ(xnew, E).(1)
+The resulting setbE(xnew) is subsequently provided to the
+frozen downstream LLM agent to complete the user query.
+2.3 A Unified View of Tool Retrieval
+Under the hypergraph formulation and scoring family intro-
+duced in Section 2.2, major existing tool-retrieval paradigms
+can be subsumed by a unified set-scoring framework.
+(i) Semantic-matching retrieversinduce Fmatch :X ×
+EM →R with Fmatch(x, E) = P
+t∈E Fmatch(x,{t}) =P
+t∈E smatch(x, t), where{t} ∈ E M is the singleton hy-
+peredgeassociatedwithtool t,and smatch(x, t)istypically
+a lexical or dense query-tool matching score.
+(ii) Graph-enhanced retrieversinduce Fgraph :X ×
+EM →R with Fgraph(x, E) = P
+t∈E Fgraph(x,{t}) =P
+t∈E sG(x, t), wheresG(x, t)is typically the similarity
+between a query embedding and a graph-contextualized
+embedding of the individual toolt.
+(iii) Generative retrieversinduce Fgen :X × E M →R
+with Fgen(x, E) = logP
+π∈S(E) pϕ(π,EOS|x) , where
+S(E) collects the |E|! orderings of E, and pϕ is typi-
+cally the autoregressive probability of a language model
+over tool-identifier tokens. Its factorization is given in
+Supplementary Material A.2.
+The formulations above provide a unified mathematical view
+of existing paradigms. Supplementary Material A.2 derives
+the three induced scores and A.3 shows that they form a strict
+hierarchy of interaction orders.
+2.4 The Framework of HYSET
+ScoringFunctionParameterization.Weparameterizethe
+scoringfunction Fθ :X × E M →R introducedinSection2.2
+through the decomposition
+Fθ(xi, E) =F set(E) +F align(xi, E),(2)
+where Fset models the internal interaction among the tools in
+Eindependentlyofthequery,and Falignmodelsthealignment
+between xi and E. First, motivated by latent-space models of
+hypergraphdata(Turnbulletal.2019;Wu,Xu,andZhu2024;
+Hong, Xu, and Yu 2026), we parameterize the set-interaction
+termF set as
+Fset(E) =
+X
+1≤a<b≤m
+z⊤
+ja Mmzjb ,(3)
+
+--- Page 4 ---
+
+Algorithm 1Training and Inference of HYSET
+Training input: Tool node set V, training set Dtr =
+{(xi, E⋆
+i )}N
+i=1, frozen query encoderr(·), frozen agentA,
+candidate-pool sizeKneg, maximum cardinalityM, execu-
+tion limitR, and weightsη, λ
+Inferenceinput:Query xnew andshortlistsizes K1 < Kpool
+Output: Learned scoring functionbF and predicted tool set
+bE(xnew)
+Training phase
+1:repeat
+2:Sample a minibatch index setB ⊆ {1, . . . , N}
+3:foreachi∈ Bdo
+4: Construct Ci ⊆ E M ofsize Kneg usingthenegative-
+sampling procedure in Section 2.4
+5:Compute bEi fromC i via Eqs. (2) and (7)
+6: Run A on xi using DFSDT (Qin et al. 2023) with
+tool setbEi for at mostRsteps
+7: Obtain the task rewardρi from the execution result
+8:end for
+9:Updateθvia Eq. (11)
+10:untilconvergence
+11:Obtain bθ←θand bF=F bθ
+Inference phase
+12: Construct the Kpool-tool shortlist S using Eqs. (12)
+and (13)
+13:Compute bE(xnew)via Eq. (14)
+14:return bFand bE(xnew)
+where E={t j1 , . . . , tjm } ∈ E M isacandidatehyperedgeof
+cardinality m=|E| , zja ∈R dz is the learnable embedding
+of tool nodetja, Z∈R |V|×d z collects all tool embeddings
+as rows, andMm ∈R dz×dz is a symmetric interaction ma-
+trix shared across candidate hyperedges of cardinalitym. A
+larger Fset(E) indicates that the tools ofE better conform
+to the learned patterns of co-invocation and functional com-
+plementarity. Form≥2 , the pair contributionz⊤
+ja Mmzjb is
+allowed to vary with the cardinality of the set containing it,
+which is precisely what{Mm}M
+m=2 is introduced to model.
+To formalize the distinction, we introduce the notion of a
+pairwise-decomposableset function based on the Möbius
+transform (Grabisch, Marichal, and Roubens 2000). Specifi-
+cally, for a given functionf:E M ∪ {∅} →R , the Möbius
+transform and its inverse are defined as
+˜f(E) :=
+X
+T⊆E
+(−1)|E|−|T| f(T), f(E) =
+X
+T⊆E
+˜f(T).
+Intuitively, the Möbius coefficient˜f(T), whose interaction
+order is |T|, measures the joint contribution attributable
+specifically to T after subtracting the contributions of its
+proper subsets. Hence, we callf pairwise-decomposableif
+˜f(E) = 0 whenever 3≤ |E| ≤M , meaning that it contains
+no interactions above order two. For instance, whenM≥3 ,
+the third-order interaction ofS={t i, tj, tk}is
+˜Fset(S) =
+X
+{ta,tb}⊆S
+z⊤
+a (M3 −M 2)zb.
+Thus, M3 −M 2 induces the third-order effect without an ex-
+plicitthree-waytensor.Moregenerally,wehavethefollowing
+theorem:
+Theorem 1.Assume |V| ≥M+ 2 . The set functionFset :
+EM ∪ {∅} →R 1 is pairwise-decomposable if and only if
+z⊤
+i M2zj =· · ·=z ⊤
+i MM zj,∀t i, tj ∈ V, i̸=j.
+We prove Theorem 1 in Supplementary Material A.4. The
+theorem identifies the exact role of the cardinality-specific
+matrices. Fset reduces to a fixed pairwise model precisely
+when every pair receives the same score at all cardinalities
+from 2to M. Otherwise, its cardinality dependence induces
+interactions above order two. Thus, althoughFset is parame-
+terized as a sum over pairs, it can represent structured joint
+effects at orders up toM and thereby capture multi-tool com-
+patibility. These structured effects are generated byO(M d2
+z)
+parameters,ratherthanthe O(dM
+z )parametersrequiredbyan
+unrestricted explicitM-way tensor. Second, we parameterize
+the query-set alignmentFalign as
+Falign(xi, E) =r(x i)⊤s(xi, E),(4)
+where r:X →R dr is a frozen pre-trained language model
+that maps query xi to its embedding r(xi) (Reimers and
+Gurevych 2019), ands:X × E M →R dr produces a query-
+conditioned representations(xi, E) of candidate hyperedge
+E. Specifically, we computes(xi, E) using cross-attention
+pooling withr(xi) as the query and{Pzjk }m
+k=1 as the keys
+and values (Vaswani et al. 2017),
+s(xi, E) =
+mX
+k=1
+αk(xi, E)Pzjk ,(5)
+where αk(xi, E) =
+exp(ℓ(xi,tjk))Pm
+q=1 exp(ℓ(xi,tjq )) is the normalized
+attention weight assigned totjk within E, andℓ(xi, tjk ) =
+r(xi)⊤Pzjk is the matching score between queryxi and tool
+tjk. The matrixP∈R dr×dz maps each tool embedding into
+the query space. Substituting Eq. (5) into Eq. (4) gives
+Falign(xi, E) =
+mX
+k=1
+αk(xi, E)ℓ(xi, tjk ).(6)
+For m≥2 ,eachattentionweightdependsonalltoolsin E,so
+thealignmenttermisitselfaquery-conditionedset-levelscore
+(Supplementary Material A.5). The trainable parameters are
+θ= (Z,{M m}M
+m=2,P), withZshared by the two terms.
+Training Objective.In practice, we construct the training
+objective of HYSET from negative-sampled set supervision
+and execution feedback, as depicted in Figure 2 and summa-
+rizedinAlgorithm1.SincetheadmissiblespaceofSection2.1
+contains |EM |= PM
+m=1
+ |V|
+m
+
+candidate hyperedges, exhaus-
+tive training is infeasible, and we use negative sampling both
+to build tractable candidate pools and to supply contrasting
+tool sets for the retrieval loss. For each queryxi with ground-
+truth hyperedge E⋆
+i, we form the poolCi ={E ⋆
+i } ∪ N i
+1Fset(E) := 0for|E| ≤1.
+
+--- Page 5 ---
+
+with Ni ⊆ E M \ {E ⋆
+i } and |Ni|=K neg −1 distinct neg-
+atives, drawn from three sources in the fixed proportion
+50%/30%/20%: size-matched sets sampled uniformly from
+the |E⋆
+i |-tool subsets ofV, in-batch negatives taken from the
+ground-truth sets of the other queries of the minibatch (Oord,
+Li, and Vinyals 2018), and hard negatives obtained by replac-
+ing one or two tools ofE⋆
+i with their nearest neighbors under
+Z (Karpukhin et al. 2020; Robinson et al. 2020). Supple-
+mentary Material A.8 states the sampling procedure in full,
+gives an adaptive mixture recovering this one as the constant
+special case, and measures the resulting false-negative rate.
+Supplementary Material C.8 sweeps the proportion. Given
+Ci, we score each candidate using Eq. (2) and select
+bEi = arg max
+E∈Ci
+Fθ(xi, E),(7)
+ThefrozenLLMagent Athenprocesses xi undertheDFSDT
+search procedure (Qin et al. 2023) with its tool set restricted
+to bEi for at mostR steps, and its answerbyi receives the
+execution rewardρi = ExecScore(x i,byi)∈[0,1] , whose
+definition, configuration and refresh schedule are given in
+Supplementary Material A.9. The candidate pool induces the
+retrieval loss
+Lret(θ) =−
+X
+i∈B
+log expF θ(xi, E⋆
+i )P
+E∈Ci expF θ(xi, E) ,(8)
+which raisesFθ(xi, E⋆
+i ) relative toFθ(xi, E) for everyE∈
+Ni.Wefurtheruseexecutionfeedbacktoreinforcesuccessful
+model-selectedsetsthroughthereward-weightedself-training
+loss
+Lself (θ) =−
+X
+i∈B
+ρi log expF θ(xi,bEi)P
+E∈Ci expF θ(xi, E) ,(9)
+wherebEiand ρiaretreatedasconstantswithineachparameter
+update. Combining Eqs. (8) and (9), the full objective is
+L(θ) =L ret(θ) +ηL self (θ) +λ
+MX
+m=2
+∥Mm∥2
+F ,(10)
+where η >0 controls the execution-feedback term andλ >0
+controls the regularization of the cardinality-specific interac-
+tion matrices. We estimate
+bθ= arg min
+θ∈Θ
+L(θ) s.t.∥z j∥2 = 1∀t j ∈ V,(11)
+where∥z j∥2 = 1fixes the scale of each tool embedding.
+Set-Level Inference.The training procedure yields the
+learned scoring functionbF=F bθ with estimated parameters
+bθ= ( bZ,{cMm}M
+m=2,bP). Given a new queryxnew ∈ X ,
+directly solving Eq.(1) requires maximizing bF over EM.
+Since EM contains all subsets ofV with cardinality between
+1 and M, its size grows combinatorially with|V|, making
+exhaustive enumeration infeasible. We therefore approximate
+Eq. (1) by exploiting the additive decomposition ofbF in
+Eq.(2) to construct a two-stage procedure consisting of per-
+toolretrievalandset-levelreranking(Zhengetal.2024,2026).
+Inthefirststage,wescoreeachindividualtool tj ∈ V against
+xnew. Substituting the singleton hyperedgeE={t j} into
+Eq. (2) yields
+bF(x new,{t j}) =r(x new)⊤bPbzj.(12)
+Let S0 ⊆ V collect the K1 highest-scoring tools under
+Eq.(12).Wescoreeveryremainingtoolbyitslearnedcomple-
+mentarity withS0, g(tj) = max ti∈S0bz⊤
+jcMMbzi, and write
+t[1], t[2], . . .for the tools ofV \ S 0 in decreasing order ofg.
+The shortlist is then
+S=S 0 ∪
+
+t[1], . . . , t[Kpool −K1]
+
+,(13)
+where M≤K pool ≪ |V|,sothesecondtermadmitsatoolof
+low individual relevance but high complementarity withS0.
+In the second stage, we evaluate Eq.(2) on every candidate
+in the reduced spaceEM (S) ={E⊆ S: 1≤ |E| ≤M} ,
+which approximates Eq. (1) by
+bE(xnew) = arg max
+E∈EM(S)
+bF(x new, E).(14)
+Eq. (14) compares sets of different cardinality, and since
+Fset aggregates
+ m
+2
+
+pairs while Falign is a convex com-
+bination of per-tool scores, the two scale differently inm,
+which the cardinality-specificMm absorbs. The reduced
+space containsPM
+m=1
+ Kpool
+m
+
+hyperedges, independently
+of |V|. As bE(xnew) is unordered and of variable size,
+rank-based metrics require a second output, obtained by
+greedy marginal gain under the samebF with A0 =∅ and
+Ak =A k−1 ∪ {arg maxt∈S\A k−1
+bF(x new, Ak−1 ∪ {t})},so
+every step after the first scores a candidate jointly with the
+toolsalreadyselected.Rank-basedmetricsarecomputedfrom
+bE(K) (xnew) = (t π(1), . . . , tπ(K) ), whilebE(xnew) is passed
+to the agentA. Supplementary Material A.10 reports the
+predicted cardinality distribution and a calibrated variant,
+A.11 the inference path in pseudocode, and E.3 a comparison
+against exhaustive maximization.
+3 Experiments
+3.1 Experimental Setup
+Task, datasets and baselines.We evaluate offline retrieval
+by testing whether the retrieved set coversE⋆, and end-to-
+end execution by testing whether the frozen agent solves the
+query when restricted to that set. Our primary benchmark
+is ToolBench (Qin et al. 2023), whose official filtering re-
+tains 13,860callable API endpoints formingV and 200,311
+instructions with ground-truth API sets. We train on the
+combined official training portions and evaluate on the six
+held-out test sets comprising600queries. Since training and
+evaluation share one library, we also report train-test overlap
+and results restricted to unseen tool sets. To check that the
+conclusions are not library-specific, we further evaluate on
+UltraTool (Huang et al. 2024), whose2,032 tools across22
+domainsaredisjointfromToolBenchandinwhichonly 6.1%
+of the ground-truth sets are singletons, against20.4% on
+ToolBench. We compare against six baselines spanning the
+threeparadigms:BM25(RobertsonandZaragoza2009),Con-
+triever (Izacard et al. 2021), ToolLLaMA-Retriever (Qin et al.
+
+--- Page 6 ---
+
+Method Sup. Recall@5↑NDCG@5↑COMP@5↑ Pass Rate↑
+GPT-4 Human
+BM25 A41.02 39.68 22.38 19.21±0.44 15.37±1.47
+Contriever A41.08 38.30 22.04 18.80±0.41 14.17±1.42
+ToolLLaMA-Ret A68.88 70.12 61.11 64.05±0.68 61.83±1.98
+ToolRerank A80.71±0.17 81.63±0.08 69.93±0.07 63.39±0.72 58.30±2.01
+COLT A77.07±0.10 83.84±0.06 68.98±0.19 63.54±0.66 59.36±2.01
+ToolGen A81.41 84.76 70.01 62.30±0.70 59.04±2.01
+HYSET (BERT)A+R84.75±0.09 88.99±0.16 77.55±0.12 69.69±0.61 66.17±1.93
+HYSET (Qwen2.5)A+R88.61±0.12 91.07±0.18 78.13±0.16 71.11±0.58 69.92±1.87
+Table 1: Main results on ToolBench. All values are percentages, best in boldface. Sup.: A denotes annotated tool sets only, while
+A+R additionally uses the execution reward of Eq.(9). Error bars follow Supplementary Material B.8. Results at a cutoff 3 are
+reported in Supplementary Table 13.
+2023),ToolRerank(Zhengetal.2024),COLT(Quetal.2024)
+andToolGen(Wangetal.2024).SupplementaryMaterialB.1
+and B.2 give dataset, overlap and baseline details.
+Evaluationmetrics.WereportRecall@ K andNDCG@ K
+for retrieval quality and COMP@K (Qu et al. 2024) for set
+completeness with K∈ {3,5} , together with GPT-4 and
+Human Pass Rate under the official ToolEval protocol (Qin
+etal.2023).Everymethodpassesatleastasmanytoolstothe
+agent as HYSET does, so the tool budget of the main results
+is generous to the baselines. Since the rank-based metrics
+are computed from a length-K ranking rather than from the
+variable-size set bE(x) that reaches the agent, Section 3.5
+scores bE(x) directly. Supplementary Material B.3 to B.6 and
+B.8 give the definitions, the tool-budget rule, the annotation
+protocol, the significance tests and the error-bar accounting.
+Implementation details.We instantiate HYSET with two
+frozen backbones, a BERT-base retriever (Qin et al. 2023)
+and a tuned Qwen2.5-1.5B retriever (Wang et al. 2024), and
+run every method under the same frozen ToolLLaMA-2-7B-
+v2 agent (Qin et al. 2023) and DFSDT protocol. Onlyθ=
+(Z,{M m}M
+m=2,P) istrained,with 13.59Mparametersunder
+the BERT configuration atdz = 768, including10.64M for
+Z, compared with109.5M parameters in the frozen encoder.
+The query encoder, the tool encoder that initializesZ from
+API descriptions, and the agent are all frozen. We setM= 5 ,
+the largest annotated set size, withK1 = 15 , Kpool =
+20 and Kneg = 64, so reranking scores21,699 candidate
+sets per query. Execution feedback rewardsNsub = 5,000
+trainingqueriesandrefreshesthemevery Tref = 20,000 steps,
+cappingitat 20,000rolloutsandasmanyjudgecalls,allserved
+fromthecachedStableToolBenchAPImirrorratherthanfrom
+liveendpoints.Everyconfigurationusesthreeseedsandearly
+stopping on validation Recall@5. Supplementary Material
+B.7, B.9 and B.10 give the remaining hyperparameters, all
+prompts and the reproducibility details.
+Variant R@5 C@5 PR
+HYSET (Full)84.75±0.09 77.55±0.12 69.69±0.61
+(a) Component removal
+w/oF set 72.04±0.18 67.36±0.09 57.97±0.73
+w/o Exec. fb.82.14±0.07 77.02±0.07 65.14±0.63
+(b) Interaction-matrix design
+Mm =I75.05±0.16 68.68±0.15 59.92±0.71
+SharedM78.43±0.20 73.66±0.08 64.37±0.69
+w/o Reg.83.17±0.07 75.34±0.13 68.93±0.64
+Table2:AblationofHYSET(BERT).R@5:Recall@5;C@5:
+COMP@5; PR: GPT-4 Pass Rate. All values are percentages.
+3.2 Main Results
+Table 1 shows that HYSET outperforms every baseline on
+every retrieval and end-to-end metric. Retrieval gains over
+the strongest baseline reach 15.3% relative for the BERT
+configuration and 17.8% for Qwen, and are largest on COMP,
+whereCOMP@5improvesby10.8%and11.6%relativeover
+ToolGen.Hyperedgescoringthereforerecoverscompletetool
+setsratherthanmerelyrerankingindividualtools,andthetwo
+configurations differ by at most 5.7% relative, so the gains
+come from set-level modeling rather than from the backbone.
+Every margin is significant at the 5% level under a paired
+bootstrap with 104 resamples for the retrieval metrics and
+the exact McNemar test for Pass Rate. COMP@5 givesp <
+10−4 with a 95% confidence interval of[4.03,11.05] for the
+difference,whilethetwoPassRatemarginsareweakestat p=
+1.6×10 −3and p= 1.5×10 −2,thehumanonebeingtheonly
+marginthatwouldnotsurviveaBonferronicorrectionoverall
+eight tests at the 1% level (B.6). The Sup. column of Table 1
+records that the two HYSET rows additionally use execution
+feedbackwhileeverybaselineistrainedonannotationsalone,
+so the regimes must be separated before the end-to-end
+marginisread.Trainedonannotationsalone,HYSET(BERT)
+still reaches 77.02% COMP@5, an improvement of 10.0%
+relativeoverToolGen,butitsRecall@5fallsto82.14%andits
+advantage over ToolGen narrows to 0.9% relative. Retraining
+
+--- Page 7 ---
+
+thetwostrongestbaselineswiththeidenticalreward,judgeand
+20,000-rollout budget raises ToolGen to 83.12% Recall@5,
+70.94% COMP@5 and 66.85% Pass Rate, and ToolLLaMA-
+Retrieverto66.42%PassRate.Executionfeedbackthushelps
+them by about as much as it helps HYSET, whose own Pass
+Rate gains 7.0% relative over its annotation-only value of
+65.14%.TheGPT-4PassRatemarginconsequentlyfallsfrom
+8.8% to 4.3% relative while the COMP@5 margin falls only
+from 10.8% to 9.3%. Supplementary Material C.2 reports
+every method under both regimes and C.3 the execution
+budget.
+3.3 Ablation Study
+Table 2 ablates thetwoaspects that carry ourclaims. In panel
+(a), removingFset costs 13.1% of COMP@5 and 16.8% of
+Pass Rate, so scoring the set as a whole is the main source
+of the gains. Removing execution feedback costs 6.5% of
+PassRate but only0.7% of COMP@5, becauseLself rewards
+sets that execute successfully rather than the annotated ones.
+Completeness therefore comes from set-level modeling, and
+execution feedback is worth its cost only when end-to-end
+success is the target. In panel (b), a learned shared matrix
+improveseverymetricoveridentitymatricesbyupto7.4%on
+Pass Rate, using cardinality-specific matrices adds a further
+7.1%, and regularization a final 2.9% on COMP@5 (all
+tabulated in C.6), confirming that tool compatibility must
+vary with set size. Supplementary Material C.4, C.7 and C.8
+report the robustness of Pass Rate to the choice of judge, the
+Qwen backbone and the negative-sampling sweep.
+Removing parts of HYSET shows that its components mat-
+ter but not that this set-level model is needed rather than any
+set-level model. We therefore compare against three further
+families on the same frozen BERT backbone, shortlist and
+training data, with every learned scorer trained under the
+same annotation-only objective so that only the set scorer
+differs. Predicting the cardinality and truncating a dense rank-
+ing reaches 64.72% COMP@5, maximal marginal relevance
+65.93% and greedy facility-location maximization 67.16%,
+so a fixed pairwise redundancy or coverage term is worth
+little, as Theorem 1 predicts for scores whose interactions
+vanish above order two. A general set encoder helps consider-
+ably more: DeepSets reaches 69.85% and a Set Transformer
+with two induced-set-attention blocks reaches 72.41%, the
+latter using 21.4M scorer parameters and 19.3 ms per query
+against 13.6M and 12.4 ms for HYSET. Neither recovers
+HYSET, which leads the Set Transformer by 6.4% relative
+under the same objective, and the variant isolating why is a
+shared cardinality-agnosticM, which already matches the
+Set Transformer at 72.87% with half its parameters. Only the
+cardinality index on{Mm}separates it from HYSET. Under
+the same20,000-rollout budget, the two encoders move to
+70.61% and 73.15% COMP@5, leaving HYSET ahead by
+9.8%and6.0%relative,sotheadvantageoverunrestrictedset
+encoders is a modeling rather than a supervision effect. Sup-
+plementaryMaterialC.11reportsbothregimeswithlatencies
+and parameter counts.
+Setting Sup. Overall
+R@5 C@5 PR
+In-domain reference
+ID Full84.75±0.09 77.55±0.12 69.69±0.61
+Zero-shot transfer
+UT 0-shot79.48±0.19 70.71±0.11 63.64±0.79
+UC 0-shot75.35±0.09 65.28±0.14 58.23±0.85
+CD 0-shot72.83±0.17 61.96±0.18 54.85±0.92
+Few-shot target adaptation (UC)
+UC 1-shot76.30±0.07 67.23±0.08 59.88±0.88
+UC 5-shot79.13±0.10 71.40±0.14 63.93±0.81
+UC 10-shot81.58±0.12 74.38±0.10 66.48±0.77
+UC Full83.57±0.11 76.60±0.19 68.80±0.74
+Table3:GeneralizationanddataefficiencyofHYSET(BERT).
+UT denotes held-out tools, UC denotes held-out categories,
+andCDdenotescross-domaintransfer.Allvaluesarepercent-
+ages.
+3.4 Generalization and Data Efficiency
+Table 3 evaluates transfer within a fixed library while with-
+holding supervision for selected tools, whole categories, or
+the target domain. Performance decreases as the shift grows,
+yetcross-domaintransferretains79.9%ofin-domainsetcom-
+pleteness. Five examples per target category recover 93.2%
+of fully supervised performance. A stricter protocol that also
+excludes held-out tools from every negative pool produces
+comparable results. The fixed-library splits isolate query and
+label shifts rather than tool novelty. When the complete tool
+set is unseen during training, HYSET improves COMP@5
+over the strongest baseline by 13.1%. The improvement rises
+to 15.9% when an unseen tool pair is also required. On Ul-
+traTool, whose library is disjoint from ToolBench, HYSET
+improves COMP@5 by 11.5% over ToolGen. Direct transfer
+from ToolBench without target training retains 77.9% of the
+performance obtained by training on UltraTool. Supplemen-
+tary Material D.1 to D.4 give the full setup and results.
+3.5 The Set Delivered to the Agent
+The metrics above use rankings of fixed length, whereas the
+agent receivesbE(x), a set whose size varies, with about half
+as many tools as a top-5 retriever. Direct evaluation shows
+that HYSET improves coverage of the complete required set
+by about 7% over ToolGen and nearly doubles exact match
+accuracy. It also achieves a slightly higher Pass Rate at its
+predicted cardinality than when forced to return five tools.
+The maximizer and greedy ranking agree on nearly 90%
+of queries, indicating that their main difference is set size.
+Supplementary Material C.10 gives the full metrics and the
+breakdown by predicted cardinality.
+3.6 Cost, Sensitivity and Scalability
+Inference costs 12.4 ms and 3.21 GB per query at|V|=
+13,860, against 6.5 ms and 1.71 GB for the single dense
+pass of ToolLLaMA-Retriever and378.4 ms and 6.83 GB
+
+--- Page 8 ---
+
+for ToolGen. Training costs43.2 GPU hours and USD186
+in judge calls on two RTX 4090 GPUs, against38.6 GPU
+hours for ToolGen. Enlarging|V| with distractor tools leaves
+Recall@5 and COMP@5 stable, since the reranking cost
+depends onKpool and M alone. Varyingη, λand Kpool one
+at a time leaves HYSET stable, and the matrix expanding the
+shortlistinEq. (13)changesCOMP@5byatmost0.40points,
+compared with the 1.07-point loss caused by removing the
+expansion. Supplementary Material E and F give the sweeps
+and the runtime analyses.
+4 Conclusion
+We argued that LLM tool retrieval is inherently a set-level
+problem and recast it as query-conditioned hyperedge pre-
+diction over a tool co-invocation hypergraph. We proposed
+HYSET, a module that scores candidate tool sets as a whole
+and captures how tool compatibility varies with set size.
+Extensive experiments show that HYSET consistently outper-
+forms strong baselines and generalizes to held-out tools and
+categories under zero-shot and few-shot settings. Extending
+it to dynamically growing tool libraries is a natural direction
+for future work.
+References
+Battiston, F.; Cencetti, G.; Iacopini, I.; Latora, V.; Lucas,
+M.; Patania, A.; Young, J.-G.; and Petri, G. 2020. Networks
+beyondpairwiseinteractions:Structureanddynamics.Physics
+reports, 874: 1–92.
+Grabisch, M.; Marichal, J.-L.; and Roubens, M. 2000. Equiv-
+alent representations of set functions.Mathematics of Opera-
+tions Research, 25(2): 157–178.
+Hong,X.;Xu,S.;andYu,Z.2026.HYVINT:Intensity-Driven
+Hypergraph Generation with Variational Representations.
+arXiv.org.
+Huang, S.; Zhong, W.; Lu, J.; Zhu, Q.; Gao, J.; Liu, W.; Hou,
+Y.; Zeng, X.; Wang, Y.; Shang, L.; et al. 2024. Planning,
+Creation, Usage: Benchmarking LLMs for Comprehensive
+ToolUtilizationinReal-WorldComplexScenarios. InAnnual
+Meeting of the Association for Computational Linguistics,
+4363–4400. Association for Computational Linguistics.
+Izacard, G.; Caron, M.; Hosseini, L.; Riedel, S.; Bojanowski,
+P.; Joulin, A.; and Grave, E. 2021. Unsupervised dense
+information retrieval with contrastive learning.Trans. Mach.
+Learn. Res.
+Karpukhin, V.; Oguz, B.; Min, S.; Lewis, P.; Wu, L.; Edunov,
+S.; Chen, D.; and Yih, W.-t. 2020. Dense passage retrieval
+for open-domain question answering. InConference on
+Empirical Methods in Natural Language Processing, 6769–
+6781. Association for Computational Linguistics.
+Liu, N. F.; Lin, K.; Hewitt, J.; Paranjape, A.; Bevilacqua,
+M.; Petroni, F.; and Liang, P. 2023. Lost in the middle:
+How language models use long contexts.Transactions of the
+association for computational linguistics, 12: 157–173.
+Oord, A. v. d.; Li, Y.; and Vinyals, O. 2018. Representation
+learning with contrastive predictive coding.arXiv.org.
+Patil, S. G.; Zhang, T.; Wang, X.; and Gonzalez, J. E. 2023.
+Gorilla: Large language model connected with massive apis.
+Neural Information Processing Systems, 37: 126544–126565.
+Qin, Y.; Liang, S.; Ye, Y.; Zhu, K.; Yan, L.; Lu, Y.-T.; Lin, Y.;
+Cong,X.;Tang,X.;Qian,B.;etal.2023. Toolllm:Facilitating
+large language models to master 16000+ real-world apis.
+InInternational Conference on Learning Representations,
+volume 2024, 9695–9717.
+Qu, C.; Dai, S.; Wei, X.; Cai, H.; Wang, S.; Yin, D.; Xu,
+J.; and Wen, J.-R. 2024. Towards completeness-oriented
+tool retrieval for large language models. InInternational
+Conference on Information and Knowledge Management,
+1930–1940. ACM.
+Reimers, N.; and Gurevych, I. 2019. Sentence-bert: Sentence
+embeddings using siamese bert-networks. InConference on
+Empirical Methods in Natural Language Processing, 3980–
+3990. Association for Computational Linguistics.
+Robertson, S.; and Zaragoza, H. 2009.The probabilistic
+relevanceframework:BM25 andbeyond, volume4. Emerald.
+Robinson, J.; Chuang, C.-Y.; Sra, S.; and Jegelka, S. 2020.
+Contrastive learning with hard negative samples.Interna-
+tional Conference on Learning Representations.
+Schick, T.; Dwivedi-Yu, J.; Dessì, R.; Raileanu, R.; Lomeli,
+M.; Zettlemoyer, L.; Cancedda, N.; and Scialom, T. 2023.
+Toolformer: Language models can teach themselves to use
+tools.Neural Information Processing Systems, 36: 68539–
+68551.
+Shen, Y.; Song, K.; Tan, X.; Li, D.; Lu, W.; and Zhuang,
+Y. 2023. Hugginggpt: Solving ai tasks with chatgpt and
+its friends in hugging face.Neural Information Processing
+Systems, 36: 38154–38180.
+Tay,Y.;Tran,V.Q.;Dehghani,M.;Ni,J.;Bahri,D.;Mehta,H.;
+Qin,Z.;Hui,K.;Zhao,Z.;Gupta,J.;etal.2022. Transformer
+memory as a differentiable search index.Neural Information
+Processing Systems, 35: 21831–21843.
+Turnbull, K.; Lunag’omez, S.; Nemeth, C.; and Airoldi, E.
+2019. Latent space modeling of hypergraph data.Journal of
+the American Statistical Association, 119(548): 2634–2646.
+Vaswani,A.;Shazeer,N.;Parmar,N.;Uszkoreit,J.;Jones,L.;
+Gomez, A. N.; Kaiser, Ł.; and Polosukhin, I. 2017. Attention
+is all you need.Neural Information Processing Systems, 30.
+Wang, R.; Han, X.; Ji, L.; Wang, S.; Baldwin, T.; and Li,
+H. 2024. Toolgen: Unified tool retrieval and calling via
+generation. InInternational Conference on Learning Repre-
+sentations, volume 2025, 73473–73498.
+Wu, S.; Xu, G.; and Zhu, J. 2024. A general latent embed-
+ding approach for modeling non-uniform high-dimensional
+sparse hypergraphs with multiplicity.arXiv preprint
+arXiv:2410.12108.
+Yao,S.;Zhao,J.;Yu,D.;Du,N.;Shafran,I.;Narasimhan,K.;
+and Cao, Y. 2022. React: Synergizing reasoning and acting
+in language models.International Conference on Learning
+Representations.
+Zheng, Y.; Li, P.; Liu, W.; Liu, Y.; Luan, J.; and Wang, B.
+2024. Toolrerank: Adaptive and hierarchy-aware reranking
+for tool retrieval. InInternational Conference on Language
+
+--- Page 9 ---
+
+ResourcesandEvaluation,16263–16273.EuropeanLanguage
+Resources Association (ELRA) and ICCL.
+Zheng, Y.; Zhang, Z.; Ma, C.; Yu, Y.; Zhu, J.; Wu, Y.; Xu, T.;
+Dong, B.; Zhu, H.; Huang, R.; et al. 2026. Skillrouter: Skill
+routing for llm agents at scale.arXiv.org.
