@@ -1,0 +1,1019 @@
+--- Page 1 ---
+
+Beyond Retrieval: Analytic Memory for Multimodal Agents
+Zhoujin Tian1, Yao Tian2*, Hao Zhang 2, Cheng Chen 2
+Yakun Li2,Lei Zhang 2,Xiaofang Zhou 1
+1HKUST, 2ByteDance
+{ztianaf, zxf}@cse.ust.hk
+{yao.tian, zhanghao.ai, chencheng.sg, liyakun.hit, zhanglei.michael}@bytedance.com
+Abstract
+Long-term multimodal memory must support
+not only retrieving relevant information but
+also computing over observations accumulated
+across interactions. Existing systems largely
+emphasizeretrieval memory, organizing inter-
+action histories through summaries and indexes
+to return query-relevant information at multiple
+granularities, from high-level abstractions to
+underlying records. In this paper, we formulate
+analytic memoryas a complementary abstrac-
+tion that organizes recurring multimodal obser-
+vations into queryable structures supporting fil-
+tering, aggregation, ranking, and temporal com-
+parison. We present ADAMM, a framework
+that jointly supports retrieval and analytic mem-
+ory. Rather than relying on application-defined
+schemas, ADAMM extracts provenance-linked
+attribute-value observations from dialogue, im-
+ages, and contextual metadata, discovers re-
+curring field structures, and materializes them
+for analytical access. At inference time, a
+memory-aware planner decomposes queries
+into retrieval and analytic operations and routes
+each operation to the appropriate tools. Exper-
+iments on two long-term multimodal memory
+benchmarks, MemEye and MemGallery, show
+that ADAMM improves performance by up to
+11.3% and 7.3%, respectively.
+1 Introduction
+As Large Language Model (LLM) agents interact
+with users over increasingly long horizons, they
+accumulate extensive multimodal histories – in-
+cluding dialogues, screenshots, images, documents,
+and contextual observations – that quickly exceed
+the finite context windows of their backbone mod-
+els (He et al., 2024; Koh et al., 2024; Xie et al.,
+2024; Wang et al., 2024). Multimodal memory sys-
+tems, which retain and organize such histories to
+support future reasoning (Wang and Chen, 2025;
+Feng et al., 2026), have therefore become essential
+*Corresponding author.
+Long-term Historical Multi-modal Conversation Sessions
+Good morning!Good morning!I ordered …
+Coffee can …
+…
+Apr 23
+…
+……
+User Queries
+……
+Apr 24
+Any reason …Some exercise 
+……
+May 1
+Shopping at …
+Lots of things !…
+May 2
+Good sleep !
+Good news …I am having lunch with …………
+……
+Average sleep duration over the past month?
+Traditional System
+A Bad sleep.
+Memory
+…
+To p-kRetrieve
+Our AdaMM 
+ResultsAccess
+RetrievalMemory
+…
+AnalyticMemory
+Tool s
+…
+$3.45
+Starbucks
+Americano
+Which market last time?
+…
+Figure 1: Long-term multimodal interaction histories
+contain observations distributed across sessions, modal-
+ities, and time. Answering user queries may require
+either retrieving specific past events or performing ana-
+lytical operations, such as temporal selection and aggre-
+gation, over multiple observations.
+and are widely adopted in applications such as per-
+sonal assistance (Li et al., 2024; Feng et al., 2026),
+embodied interaction (Driess et al., 2023; Wang
+et al., 2023), and tool-augmented workflows (Yao
+et al., 2022; Schick et al., 2023).
+Recent multimodal memory systems have ex-
+plored a broad range of designs, including textual
+abstraction (Feng et al., 2026), specialized memory
+types (Nguyen et al., 2026), hybrid stores (Wang
+and Chen, 2025), and cross-modal retrieval (Lu
+et al., 2026). Most existing systems follows a
+retrieve-then-answer paradigm, conditioning an
+LLM on a bounded set of relevant memories, which
+we denote as retrieval memory. Such systems
+are effective at selecting relevant memories from
+long interaction histories. However, long interac-
+tion histories also accumulate recurring observa-
+arXiv:2607.29440v1  [cs.AI]  31 Jul 2026
+
+--- Page 2 ---
+
+tions that collectively form an append-only log.
+Analytical questions over such histories require
+complete, correctly scoped records and operations
+such as filtering, aggregation, ranking, and tempo-
+ral selection. Relevance-based approach adopted
+by retrieval memory systems therefore creates a
+coverage–context trade-off: a small retrieval set
+may omit required observations, whereas a larger
+retrieval set consumes the limited context bud-
+get and introduces redundant or distracting evi-
+dence. For example, as illustrated in Figure 1,
+computing a user’s average sleep duration over the
+past month requires collecting all relevant mea-
+surements across multiple screenshots before ag-
+gregation; incomplete retrieval may therefore pro-
+duce a biased estimate. We call this gap between
+relevance-based retrieval and analytic theretrieval–
+analysis mismatch.
+To bridge this gap, our key insight is that a mem-
+ory system should couple two complementary sub-
+systems:retrieval memory, which identifies and
+supplies relevant historical records as context, and
+analytic memory, which proactively organizes inter-
+action histories into reusable and queryable struc-
+tures and adaptively executes operations over them.
+Together, they support both flexible semantic re-
+call and structured analysis, rather than requiring
+the LLM to repeatedly reconstruct the needed or-
+ganization from retrieved records. Realizing an-
+alytic memory, however, presents two key chal-
+lenges. First, interaction histories do not come
+with an explicit organizing schema, making it un-
+clear what information should be preserved and
+how they should be structured to support future
+queries. Second, user queries rarely specify mem-
+ory access strategies, the system therefore must
+reconcile what each query requires with what the
+evolving memory can currently support. Even ques-
+tions over the same underlying records may require
+fundamentally different operations (e.g., aggrega-
+tion, ordering, filtering), posing challenges to the
+design of adaptive execution plans.
+To address these challenges, we introduce
+ADAMM, anAdaptiveMulti-viewMemory frame-
+work that couples data-driven structure induction
+with memory-aware query planning. It main-
+tains two complementary subsystems:retrieval
+memoryfor flexible semantic access andanalytic
+memoryfor executable analysis over recurring ob-
+servations. ADAMM extracts provenance-linked
+attribute–value pairs from multimodal interactions
+(e.g.,{Sleep Time: 5.5 hrs}), induces recurrent
+schemas, and materializes them as structured ta-
+bles, which is accessible via tools, while preserving
+unstructured evidence in a hierarchical semantic
+graph. At query time, a planner adaptively com-
+poses different analytic and retrieval tools based
+on the query and the memory structures currently
+available. This design enables grounded seman-
+tic recall and structured analysis over long-term
+interaction histories.
+Our contributions are summarized as follows:
+• We identify aretrieval–analysis mismatch
+in long-term multimodal memory: retrieval-
+oriented interfaces support returning query-
+relevant information at multiple granularities,
+but cannot reliably answer queries requiring
+complete-range filtering, aggregation, ranking,
+or temporal selection over append-only interac-
+tion histories.
+• We propose ADAMM, a multimodal memory
+framework that complements retrieval mem-
+ory with schema-induced analytic memory.
+ADAMM discovers recurrent structures from
+multimodal observations, materializes them as
+queryable tables, and uses a memory-aware plan-
+ner to select or compose semantic retrieval with
+native analytical operations.
+• We evaluate ADAMM on two multimodal long-
+term memory benchmarks, MemEye and Mem-
+Gallery, where ADAMM consistently outper-
+forms strong memory baselines, and improves
+accuracy by up to 11.3% and 7.3%, respectively.
+2 Related Work
+Agent memory.Long-term agent memory pre-
+serves information across interactions, allowing
+agents to reuse preferences, observations, deci-
+sions, and task states beyond a finite context win-
+dow (Hatalis et al., 2023; Li et al., 2024; Zhang
+et al., 2025). Existing systems explore personal-
+ized stores and tiered memory management (Zhong
+et al., 2024; Packer et al., 2023), scalable or agen-
+tic memory construction (Chhikara et al., 2025;
+Xu et al., 2025), and temporal or relational orga-
+nization (Rasmussen et al.; Huang et al., 2025).
+Recent schema-grounded memory moves beyond
+semantic recall by transforming textual interactions
+into validated, queryable records, but relies on
+application-defined schemas (Petrov et al., 2026).
+Despite these advances, existing methods remain
+largely text-centric, leaving underexplored how to
+
+--- Page 3 ---
+
+induce reusable analytical structures from heteroge-
+neous multimodal histories and adaptively execute
+retrieval and analytical operations over them.
+Multimodal agent memory.Multimodal agent
+memory extends text-centric memory to histories
+containing heterogeneous visual observations. Ex-
+isting approaches broadly follow two directions:
+MIRIX and M2A translate visual content into cap-
+tions, summaries, or semantic abstractions for text-
+based retrieval (Wang and Chen, 2025; Feng et al.,
+2026), whereas MMA, VisualMem, and Omni-
+SimpleMem retain native visual evidence and re-
+trieve multimodal or image-backed memories (Lu
+et al., 2026; Nguyen et al., 2026; Liu et al., 2026).
+Although these methods improve visual evidence
+preservation, they still primarily organize histories
+as semantic memories. MemEye further reveals
+their difficulty in capturing fine-grained details and
+evolving visual states (Guo et al., 2026). In con-
+trast, ADAMM adaptively organizes multimodal
+histories into complementary analytical and seman-
+tic memories, enabling both precise analysis and
+context-aware retrieval for complex queries.
+3 Method
+3.1 Problem Formulation
+Let H={S i}M
+i=1 denote a multimodal interaction
+history, where each session Si ={R i,j}ni
+j=1 con-
+sists of multiple interaction rounds. Each round
+Ri,j = (d i,j,V i,j, τi,j) comprises the user–agent
+dialogue di,j, visual observations Vi,j, and tempo-
+ral information τi,j. A multimodal agent memory
+system transforms the interaction history into mem-
+ory representations, M=F build(H), and aims to
+generate an accurate answer ˆy=F answer(M, q)
+for a user queryqbased onM.
+3.2 Overview
+Figure 2 presents the overview of the proposed
+ADAMM framework. Given a long-term multi-
+modal interaction history, ADAMM constructs two
+complementary memories: analytic memory Mana
+induces recurring patterns as adaptive schemas for
+analytical queries while retrieval memory Mret
+hierarchically organizes interactions according to
+their semantics to enable flexible retrieval. At query
+time, ADAMM jointly reasons over the query and
+the memories instantiated from the current history,
+then constructs an execution plan by adaptively
+selecting and composing access tools to gather suf-
+ficient evidence for grounded answer generation.
+3.3 Analytic Memory Construction
+Analytic memory aims to uncover and organize
+recurring patterns across fragmented observations
+in multimodal interaction histories for analytical
+operations. The key challenge is that the meaning-
+ful attributes, which is in the form of key-value
+pair, and their co-occurrence patterns are unknown
+in advance, and each round reveals only a sparse
+fragment of the latent structure. To address this
+challenge, ADAMM treats H as a chronologically
+ordered interaction rounds {Rt}N
+t=1, performsAt-
+tribute Extractionto adaptively identify attribute
+evidence within each round, then conductsSchema
+Inductionto discover stable structures from re-
+curring cross-round patterns, and finally applies
+Memory Materializationto transform the induced
+schemas into executable analytic memory.
+3.3.1 Attributes Extraction
+Recovering recurring structure must begin from the
+evidence available within individual rounds, yet
+the attributes that will form a useful schema are
+unknown at extraction time. Record fragment ex-
+traction therefore aims to preserve explicit analytic
+observations from each round without imposing a
+predefined and unobserved pattern.
+Given Rt, ADAMM jointly examines its dia-
+logue and visual content to identify every grounded
+attribute–value correspondence:
+Ot = Extractor(Rt) ={(a tℓ, xtℓ, ptℓ)}mt
+ℓ=1 ,(1)
+where atℓ and xtℓ are the observed attribute and
+its source-faithful value, and ptℓ points to the sup-
+porting dialogue span or image. Extractor is an
+LLM-based extractor that targets at identifying all
+possible pairs from each round. The resulting col-
+lection {Ot}N
+t=1 captures these observations and
+their within-interaction co-occurrence patterns for
+subsequent schema induction.
+3.3.2 Schema Induction
+Given the extracted record fragments, it remains
+challenging to induce reusable schemas without
+assuming a predefined schema. New observations
+may reveal either a previously unseen structure
+or evolution to an existing one. To address this
+challenge, ADAMM first mine candidate patterns
+and then induces schemas through two processes:
+Schema Discoverycreates new schemas, while
+Schema Evolutionextends existing ones with con-
+sistently co-occurring attributes.
+
+--- Page 4 ---
+
+Historical Sessions Memory Construction
+AnalyticMemory
+RetrievalMemory
+Attribute Extraction{sleep: 4.8h, heart: 78}
+⋯
+Schema Induction{sleep, heart}✓{hospital, doctor}×
+Memory Materialization
+Open-ended EventsHierarchical Retrieval MemoryTopic  →Episode  →EventTopic
+Adaptive Query Processing
+Queryconditionedmetadata retrieval
+Lookup · Filter · Compute · RankSemanticMatch· EventLocateLLM Planner
+QueryPlan1  EventLocate: go to hospital2  Compute: average sleeptime after hospital
+Progressive Tool ExecutionEventLocate(go to hospital)Apr26Compute(AVG ( sleep )wheredate >Apr 26)8.1h
+Apr24
+……
+……
+Apr26
+…………May1
+…………
+May2
+…………
+…
+…
+…
+User Queries
+My average sleep after going to the hospital ?
+I went to hospitalthis morning … 
+8.1 hours.
+{hospital: A, doctor: Bob}
+{sleep: 7.9h, heart: 60}
+⋯
+ Episode 2
+Episode N
+Episode 1
+High-level Plan GenerationTable Metadataschema: {sleep, heart}Episode Metadataepisodes: {Episode 1, …}
+AccessTools
+{sleep: 8.2h, heart: 58}
+⋯⋯✓datesleepheartApr244.8h78May 18.2h58May 27.9h60⋯⋯⋯
+Figure 2: Overview of ADAMM. It complements recall-oriented retrieval memory with schema-induced analytic
+memory over recurrent multimodal observations. At query time, an operation planner jointly considers the query
+and the instantiated memories to select designed access tools for answer generation.
+Candidate Pattern Mining.For each extracted
+record fragmentO t, let
+At ={a tℓ : (atℓ, xtℓ, ptℓ)∈ O t}(2)
+denote the set of attributes contained in Ot. A reli-
+able candidate pattern C is a set of attributes that
+consistently recur sufficient interactions together.
+Following the Apriori framework for frequent-
+itemset mining (Agrawal and Srikant, 1994), we
+usesupportto quantify information recurrence.
+Specifically, thesupportof a candidate pattern C
+after processing roundtis
+suppt(C) =
+tX
+s=1
+I[C⊆ A s],(3)
+ADAMM retainsCas a candidate pattern if
+suppt(C)≥θ s,(4)
+which ensures that C recurs across sufficient inter-
+action rounds to yield a populated schema.
+Schema Discovery.For each recurrent candi-
+date C, ADAMM first compares it with the active
+schemas before round t. If C exhibits an attribute
+structure distinct from all existing schemas, it is
+evaluated for reliable new-schema discovery. Fol-
+lowing a variant of Apriori algorithm (Omiecinski,
+2003), we useall-confidenceto measure within-
+pattern co-occurrence consistency, defined as
+all-conf t(C) = suppt(C)
+maxa∈C suppt({a}) .(5)
+A candidate is admitted as a new schema if
+all-conf t(C)≥θ a.(6)
+This constraint requires the complete candidate to
+occur reliably whenever any of its constituent at-
+tributes occurs, thereby preventing a ubiquitous
+attributes from being merged with most patterns.
+To avoid admitting a qualified candidate together
+with its qualified subsets, ADAMM retains only
+inclusion-maximal novel candidates.
+Schema Evolution.For an existing schema A,
+if C ⊆ A , then C is already subsumed by it. If
+C contains A, ADAMM treats C as a potential ex-
+tension of A. Let ∆ =C \ A is the newly added
+attributes. We useextension confidenceto measure
+
+--- Page 5 ---
+
+how consistently ∆ accompany occurrences of A,
+defined as
+ext-conf t(C | A) = suppt(C)
+suppt(A) (7)
+When ext-conf t(C | A)≥θ e, the candidate pro-
+vides sufficient evidence that∆ have become stable
+components of A, and we update the schema A to
+C. Otherwise,Aremains unchanged.
+3.3.3 Memory Materialization
+Considering that each schema specifies a stable set
+of attributes and each matched interaction provides
+their co-occurring values, the induced patterns nat-
+urally align with relational tables. ADAMM there-
+fore materialize each schema A into a table TA,
+using its attributes as columns and the matched
+interactions as rows.
+Specifically, for a newly discovered schemaA,
+its attributes first define the data columns. Given
+these attributes and their sampled values from the
+corresponding extracted observations {Ot}, a lan-
+guage model generates the table metadata, includ-
+ing its name and description, and infers the type
+of each column. We then populate the table at the
+interaction level. For each associated round Rt,
+every extracted tuple (atℓ, xtℓ, ptℓ)∈ O t whose
+attribute belongs to A is mapped to the correspond-
+ing column, and values extracted from the same
+round jointly form one row. Two auxiliary columns,
+order and time, record the position and occur-
+rence time of the source interaction, respectively.
+Any value not observed in that round is left empty.
+When a schema evolves fromA to A′ =A∪∆ , the
+attributes in ∆ are appended as new columns to the
+existing table TA. ADAMM then updates the table
+information and rematerializes the rows from their
+associated observations following the same proce-
+dure. The resulting analytic memory is represented
+as the collection of tablesM ana ={T}.
+3.4 Retrieval Memory Construction
+Beyond structured analytic queries, many user re-
+quests can be addressed through direct semantic
+matching against past interactions. Retrieval mem-
+ory is designed for such queries by preserving open-
+ended events, relations, and visual details that may
+not exhibit recurring schemas. It complements an-
+alytic memory by enabling flexible semantic re-
+trieval and context-aware reasoning over interac-
+tion histories.
+Following prior work on hierarchical memory
+organization (Yue et al., 2026), we construct re-
+trieval memory Mret into three levels: topic→
+episode→event . Events preserve fine-grained
+evidence extracted from individual interactions,
+episodes group temporally adjacent and semanti-
+cally coherent events, and topics aggregate related
+episodes into broader semantic contexts. Each level
+maintains a concise description, multimodal repre-
+sentation, temporal information, and provenance.
+This hierarchy allows the planner to first identify
+relevant topics or episodes and then locate support-
+ing events, preserving both high-level context and
+fine-grained evidence for complex queries.
+3.5 Adaptive Query Processing
+Different queries place different demands on mem-
+ory: some require semantic retrieval over open-
+ended events, whereas others require structured
+computation over analytic memory. No single re-
+trieval primitive can adequately support this full
+range of needs, calling for an adaptive mechanism
+that selects and composes operations according to
+query intent and the structures available in memory.
+ADAMM therefore abstracts the native capabili-
+ties of analytic and semantic memory as operation-
+specific tools, and employs a joint query–memory
+planner to generate an executable procedure for
+answering each query.
+3.5.1 Memory Access Tools
+Analytic and semantic memory differ in their under-
+lying structures and consequently provide distinct
+native capabilities. To expose these capabilities at
+query time, ADAMM equips each memory with
+structure-specific tools.
+Specifically, each tool is represented as
+ξi = (di,Θ i,Ω i),(8)
+where di textually specify its tool function, while
+Θi and Ωk define its typed arguments and return
+schema. Table 1 summarizes the access tools de-
+signed for analytic and semantic memory. For ex-
+ample, for the analytic tool COMPUTE, di specifies
+a deterministic computation over an induced table,
+Θi includes the target table, computation operator,
+target column, and optional constraints, and Ωi re-
+turns the computed result and matched records. For
+the semantic tool SEMANTICMATCH, dk specifies
+relevance-based memory retrieval, Θi includes a
+semantic query content and retrieval budget, and
+
+--- Page 6 ---
+
+Table 1: Access tools for analytic and retrieval memory.
+Memory Tools Capability
+Analytic LOOKUP, FILTER,
+COMPUTE, RANK
+Exact record
+access and
+deterministic
+computation.
+retrieval SEMANTICMATCH,
+EVENTLOCATE
+Relevance-based
+retrieval and event
+localization.
+Ωi returns the ranked memory units with their rele-
+vance scores.
+3.5.2 Memory-Aware Joint Query Planning
+The access tools specify how each memory can
+be queried. However, users describe desired out-
+comes rather than access procedures, and a feasible
+operation also depends on what the current mem-
+ory contains. To bridge this gap, ADAMM first
+constructs a query-conditioned planning context
+that exposes relevant memory structure, and then
+employs an LLM-based planner to jointly reason
+over the query and this context, composing an ex-
+ecutable procedure for retrieving and analyzing
+the required information. The resulting evidence
+is subsequently provided to the answer model for
+response generation.
+Planning Context Construction.Valid query
+planning requires knowledge of the current mem-
+ory structures and their supported operations. Ex-
+posing the complete memory contents, however,
+introduces irrelevant information and expands the
+planning space. ADAMM therefore abstracts an-
+alytic and retrieval memory into compact meta-
+data, retrieves query-relevant entries, and asso-
+ciates them with their available tools to form the
+effective planning context.
+Specifically, we treat each analytic table T∈
+Mana and retrieval episode P∈ M ret as an indi-
+vidual planning candidate represented by textual
+metadata µT and µP , respectively. For each table,
+µT summarizes its name, description, columns, and
+sampled values, while each episode directly uses
+its description as µP . Together, these candidates
+form the metadata search space U. Given a query
+q, ADAMM ranks eachµ∈ Uusing
+hλ(q, µ) =λcos(E(q), E(µ))
++ (1−λ) TokSim(q, µ), (9)
+where E(·) is a semantic encoder andTokSimmea-
+sures token-level similarity. After retaining the
+top-ranked µ, ADAMM augments their metadata
+with designed access tool descriptions, forming the
+planning context Dq to expose relevant memory
+candidates and available operations to the planner.
+Progressive Tool-Execution Planning.Com-
+plex queries often require multiple dependent op-
+erations, with the arguments of later tool calls de-
+termined by earlier outputs. Instantiating all tool
+calls upfront is therefore unreliable. To address this
+challenge, ADAMM separates high-level planning
+from progressive tool instantiation.
+High-level plan generation.Conditioned on the
+query q and planning context Dq, ADAMM em-
+ploys an LLM-based planner to generate an abstract
+plan specifying the information goals and their ex-
+ecution order, without binding them to concrete
+tools or arguments:
+¯π(q,Dq) = Planner(q,D q) =
+
+(gℓ, ξℓ)
+L
+ℓ=1,
+(10)
+where gℓ is a textual description of the information
+required at step ℓ, and ξℓ specifies the access tool
+designated to obtain it.
+Progressive tool instantiation.Guided by the
+above high-level plan, ADAMM instantiates tool
+calls sequentially. At step ℓ, it conditions on the
+preceding resultsZ <ℓ ={z 1, . . . , zℓ−1}:
+Θℓ = Planner(q, gℓ, ξℓ,D q,Z <ℓ),
+zℓ = Invoke(ξℓ,Θ ℓ), (11)
+where ξℓ and Θℓ denote the selected tool and its
+instantiated arguments. This allows later calls to
+consume intermediate results (e.g., a timestamp re-
+turned by EVENTLOCATEcan serve as a temporal
+constraint for a subsequent COMPUTEcall).
+Question Answering.Finally, the answer model
+generates response conditioned on the query and an
+evidence context comprising the instantiated plan
+and its tool outputs.
+4 Experimental Evaluation
+4.1 Experimental Setup
+Benchmarks.We evaluate ADAMM on two
+complex multimodal memory benchmarks.Mem-
+Eyeevaluates visual-memory granularity and rea-
+soning through paired multiple-choice and open-
+ended queries (Guo et al., 2026), whileMem-
+Galleryassesses long-term conversational mem-
+ory management (Bei et al., 2026).MemEye
+uses EM, BLEU-1 and LLM-judge for evaluation,
+
+--- Page 7 ---
+
+Benchmarks Sessions Rounds Images QA pairs
+MemEye 221 848 438 742
+MemGallery 240 3,962 1,003 1,711
+Table 2: Benchmark statistics.
+whereasMemGalleryreports F1, BLEU-1, and
+LLM-Judge scores. Dataset statistics are provided
+in Table 2.
+Baselines.We compare against unimodal mem-
+ory agents, includingA-MemandMemoryOS(Xu
+et al., 2025; Li et al., 2025), which organize long-
+term textual interaction histories. Multimodal
+baselines include dedicated memory agents (M2A,
+MMA, andMIRIX) (Feng et al., 2026; Lu et al.,
+2026; Wang and Chen, 2025), which construct per-
+sistent memories from dialogue and visual observa-
+tions, and retrieval-based systems (MM-RAGand
+UniversalRAG), which directly retrieve relevant
+multimodal evidence for answer generation.
+Implementation details.We use GPT-4.1-nano
+and GPT-5.4-min as answer and memory construc-
+tion backbones for all methods. Text and image
+representations are produced by MiniLM-L6-v2
+and siglip2-base-patch16-384, respectively. We
+use Top-10 retrieved memory units for retrieval
+memory baselines, and our method constrain the
+planner to generate at most three execution steps
+under a shared budget of 10 evidence units. Results
+are averaged over 3 runs.
+4.2 Main Results
+Overall performance.Table 3 presents a com-
+prehensive comparison of ADAMM with represen-
+tative unimodal and multimodal memory frame-
+works across two benchmarks and answer back-
+bones. ADAMM consistently achieves the best
+result on every metric. With GPT-4.1-nano, it sur-
+passes the strongest competing result on MemEye
+by 7.3% and 5.8% percentage points for MCQ
+and open-ended questions, respectively, and im-
+proves MemGallery F1, BLEU-1, and LLM-Judge
+by 4.2%, 4.3%, and 7.0%. The advantage persists
+with GPT-5.4-mini, yielding gains of 3.2% and
+11.3% points on MemEye and 2.6%, 2.2%, and
+5.2% on the three MemGallery metrics. The con-
+sistant improvements on different settings demon-
+strate that ADAMM generalizes across answer for-
+mats, benchmark settings, and backbone capacities.
+Brand
+Card
+Cartoon
+Home
+Multi
+Outdoor
+Health
+Social
+20
+50
+80
+MemEye
+AR
+CD
+FR
+KR
+MRTR
+TTL
+VR
+VS
+40
+60
+80
+MemGallery
+A-Mem
+MemoryOS
+M2A
+MMA
+MIRIX
+MM-RAG
+UniversalRAG
+AdaMM
+Figure 3: LLM-as-Judge performance across fine-
+grained tasks with GPT-5.4-mini.
+Fine-grained task analysis.To further examine
+where the improvement arises, Figure 3 reports the
+LLM-Judge breakdown using GPT-5.4-mini. On
+MemEye, the largest gains over the strongest base-
+line occur on Card Playlog and Personal Health,
+with improvements of 18.8% and 16.7%, respec-
+tively. Both tasks require exact operations over
+recurring records, such as filtering observations,
+comparing values, or tracking changes, highlight-
+ing the benefit of analytic memory. ADAMM
+also achieves substantial gains on Multi-scene
+(11.1%), Brand Memory (9.0%), Outdoor Navi-
+gation (8.6%), and Social Chat (8.2%), where rel-
+evant evidence must be retrieved and connected
+across interactions. The smaller gains on Car-
+toon Entertainment (6.1%) and Home Renovation
+(5.2%) are consistent with their greater reliance
+on direct visual-semantic recall. On MemGallery,
+the largest margins appear in Conflict Detection
+(10.6%), Knowledge Resolution (10.5%), and Fac-
+tual Retrieval (8.1%), demonstrating the value of
+structured access for reconciling and precisely lo-
+cating information. ADAMM further improves
+Multi-entity Reasoning, Visual-centric Reasoning,
+and Visual-centric Search, while remaining com-
+parable to the strongest baselines on Answer Re-
+fusal, Temporal Reasoning, and Test-time Learn-
+ing. Together, these results suggest that combin-
+ing retrieval with operation-specific analytic access
+is particularly beneficial when answering requires
+more than semantic relevance alone.
+4.3 Ablation Study
+We evaluate four ablated variants on MemEye to
+examine the contributions of the designed memo-
+ries and the memory-aware planning mechanism.
+The Health task emphasizes numerical and tempo-
+
+--- Page 8 ---
+
+Backbone Method MemEye MemGallery
+EM BLEU-1 LLM-Judge F1 BLEU-1 LLM-Judge
+GPT-4.1-nano
+Unimodal A-Mem 39.1 17.1 32.0 53.2 47.2 67.4
+MemoryOS 42.4 15.8 27.6 53.4 47.1 65.9
+Multimodal
+M2A 34.1 5.8 13.8 50.2 44.3 61.5
+MMA 39.0 10.6 32.0 55.9 50.7 64.1
+MIRIX 40.9 5.7 13.6 56.3 51.1 66.3
+MM-RAG 42.7 16.6 42.2 58.3 52.4 67.3
+UniversalRAG 43.1 16.5 40.2 57.7 52.4 67.0
+ADAMM(Ours) 50.4(+7.3)21.2(+4.1)48.0(+5.8)62.6(+4.2)56.7(+4.3)74.3(+7.0)
+GPT-5.4-mini
+Unimodal A-Mem 48.0 22.4 35.2 63.0 58.6 74.4
+MemoryOS 48.7 21.8 33.3 64.5 59.0 75.5
+Multimodal
+M2A 40.1 12.3 33.5 60.8 56.0 71.7
+MMA 53.9 25.7 43.3 64.0 59.6 73.3
+MIRIX 46.7 18.0 33.2 65.7 60.9 78.2
+MM-RAG 61.8 29.7 49.4 66.5 61.9 78.7
+UniversalRAG 62.4 30.4 48.6 65.6 60.8 77.4
+ADAMM(Ours) 65.5(+3.2)35.9(+5.5)60.7(+11.3)69.1(+2.6)64.1(+2.2)83.9(+5.2)
+Table 3: Main results on MemEye and MemGallery. Higher is better for all metrics.bold valuesdenote the best
+result within a backbone and red values denote improvements over the strongest baseline.
+52
+56
+60
+60.7
+56.1
+53.2
+57.4
+58.9
+Overall
+20
+25
+30
+35
+36.3
+21.4
+32.7
+29.6
+32.1
+Health
+36
+42
+48
+48.3
+43.6
+38.4
+42.0
+45.1
+Brand
+LLM-Judge Accuracy
+Full w/o Analytic w/o Retrieval w/o Context w/o Progressive
+Figure 4:Ablation results on MemEye.Overall and
+task-level LLM-as-Judge accuracy using GPT-5.4-mini.
+ral analysis over multiple personal-health records,
+whereas the Brand task primarily evaluates visually
+grounded recall of brand-related information. In
+w/o Analyticandw/o Retrieval, we disable the an-
+alytic memory and retrieval memory, respectively.
+Inw/o Planning Context, the planner receives the
+entire memory metadata. Inw/o Progressive Exe-
+cution, all tool calls and their arguments are instan-
+tiated before execution.
+Contributions of Complementary Memories.
+As shown in Figure 4, removing either mem-
+ory component consistently degrades performance.
+Without analytic memory, overall accuracy de-
+creases by 4.6%, with a substantially larger 14.9%
+drop on Health. This result highlights the im-
+portance of organizing recurring records into exe-
+cutable structures for analytical queries. Remov-
+ing retrieval memory instead causes a 7.5% overall
+drop and is particularly detrimental to Brand, where
+performance decreases by 9.9%. The distinct degra-
+dation patterns confirm that analytic and retrieval
+memory provide complementary capabilities.
+Contributions of Memory-Aware Planning.
+Removing the planning context reduces perfor-
+mance by 3.3% overall and by 6.7% and 6.3% on
+Health and Brand, respectively. This demonstrates
+that effective tool selection requires knowledge of
+both the query intent and the memory structures cur-
+rently available. Instantiating all calls before execu-
+tion also produces consistent degradation, includ-
+ing drops of 4.2% on Health and 3.2% on Brand.
+These results indicate that progressive execution is
+useful when later operations depend on information
+obtained from preceding calls.
+5 Conclusion
+In this work, we identify a retrieval–analysis mis-
+match in long-term multimodal agent memory,
+highlighting the need for executable operations
+over accumulated experience beyond retrieval. To
+address this issue, we introduced ADAMM, which
+couples hierarchical retrieval memory with schema-
+induced analytic memory and exposes their distinct
+capabilities through operation-specific tools. A
+memory-aware planner further grounds tool selec-
+tion in the current memory state and progressively
+composes retrieval and analytic operations. Ex-
+periments on MemEye and MemGallery across
+two answer backbones demonstrate consistent im-
+provements from combining flexible recall with
+executable analysis.
+
+--- Page 9 ---
+
+Limitations
+While ADAMM demonstrates promising results in
+long-term multimodal agent memory, two limita-
+tions remain. First, analytic memory depends on
+record fragments extracted from multimodal inter-
+actions. Incorrect or missing fields may propagate
+to schema induction, table construction, and down-
+stream computations. Future work could incorpo-
+rate confidence-aware extraction and cross-round
+consistency checks to improve robustness. Second,
+ADAMM uses a predefined set of access tools and
+thus requires manual extension for unseen, domain-
+specific operations. Future work could develop a
+self-evolving tool framework that identifies emerg-
+ing capability gaps and safely synthesizes, vali-
+dates, and integrates new tools.
+References
+Rakesh Agrawal and Ramakrishnan Srikant. 1994. Fast
+algorithms for mining association rules in large
+databases. InProceedings of the 20th International
+Conference on Very Large Data Bases, pages 487–
+499.
+Yuanchen Bei, Tianxin Wei, Xuying Ning, Yanjun
+Zhao, Zhining Liu, Xiao Lin, Yada Zhu, Hendrik
+Hamann, Jingrui He, and Hanghang Tong. 2026.
+Mem-gallery: Benchmarking multimodal long-term
+conversational memory for mllm agents.arXiv
+preprint arXiv:2601.03515.
+Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet
+Singh, and Deshraj Yadav. 2025. Mem0: Building
+production-ready ai agents with scalable long-term
+memory.arXiv preprint arXiv:2504.19413.
+Danny Driess, Fei Xia, Mehdi S. M. Sajjadi, Corey
+Lynch, Aakanksha Chowdhery, Brian Ichter, Ayzaan
+Wahid, Jonathan Tompson, Quan Vuong, Tianhe
+Yu, Wenlong Huang, Yevgen Chebotar, Pierre Ser-
+manet, Daniel Duckworth, Sergey Levine, Vincent
+Vanhoucke, Karol Hausman, Marc Toussaint, Klaus
+Greff, and 3 others. 2023. Palm-e: An embod-
+ied multimodal language model.arXiv preprint
+arXiv:2303.03378.
+Junyu Feng, Binxiao Xu, Jiayi Chen, Mengyu Dai,
+Cenyang Wu, Haodong Li, Bohan Zeng, Yunliu
+Xie, Hao Liang, Ming Lu, and Wentao Zhang. 2026.
+M2a: Multimodal memory agent with dual-layer hy-
+brid memory for long-term personalized interactions.
+arXiv preprint arXiv:2602.07624.
+Minghao Guo, Qingyue Jiao, Zeru Shi, Yihao Quan,
+Boxuan Zhang, Danrui Li, Liwei Che, Wujiang
+Xu, Shilong Liu, Zirui Liu, Mubbasir Kapadia,
+Vladimir Pavlovic, Jiang Liu, Mengdi Wang, Yiyu
+Shi, Dimitris N. Metaxas, and Ruixiang Tang. 2026.
+Memeye: A visual-centric evaluation framework
+for multimodal agent memory.arXiv preprint
+arXiv:2605.15128.
+Kostas Hatalis, Despina Christou, Joshua Myers, Steven
+Jones, Keith Lambert, Adam Amos-Binks, Zohreh
+Dannenhauer, and Dustin Dannenhauer. 2023. Mem-
+ory matters: The need to improve long-term memory
+in llm-agents. InProceedings of the AAAI Sympo-
+sium Series, volume 2, pages 277–280.
+Hongliang He, Wenlin Yao, Kaixin Ma, Wenhao Yu,
+Yong Dai, Hongming Zhang, Zhenzhong Lan, and
+Dong Yu. 2024. Webvoyager: Building an end-to-
+end web agent with large multimodal models.arXiv
+preprint arXiv:2401.13919.
+Zhengjun Huang, Zhoujin Tian, Qintian Guo, Fangyuan
+Zhang, Yingli Zhou, Di Jiang, Zeying Xie, and Xi-
+aofang Zhou. 2025. Licomemory: Lightweight and
+cognitive agentic memory for efficient long-term rea-
+soning.arXiv preprint arXiv:2511.01448.
+Jing Yu Koh, Robert Lo, Lawrence Jang, Vikram
+Duvvur, Ming Chong Lim, Po-Yu Huang, Graham
+Neubig, Shuyan Zhou, Ruslan Salakhutdinov, and
+Daniel Fried. 2024. Visualwebarena: Evaluating mul-
+timodal agents on realistic visual web tasks.arXiv
+preprint arXiv:2401.13649.
+Yuanchun Li, Hao Wen, Weijun Wang, Xiangyu Li,
+Yizhen Yuan, Guohong Liu, Jiacheng Liu, Wenx-
+ing Xu, Xiang Wang, Yi Sun, et al. 2024. Per-
+sonal llm agents: Insights and survey about the
+capability, efficiency and security.arXiv preprint
+arXiv:2401.05459.
+Zhiyu Li, Shichao Song, Hanyu Wang, Simin Niu, Ding
+Chen, Jiawei Yang, Chenyang Xi, Huayi Lai, Ji-
+hao Zhao, Yezhaohui Wang, Junpeng Ren, Zehao
+Lin, Jiahao Huo, Tianyi Chen, Kai Chen, Kehang Li,
+Zhiqiang Yin, Qingchen Yu, Bo Tang, and 3 others.
+2025. Memos: An operating system for memory-
+augmented generation (MAG) in large language mod-
+els.CoRR, abs/2505.22101.
+Jiaqi Liu, Zipeng Ling, Shi Qiu, Yanqing Liu, Siwei
+Han, Peng Xia, Haoqin Tu, Zeyu Zheng, Cihang Xie,
+Charles Fleming, Mingyu Ding, and Huaxiu Yao.
+2026. Omni-simplemem: Autoresearch-guided dis-
+covery of lifelong multimodal agent memory.arXiv
+preprint arXiv:2604.01007.
+Yihao Lu, Wanru Cheng, Zeyu Zhang, and Hao Tang.
+2026. Mma: Multimodal memory agent.arXiv
+preprint arXiv:2602.16493.
+Viet Nguyen, Thao Nguyen, Vishal M. Patel, and
+Yuheng Li. 2026. Personal visual memory from
+explicit and implicit evidence.arXiv preprint
+arXiv:2605.28806.
+Edward R. Omiecinski. 2003. Alternative interest mea-
+sures for mining associations in databases.IEEE
+Transactions on Knowledge and Data Engineering,
+15(1):57–69.
+
+--- Page 10 ---
+
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang,
+Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez.
+2023. Memgpt: Towards llms as operating systems.
+arXiv preprint arXiv:2310.08560.
+Alex Petrov, Alexander Gusak, Denis Mukha, and
+Dima Korolev. 2026. From unstructured recall to
+schema-grounded memory: Reliable AI memory via
+iterative, schema-aware extraction.arXiv preprint
+arXiv:2604.27906.
+Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais,
+Jack Ryan, and Daniel Chalef. Zep: A tempo-
+ral knowledge graph architecture for agent memory,
+2025.URL https://arxiv. org/abs/2501.13956.
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta
+Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola
+Cancedda, and Thomas Scialom. 2023. Toolformer:
+Language models can teach themselves to use tools.
+arXiv preprint arXiv:2302.04761.
+Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-
+dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and
+Anima Anandkumar. 2023. V oyager: An open-ended
+embodied agent with large language models.arXiv
+preprint arXiv:2305.16291.
+Xiyao Wang, Yuhang Zhou, Xiaoyu Liu, Hongjin Lu,
+Yuancheng Xu, Feihong He, Jaehong Yoon, Taixi
+Lu, Gedas Bertasius, Mohit Bansal, Huaxiu Yao, and
+Furong Huang. 2024. Mementos: A comprehen-
+sive benchmark for multimodal large language model
+reasoning over image sequences.arXiv preprint
+arXiv:2401.10529.
+Yu Wang and Xi Chen. 2025. Mirix: Multi-agent mem-
+ory system for llm-based agents.arXiv preprint
+arXiv:2507.07957.
+Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan
+Li, Siheng Zhao, Ruisheng Cao, Toh Jing Hua, Zhou-
+jun Cheng, Dongchan Shin, Fangyu Lei, Yitao Liu,
+Yiheng Xu, Shuyan Zhou, Silvio Savarese, Caiming
+Xiong, Victor Zhong, and Tao Yu. 2024. Osworld:
+Benchmarking multimodal agents for open-ended
+tasks in real computer environments.arXiv preprint
+arXiv:2404.07972.
+Wujiang Xu, Kai Mei, Hang Gao, Juntao Tan, Zu-
+jie Liang, and Yongfeng Zhang. 2025. A-mem:
+Agentic memory for llm agents.arXiv preprint
+arXiv:2502.12110.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+Shafran, Karthik Narasimhan, and Yuan Cao. 2022.
+React: Synergizing reasoning and acting in language
+models.arXiv preprint arXiv:2210.03629.
+Juwei Yue, Chuanrui Hu, Jiawei Sheng, Zuyi Zhou,
+Wenyuan Zhang, Tingwen Liu, Li Guo, and Yafeng
+Deng. 2026. Hypermem: Hypergraph memory for
+long-term conversations. InProceedings of the 64th
+Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), pages 35237–
+35254.
+Zeyu Zhang, Quanyu Dai, Xiaohe Bo, Chen Ma, Rui Li,
+Xu Chen, Jieming Zhu, Zhenhua Dong, and Ji-Rong
+Wen. 2025. A survey on the memory mechanism of
+large language model-based agents.ACM Transac-
+tions on Information Systems, 43(6):1–47.
+Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and
+Yanlin Wang. 2024. Memorybank: Enhancing large
+language models with long-term memory. InAAAI,
+pages 19724–19731. AAAI Press.

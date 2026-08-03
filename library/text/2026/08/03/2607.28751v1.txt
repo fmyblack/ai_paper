@@ -1,0 +1,1941 @@
+--- Page 1 ---
+
+ReLoop-UME: Recurrent Depth with Learnable Retrieval Registers for Universal
+Multimodal Embedding
+Shijie Wang1∗, Xiangzhao Hao1∗, Yueti Li2,
+Guangyu Cao1, Xinyu Tang3†, Haiyun Guo1†
+1Institute of Automation, Chinese Academy of Sciences, Beijing, China
+2Tsinghua University, Beijing, China
+3AI Platform, evermind
+wangshijie2026@ia.ac.cn, hxzemail@gmail.com, liyueti0117@163.com,
+caoguangyu2026@ia.ac.cn, xinyu.tang@evermind.ai, haiyun.guo@nlpr.ia.ac.cn
+Abstract
+Universal multimodal embedding (UME) maps heteroge-
+neous multimodal inputs into a shared embedding space. Ex-
+isting UME models either form embeddings through single
+forward encoding or add computation through explicit ratio-
+nale tokens and latent autoregressive states. Although token
+expansion can improve complex matching, serial generation
+increasesretrievallatencyandmakesthefinalembeddingde-
+pend on generated intermediate states. This raises a different
+question: can useful computation be expanded along model
+depth while keeping the token workspace fixed? We analyze
+positive–negative similarity separation at every layer of inde-
+pendentlytrainedUMEmodelsandobserveasharedprogres-
+sion: early layers contextualize multimodal inputs, a contigu-
+ous middle-to-late stage forms retrieval-discriminative fea-
+tures,andthefinallayersmapthemintotheembeddingspace.
+Based on this finding, we propose ReLoop-UME, which ex-
+ecutes the early layers once, recurrently reuses a parameter-
+shared retrieval-forming block, and applies the final mapping
+layers after the last loop. Learnable Retrieval Registers pro-
+vide persistent retrieval-specific states that accumulate and
+exchange evidence across loops, with the final register serv-
+ing as the embedding readout. On MMEB-V2 and MRMR,
+ReLoop-UME consistently improves retrieval across differ-
+ent backbones while running 44.9×faster than UME-R1 and
+1.5×faster than PLUME.
+1 Introduction
+Beyond token-expanded reasoning.Universal multimodal
+embedding (UME) encodes heterogeneous queries and candi-
+dates, including text, images, videos, and visual documents,
+into a shared embedding space, where relevance is mea-
+sured by embedding similarity. Conventional models such
+as VLM2Vec (Jiang et al. 2025), GME (Zhang et al. 2025),
+LamRA (Liu et al. 2025b), VLM2Vec-V2 (Meng et al. 2026),
+and BToks (Sun et al. 2026) produce each representation
+through single forward encoding. This paradigm is efficient,
+but its fixed computation can be insufficient for complex
+query intent and fine-grained cross-modal matching. Recent
+methods therefore add computation before embedding read-
+out. UME-R1 (Lan et al. 2026) and TRACE (Hao et al. 2026)
+generateexplicitreasoningtrajectories,whereasPLUME(He
+∗These authors contributed equally.
+†Corresponding author.
+Prefix Middle Suffix
+Low
+High
+Retrieval Discriminability
+Prefix 
+Understanding
+Retrieval 
+Forming
+Embedding 
+Mapping
+entangled
+separating
+separated
+Figure 1: Abstract layer-wise retrieval-discriminability trend
+across independently trained UME models. Full curves and
+model-specific boundaries are provided in the appendix.
+et al. 2026) uses latent autoregressive states. Their gains, es-
+pecially without verbalized rationales, suggest that additional
+internal computation itself can improve retrieval. However,
+thesemethodsstillexpandcomputationalongthetokendimen-
+sion. Serial generation increases retrieval latency, repeatedly
+invokesthefullmodel,andmakesthefinalembeddingdepend
+on generated intermediate states. This motivates a different
+route: can additional computation be allocated along model
+depth while keeping the token workspace fixed?
+Retrieval formation is localized across depth.To deter-
+mine where depth-expanded computation should be placed,
+we examine how retrieval structure develops inside indepen-
+dently trained UME models using single forward encoding.
+At every layer, we measure the separation between positive
+and negative query–candidate similarity distributions. De-
+spite architectural differences, the models exhibit a shared
+progression. Early layers mainly contextualize multimodal
+inputs, while positive and negative similarities remain en-
+tangled; we call this thePrefix Understanding Stage. A
+contiguous middle-to-late interval then produces the largest
+sustained increase in separation, forming theRetrieval For-
+mationStage.Oncethetwopopulationsarelargelyseparated,
+the final layers mainly map the resulting retrieval features
+into the output embedding space, constituting theEmbed-
+ding Mapping Stage. Retrieval capability therefore forms
+non-uniformly across depth. More importantly, this progres-
+arXiv:2607.28751v1  [cs.CV]  30 Jul 2026
+
+--- Page 2 ---
+
+(a) Static Discriminative UME (b) Explicit-CoT Reasoning UME (c) Latent Reasoning UME
+Multimodal Context
+MLLM
+Single forward encoding
+Multimodal Context
+MLLM
+……
+……
+Hundreds of Reasoning tokens
+<think> <answer>
+MLLM
+……
+<answer>Distillation
+Multimodal Context
+……
+……
+Fewer Latent tokens
+(d) ReLoop-UME (ours)
+Explicit CoT Tokens Latent CoT Tokens Learnable Retrieval RegistersRetrieval Embedding
+MLLM
+…
+Recurrent Depth×T
+Suffix
+Prefix
+Multimodal Context
+……
+Figure 2: Comparison of UME computation paths. Existing methods allocate computation through either single forward
+encoding or extended explicit/latent token trajectories. ReLoop-UME instead executes the prefix once, recurrently reuses the
+retrieval-forming stage, and maps the refined states to the final embedding.
+sion identifies a localized stage where additional depth can
+directly strengthen query–candidate discrimination, rather
+than recomputing input understanding or final embedding
+projection.
+ReLoop-UME couples localized recurrence with per-
+sistent retrieval state.Motivated by this observation, we
+propose ReLoop-UME (Fig. 2). The understanding layers
+form a prefix, the retrieval-forming layers form a parameter-
+shared recurrent block, and the mapping layers form a suffix.
+Each input is processed by the prefix once, recurrently up-
+dated by the same retrieval-forming block forT loops, and
+converted into an embedding by the suffix after the final
+loop.Thisconcentratesextracomputationonthelayerswhere
+positive–negative separation is established, without duplicat-
+ing backbone parameters or extending the token sequence.
+Localized recurrence introduces a state-management prob-
+lem: evidence discovered during one loop must remain acces-
+sibletolaterloops,whiletheoriginalmultimodaltokensmust
+preserve input content and continue being refined. Content-
+token positions alone provide no retrieval-specific workspace
+for carrying and consolidating this evidence. We therefore
+introduce Learnable Retrieval Registers, a small set of
+trainable states appended to the multimodal sequence. They
+attend to the complete input, persist through every loop, and
+provide dedicated positions for accumulating, retaining, and
+exchanging retrieval evidence. The final register serves as a
+stable embedding readout. Unlike explicit or latent reasoning
+tokens, the registers are not generated step by step and do not
+grow with recurrent depth; they form a fixed-size retrieval
+workspace that complements the refined content features.
+Recurrentretrievalrefinementimprovestheaccuracy–
+efficiency tradeoff.On MMEB-V2, ReLoop-UME reaches
+Allscoresof63.2atthe2Bscaleand65.9atthe7Bscale,out-
+performingstrongmethodsbasedonsingleforwardencoding
+and token-expanded reasoning. The 7B model also transfers
+zero-shot to MRMR (Zhang et al. 2026), and the same recipe
+yields consistent gains across different backbones. ReLoop-
+UME runs 44.9× faster than UME-R1 and 1.5× faster than
+PLUME, with only 1.3×latency overhead over VLM2Vec-
+V2.Controlledablationsvalidatestagelocalization,moderate
+recurrent depth, and the compact register workspace.
+Our contributions are summarized as follows:
+•Astage-wiseaccountofretrievalformation. Layer-wise
+analyses reveal distinct stages for multimodal understand-
+ing, retrieval discrimination, and embedding mapping,
+identifying the retrieval-forming interval as the target for
+additional depth.
+•Localized recurrent refinement with dedicated re-
+trieval state. ReLoop-UME repeatedly applies a
+parameter-shared retrieval-forming block, while Learn-
+ableRetrievalRegistersprovideafixed-sizeworkspacefor
+cross-loopevidenceaccumulationandembeddingreadout.
+•Stronger retrieval on a favorable efficiency frontier.
+EvaluationsonMMEB-V2,zero-shotMRMRtransfer,and
+different backbones show consistent gains with substan-
+tially lower cost than token-expanded reasoning methods.
+2 Related Work
+Universal Multimodal Embedding. Early dual encoders
+CLIP, ALIGN, and SigLIP (Radford et al. 2021; Jia
+et al. 2021; Zhai et al. 2023) established scalable image–
+text learning. UniIR and MagicLens (Wei et al. 2024;
+Zhang et al. 2024) broadened retrieval to unified tasks and
+instruction-conditioned search. MLLM-based E5-V, MM-
+Embed, VLM2Vec, GME, UniME, LamRA, and VLM2Vec-
+
+--- Page 3 ---
+
+V2(Jiangetal.2024;Linetal.2024;Jiangetal.2025;Zhang
+et al. 2025; Gu et al. 2025; Liu et al. 2025b; Meng et al.
+2026) further improve compositional matching and modality
+coverage.MegaPairs,ColPali,BToks,andMetaEmbed(Zhou
+et al. 2025; Faysse et al. 2025; Sun et al. 2026; Xiao et al.
+2026) advance data scale, visual-document retrieval, and
+embedding readout. Most still form each embedding in one
+forward pass; we instead locate where retrieval geometry
+emerges and selectively reuse that stage.
+Computation Enhanced Embeddings. Think-Then-
+Embed (TTE) (Cui et al. 2025) uses a separate reasoner
+to generate embedding-centric traces for an embedder;
+Reasoning Guided Embeddings (Liu et al. 2025a) similarly
+conditions representations on generated rationales. UME-R1,
+TRACE, and Embed-RL (Lan et al. 2026; Hao et al. 2026;
+Jiang et al. 2026) extend explicit computation through
+generative objectives, adaptive execution, or reinforcement
+learning.PLUMEandBToks(Heetal.2026;Sunetal.2026)
+respectively use autoregressive continuous states and a fixed
+latent bottleneck. TTE and Embed-RL also rely on separately
+constructed high-quality reasoning supervision. Because
+TTE is a two-model reasoner–embedder pipeline rather than
+a standalone single-model UME, we omit it from direct
+comparison. These works show extra computation helps,
+but token expansion ties embedding quality to intermediate
+trajectories and serial latency. ReLoop-UME instead keeps a
+fixed token workspace and recurrently refines the full hidden
+sequence in retrieval-forming layers.
+Recurrent Feature Refinement. The Universal Trans-
+former (Dehghani et al. 2019) introduced depth-wise pa-
+rameter sharing, while looped Transformers (Fan et al. 2025;
+Saunshi et al. 2025) showed that repeated application in-
+creases effective computation without model growth. Hug-
+inn and Ouro (Geiping et al. 2025; Zhu et al. 2025) apply
+recurrent depth to pretrained language models; ETD and
+LoopUS (Koishekenov, Lipani, and Cancedda 2025; Park
+et al. 2026) localize or organize recurrence using layer-wise
+dynamics. ReLoop-UME transfers this principle to univer-
+sal multimodal retrieval: positive–negative discriminability
+selects the recurrent stage, which jointly refines query and
+candidate features in one contrastive embedding space.
+3 Method
+3.1 Problem Formulation
+Given positive query–candidate pairsD={(q i, c+
+i )}N
+i=1, a
+shared UME encoder maps any supported multimodal input
+xto a normalized retrieval embedding
+zT (x) =f θ(x;T)∈S d−1,
+sT (q, c) =z T (q)⊤zT (c), (1)
+where T is the recurrent depth. Queries and candidates share
+the encoder and readout rule, andsT is cosine similarity
+because the embeddings areℓ2 normalized.
+Single-forward UME forms this embedding in one pass,
+but our layer-wise analysis shows a non-uniform progression:
+thePrefixUnderstandingStage contextualizestheinput,the
+Retrieval Formation Stageforms retrieval-discriminative
+features, and theEmbedding Mapping Stageproduces the
+embedding. ReLoop-UME executes the prefix once, recur-
+rently reuses the parameter-shared retrieval-forming block,
+and applies the suffix after the final loop. Learnable Retrieval
+Registers provide persistent retrieval-specific states while the
+token workspace remains fixed (Fig. 3).
+3.2 Layer-wise Analysis of UME
+We identify the three stages on the training set using an
+independentlytrainedsingle-forwardUMEmodel.Let Hl(x)
+denotethehiddensequenceafterlayer l, ρtheoriginalretrieval
+readoutposition,and bzl(x) = norm2(Hl,ρ(x)).Forquery qi,
+let Ni be its negative candidate pool. We measure layer-wise
+retrieval discriminability as
+s+
+i,l :=bzl(qi)⊤bzl(c+
+i ),
+s−
+i,l :=
+bzl(qi)⊤bzl(c)
+ c∈ N i
+	
+,
+Sl := 1
+N
+NX
+i=1
+h
+s+
+i,l −Q 0.8
+
+s−
+i,l
+i
+.
+(2)
+Here Q0.8 is the 80th percentile of negative similarities. A
+positive margin places the positive above at least 80% of
+the negatives, while a largerSl indicates stronger retrieval
+discriminability. Unlike the maximum negative similarity, it
+is less dominated by highly similar false negatives.
+We locate boundaries from the progression ofSl, not its
+absolute value. Layers before a sustained rise form the Prefix
+Understanding Stage; the contiguous rising interval, ending
+when separation saturates, forms the Retrieval Formation
+Stage;andtheremainingterminallayersformtheEmbedding
+MappingStage.Thisplacesrecurrenceexactlywhereretrieval
+separation is established, while contextualization and final
+mapping are computed once. If this interval isa:b, layers
+0:a−1 , a:b, and b+ 1:L−1 define the prefix, recurrent
+block, and suffix. The split is fixed before recurrent training
+and uses no layer-specific projection head.
+This yields layers 0–16, 17–26, and 27 for Qwen2-VL-2B,
+Qwen2-VL-7B, and Qwen3-VL-2B, and layers 0–11, 12–22,
+and 23 for Qwen3.5-2B. The boundaries are insensitive to
+the percentile: alternatives to0.8 shift the margin scale but
+preserve the turning points. Corresponding visualizations are
+reported in the appendix.
+3.3 Localized Recurrent Refinement with
+Learnable Retrieval Registers
+Let X(x)∈R nx×dbethemultimodaltokensequence.Weap-
+pend M Learnable Retrieval RegistersR= [r 1, . . . ,rM]∈
+RM×d, shared across queries and candidates. Because they
+follow the input tokens, each register attends to the complete
+multimodal input under the causal mask, and registermalso
+attends to registers1:m−1 . Content-to-register attention
+therefore accumulates evidence, residual propagation retains
+it across loops, and register-to-register attention exchanges
+and consolidates it. Meanwhile, the recurrent block refines
+the content-token states, so the registers repeatedly read im-
+proved multimodal evidence. The final register aggregates
+all preceding registers for stable embedding readout, without
+creating new states or increasing sequence length.
+
+--- Page 4 ---
+
+visual tokens(explicit)
+text tokens(explicit)
+learnable retrieval registers
+text tokens(explicit)
+Text
+visual tokens(explicit)
+Image/Video
+…
+contrastive learning
+universal multimodal 
+embeddings
+MLLM
+Prefix
+Layer 0 . . . Layer α-1 Layer α
+Middle
+ Recurrent Depth×T
+Layer α+1Layer α+2
+Layer ℓ-1 
+Loop T times
+Suffix
+input
+updated hidden state input
+Layer ℓ 
+final representation
+Figure 3: Overview of the recurrent retrieval encoder. Multimodal tokens and learnable retrieval registers are processed once by
+the prefix, iteratively refined by a parameter-shared retrieval-forming block forT recurrent steps, and mapped by the suffix to a
+normalized embedding. Query–candidate pairs are optimized with terminal contrastive supervision.
+Let Fl denote encoder layerl, and defineFu:v =F v ◦
+· · · ◦F u. Following the split above, the prefix, recurrent,
+and suffix mappings areE=F 0:a−1, G=F a:b, and O=
+FinalNorm◦F b+1:L−1,respectively.Let ρx =n x+M bethe
+position of the final retrieval register. The recurrent encoder
+is
+eX(x) = [X(x);R],
+H(0)(x) :=E
+
+eX(x)
+
+,
+H(t)(x) :=G
+
+H(t−1)(x)
+
+, t= 1, . . . , T,
+zT (x) := norm2
+h
+O
+
+H(T) (x)
+i
+ρx
+
+.
+(3)
+The same G is reused in every loop, each time receiving
+the complete preceding hidden sequence with unchanged
+attention mask, token positions, and positional indices. The
+Embedding Mapping Stage usually corresponds only to the
+final model layer; accordingly, the suffix in Fig. 3 is the final
+layer in our instantiations.
+Only the final register is read out; the precedingM−1
+registers remain internal states for accumulating, retaining,
+and exchanging evidence. They are not explicit reasoning
+steps: recurrent depth controls feature refinement while the
+workspace stays fixed. Each input undergoes one prefix pass,
+T shared retrieval-forming applications, one suffix pass, and
+terminal normalization.
+3.4 Terminal Contrastive Training
+For a batch B={(q i, c+
+i )}B
+i=1, both sides are encoded
+with the same recurrent depth. We writeqi =z T (qi) and
+ci =z T (c+
+i ), and use the other candidates in the batch as
+negatives for qi. With temperature parameterτ >0 , the
+training objective is
+LNCE =− 1
+B
+BX
+i=1
+log exp
+ 
+q⊤
+i ci/τ
+
+PB
+j=1 exp
+ 
+q⊤
+i cj/τ
+ . (4)
+The loss is applied only to the embeddings produced after
+the terminal loop. Intermediate hidden states still receive
+gradients through the unrolled computation, but they are
+not required to form independently usable retrieval spaces.
+This terminal supervision allows the shared recurrent block
+to optimize its intermediate transformations for the final
+query–candidate geometry rather than treating every loop
+as a separate exit. The encoder parameters and retrieval
+registers are optimized jointly, withM, recurrent depthT,
+and temperatureτserving as method hyperparameters.
+3.5 Recurrent Depth and Theoretical Efficiency
+The recurrent depthT is fixed consistently for training and
+inference. Reusing the same retrieval-forming parameters
+deepens feature refinement without changing model size or
+token workspace, controlling the accuracy–efficiency trade-
+off through the training configuration.
+Forageneralsplitcontaining Lp prefixlayers, Lr recurrent
+layers, andLs suffix layers, the decoder-side serial depth is
+Dloop(T) :=L p +T L r +L s.(5)
+
+--- Page 5 ---
+
+Relative to single forward encoding, the additional depth is
+therefore(T−1)L r,concentratedonlyintheretrieval-forming
+block. By contrast, a token-autoregressive computation that
+produces K additional states through the full stack has an
+approximateserialdepthof (K+1)(L p+L r+L s),excluding
+anystate-transitionmodules.Therecurrentencoderalsokeeps
+the sequence length fixed atnx +M , avoiding token-by-
+token growth of causal positions and key–value caches. Its
+only architecture-specific parameter overhead is the register
+matrix, containing M dlearnable parameters; all recurrent
+applications reuse the same encoder weights and require
+no separate transition adapter. Because exact throughput
+also depends on input length, hardware, and implementation,
+we complement this analysis with measured latency and
+throughput in the experiments.
+4 Experiments
+4.1 Experimental Setup
+Datasets and Metrics. We evaluate ReLoop-UME on
+MMEB-V2 (Meng et al. 2026), which contains 78 tasks
+spanning 36 image, 18 video, and 24 visual-document (Vis-
+Doc) tasks. Following the official protocol, we report Hit@1
+for image and video tasks and NDCG@5 for VisDoc tasks.
+Modality-levelAvg.scores and the finalAll score are task-
+level macro averages; all embeddings areℓ2-normalized and
+ranked by cosine similarity. To further assess generalization
+in reasoning-intensive scenarios, we directly evaluate the
+7B ReLoop-UME trained on MMEB-V2 on MRMR (Zhang
+et al. 2026), without MRMR-specific training. Following its
+standard setting, we use nDCG@10 for all subtasks except
+Negation, for which we report Hit@1.
+Baselines and Implementation. We compare against
+UME models based on single forward encoding, includ-
+ing VLM2Vec, GME, VLM2Vec-V2, LamRA, DUME, and
+BToks(Jiangetal.2025;Zhangetal.2025;Mengetal.2026;
+Liu et al. 2025b; Lan et al. 2026; Sun et al. 2026), together
+with reasoning-oriented UME-R1 and PLUME (Lan et al.
+2026; He et al. 2026); Table 1 groups results by model scale.
+The 2B and 7B ReLoop-UME variants are initialized from
+thecorrespondingQwen2-VL-Instructbackbones(Wangetal.
+2024), append five Learnable Retrieval Registers, recurrently
+reuse layers 17–26, and optimize only the terminal register
+withInfoNCEat τ= 0.05 .Wetrainontheofficial24MMEB-
+V2 training datasets for 5,000 total steps with a global batch
+size of 256. Videos use eight frames sampled at 2FPS, and
+image/video pixel budgets are restricted to100,352–602,112.
+AdamW uses learning rates of1×10 −5 for the language
+model and multimodal merger and2×10 −6 for the vision
+encoder, (β1, β2) = (0.9,0.95), weight decay0.1, gradient
+clippingat 1.0,5%warm-up,andcosinedecay.Traininguses
+BF16,gradientcheckpointing,DeepSpeedZeRO-3,andeight
+NVIDIA H20 GPUs.
+4.2 Main Results on MMEB-V2
+Table 1 summarizes the MMEB-V2 results at both model
+scales. At approximately 2B parameters, ReLoop-UME
+achieves63.2All, outperforming PLUME and UME-R1 by
+1.6 and 3.1 points, with Image, Video, and VisDoc averages
+Figure 4: Task-group comparison among 2B models on
+MMEB-V2. ReLoop-UME performs strongly on several Im-
+age and VisDoc groups, especially visual-document retrieval
+and OOD retrieval, while its Video results are mixed.
+of 68.9, 40.5, and 71.5. At approximately 7B parameters, it
+reaches 65.9 All, surpassing UME-R1 by1.4 points (65.9
+vs. 64.5), mainly through higher Image and VisDoc averages
+(72.0 and 73.9 vs. 71.3 and 67.1). Video remains a limitation:
+ReLoop-UME scores 40.5 at 2B, below PLUME (44.1) and
+UME-R1 (42.2), and 42.9 at 7B, below UME-R1 (47.5). Re-
+current reuse strengthens retrieval-forming features but may
+underemphasizetemporalinformationacrosssampledframes,
+limitingvideogains.Overall,recurringoverretrieval-forming
+layers improves the final retrieval representation most clearly
+on Image and VisDoc tasks, without requiring autoregressive
+trajectories.
+4.3 Efficiency and Accuracy–Efficiency Tradeoff
+Table 2 provides a quantitative breakdown of inference costs.
+All measurements are conducted on a single NVIDIA H20
+GPU. For each method, we randomly sample 500 inputs per
+modality as one evaluation set, preceded by 20 warm-up
+iterations, and repeat the experiment with five independently
+drawn evaluation sets. The table reports the mean across the
+five runs;±denotes the standard deviation.
+ReLoop-UME performs additional computation through
+four recurrent applications of layers 17–26 rather than autore-
+gressively generating reasoning states. It reduces per-sample
+latency from 9023ms for UME-R1 to 201 ms, corresponding
+to a 44.9× speedup, and is 1.5× faster than PLUME. Rel-
+ative to VLM2Vec-V2 with single forward encoding (156
+ms), ReLoop-UME introduces only 1.3× inference overhead
+while improving the MMEB-V2 All score by 5.2 points (63.2
+vs. 58.0). These results demonstrate that recurrent depth adds
+modestoverheadoversingleforwardencodingwhile avoiding
+the severe latency cost of autoregressive reasoning.
+Figure 5 visualizes the accuracy–efficiency tradeoff across
+recurrent depths. The defaultT= 4 configuration reaches an
+All score of 63.2 at 5.0 samples/s, providing the measured
+reference point used in Table 2.
+
+--- Page 6 ---
+
+Model Image Video VisDoc All
+CLS QA RET GD Avg. CLS QA RET MRET Avg. VDR1 VDR2 VR OOD Avg.
+# of Datasets 10 10 12 4 36 5 5 5 3 18 10 4 6 4 24 78
+∼2B Model Size
+LamRA 59.2 26.570.062.7 54.1 39.3 42.6 24.3 34.6 35.2 22.0 11.5 37.4 21.0 23.9 40.4
+VLM2Vec 58.7 49.3 65.0 72.9 59.7 33.4 30.5 20.6 33.0 29.0 49.8 13.5 51.8 33.5 41.6 47.0
+GME 54.4 29.9 66.9 55.5 51.9 34.9 42.0 25.6 32.4 33.986.1 54.082.5 43.172.754.1
+VLM2Vec-V2 62.9 56.3 69.5 77.3 64.9 39.3 34.3 28.8 38.5 34.9 75.5 44.9 79.4 39.4 65.4 58.0
+DUME 59.3 55.0 66.3 78.0 62.5 37.7 46.6 17.1 30.0 33.2 67.6 43.3 47.1 33.8 52.8 52.7
+BToks 64.3 59.8 68.8 77.4 66.0 43.7 47.0 33.0 33.6 39.9 71.1 38.6 81.3 38.1 62.7 59.0
+UME-R1 64.8 62.8 67.6 77.2 66.644.3 51.2 32.9 39.7 42.2 72.4 46.2 79.2 37.2 63.9 60.1
+PLUME 66.5 59.2 67.6 79.766.345.0 52.333.5 46.7 44.172.1 49.8 78.1 57.4 67.5 61.6
+ReLoop-UME (Ours) 67.4 63.569.883.9 68.944.2 46.333.636.5 40.5 76.9 46.583.5 65.371.5 63.2
+∼7B Model Size
+ColPali-v1.3 40.3 11.5 48.1 40.3 34.9 26.7 37.8 21.6 25.5 28.2 83.6 52.0 81.1 43.1 71.0 44.4
+LamRA 51.7 34.1 66.9 56.7 52.4 32.9 42.6 23.2 37.6 33.7 56.3 33.3 58.2 40.1 50.2 47.4
+VLM2Vec 62.7 56.9 69.4 82.2 65.5 39.1 30.0 29.040.634.0 56.9 9.4 59.1 38.1 46.4 52.3
+GME 57.7 34.7 71.2 59.3 56.0 37.4 50.4 28.4 38.2 38.689.455.6 85.0 44.4 75.257.8
+VLM2Vec-V2 65.7 61.5 70.0 85.2 68.1 45.9 33.9 27.6 39.3 36.4 78.8 52.6 82.7 42.1 69.3 61.2
+DUME 64.2 57.0 70.8 81.8 66.4 32.9 47.4 8.6 28.0 29.4 67.1 35.2 82.6 34.9 60.3 55.9
+CAFe 63.6 61.7 69.1 87.6 67.6 35.8 58.7 34.4 39.5 42.4 70.7 49.6 79.5 38.1 63.9 60.6
+UniME-V2 65.6 68.7 73.1 90.971.8 37.2 50.6 28.9 39.6 39.0 61.8 42.0 70.5 37.9 56.7 59.6
+LCO-Emb 56.3 16.9 52.2 57.0 44.0 39.3 57.6 24.8 26.5 38.2 80.4 56.4 79.7 41.8 69.8 50.6
+Omni-Embed 46.0 20.5 58.0 52.9 43.7 40.5 44.3 32.7 25.6 36.9 85.7 61.384.3 43.3 74.2 51.5
+UME-R1 67.1 69.271.9 84.9 71.348.6 60.7 38.239.347.575.7 50.5 83.7 37.6 67.1 64.5
+ReLoop-UME (Ours) 69.567.5 72.587.8 72.044.5 52.0 34.3 39.4 42.9 78.9 50.685.7 67.173.965.9
+Table 1: Results on the full MMEB-V2 benchmark. CLS: classification, QA: question answering, RET: retrieval, GD: grounding,
+MRET: moment retrieval, VDR: ViDoRe, VR: VisRAG, and OOD: out-of-distribution.Avg.and All denote modality-level and
+78-task macro averages, respectively. Best and second-best results within each model-size group are bolded and underlined.
+0.1 0.5 1
+Throughput(samples/s)
+4 6 8
+58
+60
+62
+UME-R1
+PLUME
+VLM2Vec-V2
+64
+Reloop-UME
+Discriminative UME:
+Reasoning UME:
+ReLoop-UME (ours):
+45x faster
+Avg-MMEB-V2
+Figure 5: ReLoop-UME achieves a favorable accuracy–
+efficiencytradeoffonMMEB-V2.Thex-axisshowsinference
+throughput on a single H20 GPU, and the y-axis shows the
+MMEB-V2 All score.
+4.4 Ablation Studies
+We ablate the recurrent interval, register countM, and recur-
+rentdepth T onQwen2-VL-2B.Unlessnoted,thedefaultuses
+layers 17–26,M= 5 , andT= 4 under the same training
+recipe.
+Metric PLUME UME-R1 ReLoop-UME
+Steps 8 403 4
+Latency (ms/sample)298±12 9023±187 201±4
+Throughput (samples/s)3.3±0.1 0.11±0.01 5.0±0.1
+Speedup30.3×1.0×44.9×
+Overhead1.9×–1.3×
+Table 2: Inference efficiency on a single H20 GPU. Steps
+denotes the number of reasoning tokens for PLUME and
+UME-R1, and the number of recurrent loop iterations for
+ReLoop-UME. Speedup is measured relative to UME-R1,
+while overhead is measured relative to VLM2Vec-V2.
+Recurrent interval. Table 3 tests where recurrence should
+be placed. Layers 17–26 achieve the best All score of 63.2,
+surpassingearly-layer,full-decoder,extended-late,andoutput-
+onlyrecurrenceby3.0,1.9,0.9,and3.7points.Morecomputa-
+tionaloneisinsufficient:full-decoderrecurrencerequires112
+decoder applications, nearly twice the 58 of layers 17–26, yet
+performs worse; the final layer alone is also inadequate. This
+supports the layer-wise pattern in Fig. 1: retrieval geometry
+forms within a localized intermediate-to-late stage, making
+that stage the most effective target for recurrent reuse.
+Retrieval registers. Table 4 evaluates the persistent
+workspace across loops. Removing the registers lowers All
+
+--- Page 7 ---
+
+Layers Decoder apps. Image Video VisDoc All
+0–16 79 66.0 39.4 67.0 60.2
+0–27 112 67.1 39.8 68.8 61.3
+17–27 61 68.1 40.2 70.2 62.3
+27 31 65.2 39.0 66.2 59.5
+17–26 5868.9 40.5 71.5 63.2
+Table 3: Ablation on the recurrent layer interval. We report
+decoder applications and MMEB-V2 performance with the
+registercountandrecurrentdepthfixedto M= 5 and T= 4 .
+MAdded params. Image Video VisDoc All
+0 0 67.5 39.9 70.4 61.8
+5 7,68068.940.571.5 63.2
+8 12,288 68.5 40.6 71.2 62.9
+10 15,360 68.040.870.8 62.7
+Table 4: Ablation on the number of retrieval registersM.
+We report the added trainable parameters and MMEB-V2
+performance using recurrent layers 17–26 withT= 4.
+from 63.2 to 61.8, while five registers recover a 1.4-point
+gain with only 7,680 additional parameters. Expanding the
+workspace to eight or ten registers yields no further improve-
+ment. The benefit therefore comes from preserving a small
+setofretrieval-specificstates,notfromincreasingcapacityor
+sequence length. This compact fixed-size workspace retains
+and refines multimodal evidence without the latency and
+memory growth of token-expansion reasoning.
+Recurrent depth. Table 5 confirms that iterative refine-
+ment across recurrent applications drives the gain. Increasing
+T from 1 to 2 improves All from 60.6 to 62.1, andT= 4
+reaches 63.2; extending toT= 8 slightly drops to 62.8 de-
+spitesubstantiallymoredecoderapplications.Thebenefitthus
+saturates at a moderate depth instead of growing monotoni-
+callywithcomputation.Together,theablationsclosetheloop
+from observation to design: localize the retrieval-forming
+stage, recurrently refine it for a moderate number of steps,
+and preserve evidence in a compact fixed-size workspace.
+4.5 Generalization Experiments
+Cross-dataset generalization. We zero-shot evaluate the
+7B ReLoop-UME trained on MMEB-V2 on MRMR. Ta-
+ble 6 reports group means and the official Avg. against the
+four strongest directly comparable baselines; full per-subtask
+results are deferred to the appendix. We exclude Qwen3-VL-
+Embedding (Li et al. 2026) because substantially different
+training data prevent a controlled zero-shot comparison.
+ReLoop-UME leads Knowledge (71.6), Theorem (39.1),
+and Avg. (48.6), 0.5 points above Ops-MM-Embedding.
+It does not leadon Contradiction, however, and the overall
+marginismodest.Theresultsthereforeindicateonlyadegree
+of transfer and generalization from MMEB-V2 to MRMR,
+rather than uniform gains across all task groups.
+TDecoder apps. Image Video VisDoc All
+1 28 66.5 39.7 67.5 60.6
+2 38 68.0 40.2 69.8 62.1
+4 5868.9 40.5 71.5 63.2
+8 98 68.7 40.4 70.8 62.8
+Table 5: Ablation on recurrent depthT. Each configuration
+uses matching training and inference depth, recurrent layers
+17–26, andM= 5.
+Model KnowledgeTheoremContra.Avg.
+Ops-MM-Embedding 67.4 37.4 36.6 48.1
+NV-Embed-v2 62.5 36.7 32.3 44.8
+MM-Embed 61.2 31.7 21.9 39.8
+GME 51.0 28.9 36.9 39.1
+ReLoop-UME (7B) 71.6 39.130.748.6
+Table 6: Zero-shot transfer from MMEB-V2 to MRMR.
+Knowledge, Theorem, and Contra. are task-group means;
+Contra. abbreviates Contradiction, and Avg. averages all 11
+subtasks.
+Backbone Single forward ReLoop-UME∆
+Qwen2-VL-2B 60.6 63.2 2.6
+Qwen3-VL-2B 61.7 63.9 2.2
+Qwen3.5-2B 60.2 62.6 2.4
+Table 7: Backbone generalization on MMEB-V2 (All).
+Backbone generalization. Mainstream UME models are
+commonly built on Qwen-VL backbones. We therefore select
+threerepresentativevariants(Wangetal.2024;Baietal.2025;
+Qwen Team 2026) and apply the same stage-localization and
+recurrent-trainingrecipe(Table7).Singleforwarduses T= 1
+and M= 0 . The gains support the recipe beyond Qwen2-VL.
+This suggests that the recipe can transfer across different
+Qwen-VL backbones and model scales.
+5 Conclusion
+We introduced ReLoop-UME, which recurrently reuses
+retrieval-forming layers with shared parameters while keep-
+ing the token workspace fixed. Learnable Retrieval Registers
+preserve multimodal evidence across loops, directing extra
+computation to the stage where retrieval geometry forms in-
+stead of autoregressive token expansion. Across MMEB-V2,
+zero-shot MRMR transfer, and different backbones, ReLoop-
+UME is 44.9× faster than UME-R1 and 1.5× faster than
+PLUME,with1.3 ×latencyoverheadoverVLM2Vec-V2.Ab-
+lations confirm stage localization, moderate recurrent depth,
+and a compact register workspace, supporting recurrent fea-
+ture refinement as an efficient route to universal multimodal
+embeddings.
+
+--- Page 8 ---
+
+References
+Bai, S.; et al. 2025. Qwen3-VL Technical Report.
+arXiv:2511.21631.
+Cui, X.; Cheng, J.; Chen, H.-y.; Shukla, S. N.; Awasthi, A.;
+Pan,X.;Ahuja,C.;Mishra,S.K.;Guo,Q.;Lim,S.-N.;Singh,
+A.;andFan,X.2025. ThinkThenEmbed:GenerativeContext
+Improves Multimodal Embedding. arXiv:2510.05014.
+Dehghani, M.; Gouws, S.; Vinyals, O.; Uszkoreit, J.; and
+Kaiser, L. 2019. Universal Transformers. InInternational
+Conference on Learning Representations.
+Fan,Y.;Du,Y.;Ramchandran,K.;andLee,K.2025. Looped
+Transformers for Length Generalization. InInternational
+Conference on Learning Representations.
+Faysse,M.;Sibille,H.;Wu,T.;Omrani,B.;Viaud,G.;Hudelot,
+C.; and Colombo, P. 2025. ColPali: Efficient Document
+Retrieval with Vision Language Models. InInternational
+Conference on Learning Representations.
+Geiping, J.; McLeish, S.; Jain, N.; Kirchenbauer, J.; Singh,
+S.; Bartoldson, B. R.; Kailkhura, B.; Bhatele, A.; and Gold-
+stein, T. 2025. Scaling up Test-Time Compute with Latent
+Reasoning: A Recurrent Depth Approach. InAdvances in
+Neural Information Processing Systems, volume 38.
+Gu, T.; Yang, K.; Feng, Z.; Wang, X.; Zhang, Y.; Long, D.;
+Chen, Y.; Cai, W.; and Deng, J. 2025. Breaking the Modality
+Barrier: Universal Embedding Learning with Multimodal
+LLMs. arXiv:2504.17432.
+Hao, X.; Wang, S.; Yang, T.; Wang, T.; Guo, H.; and
+Wang, J. 2026. TRACE: Task-Adaptive Reasoning and Rep-
+resentation Learning for Universal Multimodal Retrieval.
+arXiv:2603.02929.
+He, C.; Hao, X.; Yang, T.; Ma, Y.; Jia, Y.; Wu, L.; Zhao, C.;
+Guo, H.; and Wang, J. 2026. PLUME: Latent Reasoning
+Based Universal Multimodal Embedding. arXiv:2604.02073.
+Jia, C.; Yang, Y.; Xia, Y.; Chen, Y.-T.; Parekh, Z.; Pham, H.;
+Le, Q.; Sung, Y.-H.; Li, Z.; and Duerig, T. 2021. Scaling
+Up Visual and Vision-Language Representation Learning
+With Noisy Text Supervision. InProceedings of the 38th
+InternationalConferenceonMachineLearning ,volume139
+of Proceedings of Machine Learning Research, 4904–4916.
+PMLR.
+Jiang, H.; Wang, Y.; Zhu, Y.; Lu, X.; Qin, W.; Wang, M.;
+Wan, P.; and Tang, Y. 2026. Embed-RL: Reinforcement
+Learning for Reasoning-Driven Multimodal Embeddings.
+arXiv:2602.13823.
+Jiang, T.; Song, M.; Zhang, Z.; Huang, H.; Deng, W.; Sun, F.;
+Zhang, Q.; Wang, D.; and Zhuang, F. 2024. E5-V: Univer-
+sal Embeddings with Multimodal Large Language Models.
+arXiv:2407.12580.
+Jiang,Z.;Meng,R.;Yang,X.;Yavuz,S.;Zhou,Y.;andChen,
+W. 2025. VLM2Vec: Training Vision-Language Models for
+Massive Multimodal Embedding Tasks. InThe Thirteenth
+International Conference on Learning Representations.
+Koishekenov,Y.;Lipani,A.;andCancedda,N.2025. Encode,
+Think, Decode: Scaling Test-Time Reasoning with Recursive
+Latent Thoughts.arXiv preprint arXiv:2510.07358.
+Lan, Z.; Niu, L.; Meng, F.; Zhou, J.; and Su, J. 2026. UME-
+R1: Exploring Reasoning-Driven Generative Multimodal
+Embeddings. InTheFourteenthInternationalConferenceon
+Learning Representations.
+Li, M.; Zhang, Y.; Long, D.; Chen, K.; Song, S.; Bai, S.;
+Yang,Z.;Xie,P.;Yang,A.;Liu,D.;Zhou,J.;andLin,J.2026.
+Qwen3-VL-Embedding and Qwen3-VL-Reranker: A Unified
+Framework for State-of-the-Art Multimodal Retrieval and
+Ranking. arXiv:2601.04720.
+Lin, S.-C.; Lee, C.; Shoeybi, M.; Lin, J.; Catanzaro, B.; and
+Ping, W. 2024. MM-Embed: Universal Multimodal Retrieval
+with Multimodal LLMs. arXiv:2411.02571.
+Liu, C.; Yang, J.; Gao, R.; Zhu, Y.; Zhu, F.; Zhao, R.; and
+Wang, L. 2025a. Reasoning Guided Embeddings: Leverag-
+ing MLLM Reasoning for Improved Multimodal Retrieval.
+arXiv:2511.16150.
+Liu, Y.; Zhang, Y.; Cai, J.; Jiang, X.; Hu, Y.; Yao, J.; Wang,
+Y.; and Xie, W. 2025b. LamRA: Large Multimodal Model
+as Your Advanced Retrieval Assistant. InProceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, 4015–4025.
+Meng, R.; Jiang, Z.; Liu, Y.; Su, M.; Yang, X.; Fu, Y.; Qin,
+C.; Thirukovalluru, R.; Zhang, X.; Chen, Z.; Xu, R.; Xiong,
+C.; Zhou, Y.; Chen, W.; and Yavuz, S. 2026. VLM2Vec-
+V2: Advancing Multimodal Embedding for Videos, Images,
+and Visual Documents.Transactions on Machine Learning
+Research.
+Park, T.; Lee, Y.; Kim, D.; and Bae, H. 2026. LoopUS:
+Recasting Pretrained LLMs into Looped Latent Refinement
+Models. arXiv:2605.11011.
+Qwen Team. 2026. Qwen3.5: Towards Native Multimodal
+Agents.
+Radford, A.; Kim, J. W.; Hallacy, C.; Ramesh, A.; Goh, G.;
+Agarwal, S.; Sastry, G.; Askell, A.; Mishkin, P.; Clark, J.;
+Krueger, G.; and Sutskever, I. 2021. Learning Transferable
+Visual Models From Natural Language Supervision. InPro-
+ceedings of the 38th International Conference on Machine
+Learning, volume 139 ofProceedings of Machine Learning
+Research, 8748–8763. PMLR.
+Saunshi, N.; Dikkala, N.; Li, Z.; Kumar, S.; and Reddi,
+S. J. 2025. Reasoning with Latent Thoughts: On the Power
+of Looped Transformers. InInternational Conference on
+Learning Representations.
+Sun, S.; Ren, J.; Liao, Z.; Mao, D.; Ren, X.; Zhang, Y.;
+Zhao, H.; Lin, W.; Jiang, S.; Zhang, L.; and Zheng, Y.
+2026. Bottleneck Tokens for Unified Multimodal Retrieval.
+arXiv:2604.11095.
+Wang, P.; Bai, S.; Tan, S.; Wang, S.; Fan, Z.; Bai, J.; Chen,
+K.;Liu,X.;Wang,J.;Ge,W.;Fan,Y.;Dang,K.;Du,M.;Ren,
+X.; Men, R.; Liu, D.; Zhou, C.; Zhou, J.; and Lin, J. 2024.
+Qwen2-VL: Enhancing Vision-Language Model’s Perception
+of the World at Any Resolution. arXiv:2409.12191.
+Wei, C.; Chen, Y.; Chen, H.; Hu, H.; Zhang, G.; Fu, J.; Ritter,
+A.; and Chen, W. 2024. UniIR: Training and Benchmarking
+Universal Multimodal Information Retrievers. InEuropean
+Conference on Computer Vision, 387–404. Springer.
+
+--- Page 9 ---
+
+Xiao, Z.; Ma, Q.; Gu, M.; cheng Jason Chen, C.; Chen, X.;
+Ordonez,V.;andMohan,V.2026. MetaEmbed:ScalingMul-
+timodal Retrieval at Test-Time with Flexible Late Interaction.
+arXiv:2509.18095.
+Zhai, X.; Mustafa, B.; Kolesnikov, A.; and Beyer, L. 2023.
+Sigmoid Loss for Language Image Pre-Training. InProceed-
+ingsoftheIEEE/CVFInternationalConferenceonComputer
+Vision, 11975–11986.
+Zhang, K.; Luan, Y.; Hu, H.; Lee, K.; Qiao, S.; Chen,
+W.; Su, Y.; and Chang, M.-W. 2024. MagicLens: Self-
+Supervised Image Retrieval with Open-Ended Instructions.
+arXiv:2403.19651.
+Zhang, S.; Gao, Y.; Zhou, X.; Zhao, Y.; Song, T.; Cohan,
+A.; Luu, A. T.; and Zhao, C. 2026. MRMR: A Realistic and
+Expert-Level Multidisciplinary Benchmark for Reasoning-
+Intensive Multimodal Retrieval. InThe Fourteenth Interna-
+tional Conference on Learning Representations.
+Zhang, X.; Zhang, Y.; Xie, W.; Li, M.; Dai, Z.; Long, D.;
+Xie, P.; Zhang, M.; Li, W.; and Zhang, M. 2025. Bridging
+Modalities: Improving Universal Multimodal Retrieval by
+Multimodal Large Language Models. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, 9274–9285.
+Zhou, J.; Xiong, Y.; Liu, Z.; Liu, Z.; Xiao, S.; Wang, Y.;
+Zhao, B.; Zhang, C. J.; and Lian, D. 2025. MegaPairs:
+Massive Data Synthesis for Universal Multimodal Retrieval.
+In Proceedings of the 63rd Annual Meeting of the Associa-
+tionforComputationalLinguistics(Volume1:LongPapers) ,
+19076–19095.
+Zhu, R.-J.; Wang, Z.; Hua, K.; Zhang, T.; Li, Z.; Que, H.;
+Wei, B.; Wen, Z.; Yin, F.; Xing, H.; Li, L.; Shi, J.; Ma, K.; Li,
+S.; Kergan, T.; Smith, A.; Qu, X.; Hui, M.; Wu, B.; Min, Q.;
+Huang, H.; Zhou, X.; Ye, W.; Liu, J.; Yang, J.; Shi, Y.; Lin,
+C.; Zhao, E.; Cai, T.; Zhang, G.; Huang, W.; Bengio, Y.; and
+Eshraghian, J. 2025. Scaling Latent Reasoning via Looped
+Language Models. arXiv:2510.25741.
+
+--- Page 10 ---
+
+Supplementary Material for
+ReLoop-UME: Recurrent Depth with
+Learnable Retrieval Registers for
+Universal Multimodal Embedding
+A Supplementary Overview
+This supplement provides benchmark details, complete evalu-
+ation tables, reproducibility settings, layer-wise analyses, and
+controlled ablations that support the main paper. The organi-
+zation follows the main claim: retrieval structure is formed
+non-uniformly across depth; the corresponding middle-to-
+late stage can be localized reproducibly; recurrent reuse of
+that stage improves the terminal embedding; and Learnable
+Retrieval Registers are most useful when they can preserve
+evidence across multiple recurrent applications.
+Section Supplementary evidence
+B MMEB-V2 task inventory, MRMR statistics, and
+training sources.
+C Deterministic stage localization, recurrent encod-
+ing, optimization, and software configuration.
+D Complete 78-task MMEB-V2 results for four
+ReLoop-UME backbones.
+E Twelve layer-wise curves covering four quantiles
+and three Qwen-VL backbones.
+F One complete two-column MRMR table using
+the official MRMR baseline results.
+G Backbone architectures and matched cross-
+backbone interpretation.
+H–J Controlled ablations, eleven qualitative cases, re-
+maininglimitations,andtargetedfuturedirections.
+Table 1: Guide to the supplementary evidence.
+B Datasets and Evaluation Protocols
+The primary experiments use MMEB-V2 (Meng et al. 2026),
+which contains 78 tasks: 36 image, 18 video, and 24 visual-
+document tasks. MRMR (Zhang et al. 2026) is used only
+for zero-shot transfer of the 7B checkpoint trained on the
+MMEB-V2 mixture. All embeddings areℓ2-normalized and
+ranked with cosine similarity. MMEB-V2 reports Hit@1 for
+image and video tasks and nDCG@5 for visual-document
+tasks. MRMR reports nDCG@10 except for Negation, which
+uses Hit@1.
+B.1 MMEB-V2 Task Inventory
+Image family # Datasets / configurations
+I-CLS 10 ImageNet-1K, N24News, HatefulMemes,
+VOC2007, SUN397, Places365, ImageNet-
+A, ImageNet-R, ObjectNet, Country211.
+I-QA 10 OK-VQA, A-OKVQA, DocVQA, Info-
+graphicsVQA, ChartQA, Visual7W, Sci-
+enceQA, VizWiz, GQA, TextVQA.
+I-RET 12 VisDial, CIRR, VisualNews (t2i/i2t),
+MSCOCO (t2i/i2t), NIGHTS, WebQA,
+FashionIQ, Wiki-SS-NQ, OVEN, EDIS.
+I-GD 4 MSCOCO grounding, RefCOCO,
+RefCOCO-Matching, Visual7W-Pointing.
+Table 2: The 36 image tasks in MMEB-V2. Directional
+retrieval configurations are counted separately.
+Family # Datasets / configurations
+V-CLS 5 Kinetics-700, Something-Something V2,
+HMDB51, UCF101, Breakfast.
+V-QA 5 MVBench, Video-MME, NExTQA,
+EgoSchema, ActivityNetQA.
+V-RET 5 DiDeMo, MSR-VTT, MSVD, VATEX,
+YouCook2.
+V-MRET 3 QVHighlight, Charades-STA, Mo-
+mentSeeker.
+VD-VDR1 10 ArxivQA, DocVQA, InfoVQA,
+TabFQuAD, TAT-DQA, Shift Project,
+AI, Energy, Government, and Healthcare
+reports.
+VD-VDR2 4 CSGreports(human-labeledV2),Biomed-
+ical Lectures V2, Economics Reports V2,
+CSG Reports V2 multilingual.
+VD-VR 6 ArxivQA, ChartQA, MP-DocVQA, Slide-
+VQA, InfoVQA, PlotQA.
+VD-OOD 4 ViDoSeek-page/document and
+MMLongBench-page/document.
+Table 3: The 18 video and 24 visual-document tasks in
+MMEB-V2.
+B.2 MRMR Taxonomy and Data Statistics
+MRMR contains interleaved image–text queries and mixed-
+modality corpus documents. Knowledge retrieval tests expert
+evidence matching; Theorem retrieval requires inferring an
+abstract principle from a concrete multimodal problem; and
+Contradictionretrievalrequiresidentifyingaconflictingstate-
+ment or violated rule. Table 4 summarizes the official task
+sizes.
+B.3 Training-Source Taxonomy
+The model is trained on the official 24 MMEB-V2 training
+datasets. A source dataset and a retrieval configuration are
+not always identical: MSCOCO and VisualNews contribute
+both text-to-image and image-to-text directions, while video
+sources may contribute caption retrieval, question answering,
+and text-to-video retrieval. The inventory below follows the
+task organization used by the supplied UME LaTeX sources.
+
+--- Page 11 ---
+
+Group Subtask Queries Docs Avg.D + Metric Retrieval requirement
+Knowledge Art 157 26,223 1.8 nDCG@10 Expert-domain evidence for visual and inter-
+leaved questions.
+Medicine 167 26,223 2.2 nDCG@10 Pathological, diagnostic, and biomedical evi-
+dence.
+Science 137 26,223 1.8 nDCG@10 Scientific concepts grounded in expert images.
+Humanities 94 26,223 1.9 nDCG@10 Historical, cultural, and social-science evidence.
+Theorem Math 72 14,257 2.6 nDCG@10 Theorem or solved-problem retrieval for calcula-
+tion questions.
+Physics 107 14,257 2.1 nDCG@10 Infer the governing physical principle from the
+problem.
+Engineering 236 14,257 2.1 nDCG@10 Mechanical, electronic, and computer-science
+principles.
+Business 164 14,257 2.2 nDCG@10 Finance, economics, marketing, and related prin-
+ciples.
+Contradiction Negation 200 4 1.0 Hit@1 Select the unique description contradicting the
+image.
+Design 88 700 1.0 nDCG@10 Retrieve the requirement violated by a vehicle
+design.
+Traffic 80 796 1.8 nDCG@10 Retrieve the driving rule contradicted by the
+depicted case.
+Table 4: MRMR task statistics and retrieval requirements, adapted from the official benchmark. Knowledge subtasks share one
+corpus, and Theorem subtasks share another.
+Family Source / configuration inventory
+Image-
+centered
+A-OKVQA,CIRR,ChartQA,DocVQA,Hate-
+fulMemes, ImageNet-1K, InfographicsVQA,
+MSCOCO matching and i2t/t2i, N24News,
+NIGHTS, OK-VQA, SUN397, VOC2007, Vi-
+sual7W, VisDial, VisualNews i2t/t2i, WebQA.
+Video-
+centered
+LLaVA-Hound caption retrieval, video QA,
+and text-to-video retrieval.
+Visual docu-
+ments
+ViDoRe and VisRAG training pairs.
+Table 5: Training-source taxonomy. Training always uses the
+official 24-dataset MMEB-V2 mixture rather than MRMR
+examples.
+C Experimental and Reproducibility Details
+C.1 Problem Setting
+Given positive query–candidate pairsD={(q i, c+
+i )}N
+i=1, a
+shared multimodal encoder maps every supported inputx to
+a normalized embedding
+zT (x) =f θ(x;T)∈S d−1, s T (q, c) =z T (q)⊤zT (c),
+(1)
+where T is recurrent depth. Queries and candidates use
+the same encoder, registers, recurrent interval, and terminal
+readout.
+C.2 Deterministic Localization of Stage
+Boundaries
+Stage localization is performed on an independently trained
+single-forwardUMEcheckpointbeforerecurrenttraining.Let
+bzl(x) be theℓ2-normalized readout at physical decoder layer
+l. For negative quantileq, the layer-wise separation score is
+S(q)
+l = 1
+N
+NX
+i=1
+h
+s+
+i,l −Q q
+
+s−
+i,l
+i
+.(2)
+The main paper usesq= 0.8 because it emphasizes hard
+distractors without the instability of a single maximum neg-
+ative. To convert the qualitative notions of “sustained rise”
+and “saturation” into a reproducible boundary rule, we use
+the following fixed procedure.
+First,compute S(q)
+l for q∈ {0.5,0.6,0.7,0.8} onthesame
+probe set and normalize each curve to[0,1] over physical
+layers. Second, enumerate every ordered pair of breakpoints
+(a, b) satisfying a minimum prefix length of four layers, a
+minimum formation interval of four layers, and at least one
+terminal mapping layer. For each pair, fit independent least-
+squareslinestothethreecontiguoussegments [0, a−1], [a, b],
+and [b+ 1, L−1] for every quantile and sum the residual
+errorsoverquantiles.Weretainonlycandidateswhosemiddle
+segment has positive slope and a larger slope than both the
+prefix and terminal segments. The selected(a, b)minimizes
+the pooled residual; ties are resolved by the smallest worst-
+quantile residual and then the shorter middle interval. This is
+a three-segment change-point fit with fixed constraints, not a
+manually chosen score threshold.
+The resulting middle segment is the Retrieval Formation
+Stage.Layersbefore aarethePrefixUnderstandingStage,and
+layersafter baretheEmbeddingMappingStage.Applyingthe
+sameruleacrossbackbonesandquantilesgivestheboundaries
+in Table 6. The valueq= 0.8 therefore affects the vertical
+margin scale but not the operational interval.
+
+--- Page 12 ---
+
+Backboneq=.5q=.6q=.7q=.8Stages
+Qwen2-VL-2B 17–26 17–26 17–26 17–260–16/17–26
+/ 27
+Qwen3-VL-2B 17–26 17–26 17–26 17–260–16/17–26
+/ 27
+Qwen3.5-2B 12–22 12–22 12–22 12–22 0–11/12–22
+/ 23
+Table 6: Quantile sensitivity of the selected interval. The
+final column lists Prefix / Retrieval Formation / Embedding
+Mapping layers. Qwen2-VL-7B uses the same 0–16 / 17–26 /
+27 partition reported in the main paper.
+C.3 Recurrent Retrieval Registers
+Let X(x)∈R nx×d be the multimodal token sequence and
+R= [r 1, . . . ,rM]∈R M×d be M learnable retrieval regis-
+ters.If E, G,and O denotetheprefix,retrieval-formingblock,
+and terminal mapping, respectively,
+eX(x) = [X(x);R],
+H(0)(x) =E( eX(x)),
+H(t)(x) =G(H (t−1)(x)), t= 1, . . . , T,
+zT (x) = norm2
+
+[O(H(T) (x))]ρx
+
+.
+(3)
+The parameters ofG are shared across loops. The complete
+hidden sequence is propagated with unchanged masks and
+positional indices. Only the terminal register is used as the
+embedding readout; the earlier registers serve as persistent
+retrieval-specific workspace.
+C.4 Objective and Training Configuration
+For a batchB={(q i, c+
+i )}B
+i=1, terminal embeddings are
+optimized with in-batch InfoNCE:
+LNCE =− 1
+B
+BX
+i=1
+log exp(q⊤
+i ci/τ)PB
+j=1 exp(q⊤
+i cj/τ)
+.(4)
+Thelossisappliedonlyafterthefinalloop.Intermediatestates
+receivegradientsthroughtheunrolledrecurrentgraphbutare
+not forced to form separate embedding spaces. No language-
+modeling loss, rationale supervision, reinforcement-learning
+objective, or per-loop contrastive head is used.
+Item Setting
+Training data Official 24 MMEB-V2 training
+datasets
+Total optimization steps /
+seed
+5,000 / 42
+Global batch size 256 query–candidate pairs
+Registers / recurrent depthM= 5/T= 4
+Default Qwen2-VL recurrent
+block
+Layers 17–26
+Video input 8 frames sampled at 2 FPS
+Pixel budget 100,352–602,112 pixels
+Similarity / temperature Cosine /τ= 0.05
+Optimizer AdamW
+LM and merger learning rate1×10 −5
+Vision-encoder learning rate2×10 −6
+Betas / weight decay(0.9,0.95)/ 0.1
+Gradient clipping / warm-up 1.0 / 5%
+Schedule Cosine decay
+Precision / memory strategyBF16 / gradient checkpointing
++ ZeRO-3
+Hardware 8×NVIDIA H20
+PyTorch 2.5.1+cu121
+torchvision / torchaudio 0.20.1+cu121 / 2.5.1+cu121
+Transformers 5.3.0
+Table 7: Complete training, software, and input-processing
+configuration.
+Evaluation aggregation and checkpoint selection.Every
+MMEB-V2 task is evaluated with the benchmark-provided
+candidate pool and its official metric. We first compute one
+score for each of the 78 tasks and then macro-average tasks
+within Image, Video, and VisDoc; the reported All score is
+the macro-average over all tasks rather than an average of the
+three modality means. Hyperparameters and the recurrent
+block are fixed before test evaluation, and the checkpoint at
+step 5,000 is used for every backbone and every reported
+ablation.
+Matched preprocessing.All compared recurrent variants
+reuse the same task instructions, image and video prepro-
+cessing, candidate representations, contrastive temperature,
+batch construction, and optimization schedule. Consequently,
+changing T, M, or the recurrent interval changes only the
+computation studied by that ablation; it does not change
+the candidate pool, task sampling distribution, or evaluation
+script.
+
+--- Page 13 ---
+
+D Detailed Scores on MMEB-V2
+Table 8 reports the complete 78-task results for the four ReLoop-UME checkpoints evaluated in the main paper. The columns
+correspond to Qwen2-VL-2B, Qwen2-VL-7B, Qwen3-VL-2B, and Qwen3.5-2B; all numbers are read directly from the
+corresponding evaluation summaries. Parenthesized counts show the number of tasks in each aggregate, and the best result
+among the four checkpoints is bolded in every row.
+Table 8: Complete task-level MMEB-V2 results for ReLoop-UME across four backbones. Image and video tasks report Hit@1;
+visual-document tasks report nDCG@5. Modality and overall scores are task-level macro averages.
+Task / aggregate
+Qwen2-VL
+2B
+Qwen2-VL
+7B
+Qwen3-VL
+2B
+Qwen3.5
+2B
+Avg. - All (78 tasks) 63.2 65.9 63.9 62.6
+Avg. - Image (36 tasks, Hit@1) 68.9 72.0 68.9 68.0
+Avg. - Video (18 tasks, Hit@1) 40.5 42.9 42.9 40.6
+Avg. - VisDoc (24 tasks, nDCG@5) 71.5 73.9 72.3 70.9
+I-CLS (10) 67.4 69.5 66.6 65.0
+I-QA (10) 63.5 67.5 64.2 64.3
+I-RET (12) 69.8 72.5 68.6 67.5
+I-VG (4) 83.9 87.8 87.3 86.4
+V-CLS (5) 44.2 44.5 45.3 39.7
+V-QA (5) 46.3 52.0 49.8 48.0
+V-RET (5) 33.6 34.3 35.2 33.8
+V-MR (3) 36.5 39.4 39.9 41.1
+VD-ViDoRe-V1 (10) 76.9 78.9 77.4 77.0
+VD-ViDoRe-V2 (4) 46.5 50.6 50.5 42.7
+VD-VisRAG (6) 83.5 85.7 83.1 84.7
+VD-OOD (4) 65.3 67.1 64.9 63.2
+VOC2007 91.493.493.1 93.3
+N24News 80.482.578.2 78.6
+SUN397 81.482.481.6 80.1
+ObjectNet 63.663.0 62.4 55.7
+Country211 24.726.015.8 14.0
+Place365 46.748.245.7 45.4
+ImageNet-1K 82.883.080.2 79.3
+HatefulMemes 63.870.864.1 65.5
+ImageNet-A 49.154.552.9 50.6
+ImageNet-R 89.8 90.791.687.5
+MSCOCO i2t 72.074.673.6 73.0
+MSCOCO t2i 72.6 77.477.575.8
+VisDial 75.6 81.081.279.6
+CIRR 58.5 60.761.760.3
+VisualNews i2t 79.082.773.6 71.1
+VisualNews t2i 75.380.171.2 68.5
+NIGHTS 68.7 67.5 69.069.1
+WebQA 89.791.588.9 90.2
+EDIS 88.781.3 77.3 73.1
+OVEN 67.772.759.3 57.2
+Wiki-SS-NQ 67.372.666.4 66.3
+FashionIQ 22.127.923.0 25.6
+OK-VQA 67.373.167.3 65.6
+A-OKVQA 57.762.156.7 56.4
+DocVQA 92.593.992.6 92.6
+InfographicsVQA 64.472.668.4 70.4
+ChartQA 57.0 63.1 61.864.1
+Visual7W 53.655.754.3 54.0
+ScienceQA 44.152.445.2 46.2
+GQA 70.369.0 63.5 65.7
+TextVQA 79.1 81.483.881.2
+VizWiz 49.351.948.6 47.1
+MSCOCO grounding 78.0 83.284.484.2
+RefCOCO 89.8 92.093.192.5
+RefCOCO-Matching 88.190.487.4 85.4
+Visual7W-Pointing 79.585.784.4 83.5
+UCF101 63.860.4 57.7 51.5
+HMDB51 50.349.9 49.0 44.9
+K700 47.251.646.6 44.2
+Breakfast 15.0 18.027.717.6
+SmthSmthV2 44.8 42.545.640.4
+Video-MME 40.446.346.0 40.6
+MVBench 43.050.846.3 43.4
+NExTQA 51.257.356.2 51.1
+EgoSchema 48.249.648.0 47.6
+ActivityNetQA 48.5 56.2 52.757.4
+MSR-VTT 36.739.2 39.237.6
+MSVD 55.8 56.157.556.3
+DiDeMo 34.9 34.235.834.1
+VATEX 27.2 28.429.929.0
+YouCook2 13.2 13.613.812.2
+QVHighlight 48.0 52.8 52.657.2
+Charades-STA 17.5 19.8 20.220.9
+MomentSeeker 44.1 45.646.845.2
+ViDoRe-arxivqa 84.487.985.3 86.5
+ViDoRe-docvqa 44.046.045.1 44.9
+ViDoRe-infovqa 86.188.785.9 87.1
+ViDoRe-shiftproject 67.967.5 67.6 61.8
+ViDoRe-artificial intelligence 86.0 87.187.486.9
+ViDoRe-energy 83.2 85.0 84.687.0
+ViDoRe-government reports 84.6 87.187.184.7
+ViDoRe-healthcare industry 90.393.889.1 89.8
+ViDoRe-tabfquad 92.493.191.7 91.4
+ViDoRe-tatdqa 49.853.150.2 49.8
+ViDoRe-biomedical lectures-v2 multilingual 46.851.451.2 49.3
+ViDoRe-economics reports-v2 multilingual 47.0 49.651.649.5
+ViDoRe-esg reports human labeled-v2 50.558.150.8 42.7
+ViDoRe-esg reports-v2 multilingual 41.5 43.248.529.3
+VisRAG ArxivQA 80.884.081.7 82.4
+VisRAG ChartQA 87.887.2 84.8 86.2
+VisRAG InfoVQA 87.789.987.5 89.2
+VisRAG MP-DocVQA 80.786.580.9 83.3
+VisRAG PlotQA 72.6 74.1 72.175.3
+VisRAG SlideVQA 91.092.691.3 92.1
+ViDoSeek-document 80.482.480.8 80.0
+ViDoSeek-page 80.582.379.1 76.5
+MMLongBench-document 48.951.750.0 47.8
+MMLongBench-page 51.252.149.8 48.5
+E Extended Layer-Wise Retrieval Analysis
+Figures 1 and 2 include all twelve supplied layer-wise curves. Each colored trajectory comes from an independently trained
+retrieval model, while the thick black trajectory is the cross-run mean. The four negative quantiles alter the hardness and vertical
+scale of the positive–negative margin, but not the physical interval in which retrieval separation is formed.
+
+--- Page 14 ---
+
+(a) Qwen2-VL,q= 0.5(b) Qwen2-VL,q= 0.6
+(c) Qwen2-VL,q= 0.7(d) Qwen2-VL,q= 0.8
+(e) Qwen3-VL,q= 0.5(f) Qwen3-VL,q= 0.6
+(g) Qwen3-VL,q= 0.7(h) Qwen3-VL,q= 0.8
+Figure 1: Layer-wise positive–negative separation for Qwen2-VL-2B and Qwen3-VL-2B. Both 28-layer backbones exhibit a
+low-slope prefix, a sustained retrieval-formation rise over layers 17–26, and a sharp terminal mapping transition at layer 27.
+Every tested quantile selects the same recurrent block.
+Deterministicpooled change-point fitting.Stageboundariesare selected before recurrent trainingand are nevertuned on final
+retrieval accuracy. For independently trained runr and negative quantileq, leteS(q)
+r,ℓ be the layer-wise separation curve normalized
+to [0,1]. For every ordered pair(a, b)satisfying a minimum four-layer prefix, a minimum four-layer middle interval, and at least
+one terminal layer, we fit separate least-squares lines to the three contiguous segments. The selected boundaries minimize
+J(a, b) =
+X
+r,q
+3X
+s=1
+X
+ℓ∈Is(a,b)
+
+eS(q)
+r,ℓ −α rqsℓ−β rqs
+2
+,
+subject to the middle slope being positive and larger than the prefix and terminal slopes. Ties are resolved by the smallest
+worst-run residual and then the shorter middle interval. Thus, a single favorable run or visually unusual curve cannot determine
+the block.
+
+--- Page 15 ---
+
+(a) Qwen3.5,q= 0.5(b) Qwen3.5,q= 0.6
+(c) Qwen3.5,q= 0.7(d) Qwen3.5,q= 0.8
+Figure 2: Layer-wise separation for the 24-layer Qwen3.5-2B hybrid stack. All four quantiles select prefix layers 0–11, retrieval
+formation over layers 12–22, and terminal mapping at layer 23.
+Quantile and run stability.For Qwen2-VL and Qwen3-VL, every quantile and independent run places the onset within layers
+16–17andthesaturationtransitionwithin26–27,sothefixedtierulealwaysreturns17–26.Lowerquantilescompressthevertical
+gap by using easier negatives, whileq= 0.8 makes the hard-negative transition most legible. It is therefore a visualization choice
+rather than a sensitive boundary hyperparameter. Qwen3.5 shows the same invariance at 12–22.
+Depth-aware rather than fraction-based localization.Qwen3.5 contains 24 decoder layers and mixes linear-attention
+with full-attention blocks. Its sustained rise begins earlier in absolute index, at layer 12, while the terminal mapping remains
+concentrated in the final layer. Applying exactly the same constrained objective returns 12–22 for every quantile. A fixed layer
+index or a fixed depth fraction would not simultaneously recover 17–26 for the 28-layer models and 12–22 for Qwen3.5; the
+observed retrieval dynamics do.
+Backbone Depth Prefix Formation Mapping
+Qwen2-VL-2B 28 0–16 17–26 27
+Qwen3-VL-2B 28 0–16 17–26 27
+Qwen3.5-2B 24 0–11 12–22 23
+Backboneq=.5q=.6q=.7q=.8
+Qwen2-VL-2B 17–26 17–26 17–26 17–26
+Qwen3-VL-2B 17–26 17–26 17–26 17–26
+Qwen3.5-2B 12–22 12–22 12–22 12–22
+Table 9: Backbone-specific stage partitions and quantile sensitivity.
+Why the terminal mapping layer is not looped.The final-layer jump is consistent with mapping an already discriminative
+hidden state into the output embedding space. Repeating it would reapply a readout transformation rather than extend the interval
+over which evidence is gradually separated. ReLoop-UME therefore repeats only the rising middle block and applies the terminal
+layeronceafterthefinalrecurrentpass.Thisinterpretationisalsoconsistentwiththerangeablation:repeating17–26outperforms
+looping the full stack, the suffix, the prefix, or only the final layer despite using fewer decoder applications than full-stack
+recurrence.
+Cross-backbone conclusion.The three architectures differ in depth, attention composition, and visual injection, yet all show
+the same functional progression: prefix understanding, retrieval formation, and terminal embedding mapping. The exact physical
+index is backbone-specific, but it is stable across independently trained runs and negative quantiles. The matched results in
+Table 14 close the empirical loop: recurrence over the independently localized interval improves all three backbones, while
+Qwen3-VL and Qwen3.5 show slightly smaller gains because their single-pass representations and internal visual pathways differ
+from the homogeneous Qwen2-VL stack.
+
+--- Page 16 ---
+
+F Complete MRMR Evaluation
+The7BReLoop-UMEcheckpointistrainedonlyonMMEB-V2andevaluatedonMRMRwithoutbenchmark-specificoptimization.
+Table 10 reproduces the complete official MRMR baseline table and appends the ReLoop-UME result from the main paper.
+No LaME, UME-R1, or RIME values are imported into this table. The ReLoop-UME row is therefore directly traceable to the
+reported 11-subtask result, while every baseline row follows the official MRMR evaluation setup.
+Table10:CompleteMRMRevaluation.OfficialbaselinevaluesarereproducedfromMRMRTable3.AllsubtasksusenDCG@10
+except Negation, which uses Hit@1. ReLoop-UME is transferred zero-shot from MMEB-V2; its 11 values and 48.64 macro
+average match the main paper.
+Knowledge Theorem Contradiction
+Model Art Med. Sci. Hum. Math Phy. Eng. Bus. Neg. Des. Tra. Avg.
+Text Models with Image Caption (T2T)
+BGE-M3 48.6 30.0 42.4 45.6 13.5 15.7 18.3 26.6 16.0 25.9 17.4 27.3
+NV-Embed-v2 70.7 46.8 65.7 66.6 26.2 27.3 29.0 36.9 12.5 42.1 42.2 42.4
+Qwen3-Embedding 71.9 53.2 72.5 74.4 35.9 48.1 39.6 43.7 12.0 67.8 54.2 52.1
+Text–Image Two-Stream with Vector Fusion (IT2IT)
+EVA-CLIP 10.2 13.5 26.1 12.9 6.2 10.5 9.3 11.7 8.5 4.4 5.4 10.8
+SigLIP 26.7 14.7 26.7 12.3 6.2 5.5 4.1 7.5 13.5 4.9 9.6 12.0
+OpenCLIP 56.0 17.9 33.2 22.0 5.7 5.0 7.0 9.7 13.0 8.1 12.4 17.3
+JinaCLIP 21.4 16.8 27.1 10.7 8.3 5.9 8.4 10.4 10.5 16.5 9.7 13.2
+Multimodal Models with Merged Image (IT2IT)
+VISTA 21.3 27.8 32.6 17.0 14.2 14.3 19.5 14.2 20.0 20.2 9.4 19.1
+E5-V 25.1 11.7 16.6 10.8 1.1 1.5 4.1 2.0 11.5 3.7 2.1 8.2
+MM-Embed 65.6 53.0 63.5 62.8 21.6 26.3 24.4 31.7 7.0 23.8 34.9 37.7
+VLM2Vec 53.5 22.4 36.7 24.0 1.1 1.3 2.4 2.5 11.5 5.6 18.3 16.3
+GME-Qwen2-VL 54.3 40.1 46.8 45.6 3.0 3.6 9.3 4.6 15.0 26.3 29.6 25.3
+Ops-MM-Embedding 79.3 52.5 70.0 67.8 23.7 34.2 27.0 35.3 8.0 55.9 45.8 45.4
+Multimodal Models with Document as Image (T2I)
+GME-Qwen2-VL 54.0 40.7 59.0 50.1 15.7 22.7 20.5 32.5 14.5 56.1 40.1 36.9
+Ops-MM-Embedding 67.7 48.8 67.7 63.9 24.4 29.3 25.7 33.7 10.5 59.8 46.3 43.4
+ColPali 36.1 29.9 42.7 29.2 5.7 14.8 12.0 24.6 28.5 19.4 18.2 23.7
+Native Interleaved UME, Zero-Shot from MMEB-V2
+ReLoop-UME (7B) 78.12 59.71 75.17 73.57 27.35 44.97 34.67 49.48 9.50 43.29 39.19 48.64
+Evaluation-snapshot alignment.Table 10 reproduces the original official benchmark table without mixing cells from later
+third-partypapers.Thecompactnative-UMEtableinthemainpaperfollowstheevaluationsnapshotusedbythosematchedUME
+experiments; some public baselines were subsequently re-evaluated under updated model or input pipelines, so their compact
+group aggregates need not be obtained by averaging the original Table 3 cells shown here. The ReLoop-UME values are identical
+in both places. Keeping the snapshots explicit prevents a per-task table assembled from incompatible evaluation versions.
+ReLoop-UME is strongest on Knowledge, reaching 71.64 on the four expert-domain subtasks, and remains competitive on
+Theorem at 39.12. Its largest weakness is Negation (9.50), so the 30.66 Contradiction average should not be interpreted as solving
+polarity-sensitive retrieval. The result instead shows that recurrent feature refinement transfers well to expert semantic matching
+and part of the abstract theorem-matching problem without MRMR-specific training.
+Group Tasks Average Best subtask Weakest subtask
+Knowledge 4 71.64 Art (78.12) Medicine (59.71)
+Theorem 4 39.12 Business (49.48) Math (27.35)
+Contradiction 3 30.66 Design (43.29) Negation (9.50)
+All 11 48.64 Art (78.12) Negation (9.50)
+Table 11: MRMR group-level summary for ReLoop-UME-7B.
+The gap between Knowledge and the other groups clarifies what transfers from MMEB-V2. Recurrent refinement is effective
+when the query and candidate expose rich semantic evidence that can be consolidated into one vector. It is less reliable when
+success depends on formal symbolic structure or on identifying one small polarity reversal. These failures are consistent with
+the method’s design: ReLoop-UME adds retrieval-forming depth but does not introduce a theorem solver, a dedicated negation
+objective, or benchmark-specific supervision.
+Why Qwen3-Embedding is not the primary controlled comparison.The official Qwen3-Embedding row uses a two-model
+system: an external MLLM first converts images into captions, after which a specialized text embedding model performs
+retrieval (Zhang et al. 2026). Its score therefore combines captioner quality, textualization, and text retrieval, whereas ReLoop-
+UME directly encodes the original interleaved multimodal sequence. In addition, the official Qwen3-Embedding training recipe
+uses large-scale weak supervision, high-quality supervised data, synthetic task expansion, and model merging (Zhang et al. 2025;
+Qwen Team 2025a). This is a valuable system-level reference, but it is not an architecture-matched test of recurrent depth; the
+controlled comparison therefore uses native UME systems with comparable backbone scale and training data.
+
+--- Page 17 ---
+
+G Backbone Architectures and
+Cross-Backbone Results
+G.1 Released Architecture Configurations
+Qwen2-VL and Qwen3-VL use 28 text-decoder layers,
+whereas Qwen3.5 uses 24. Qwen3.5 is a hybrid stack with 18
+linear-attention layers and six full-attention layers. Qwen3-
+VL additionally injects visual features into selected de-
+coder depths through DeepStack. These differences motivate
+backbone-specific stage localization rather than assuming
+that a fixed fraction of depth always serves the same func-
+tion (Qwen Team 2024, 2025b, 2026).
+Backbone Text layers Width Heads/KV Context
+Qwen2-VL-2B 28 1536 12/2 32K
+Qwen3-VL-2B 28 2048 16/8 256K
+Qwen3.5-2B 24 2048 8/2 256K
+Table12:Text-stackconfigurationsofthethree2Bbackbones.
+Backbone Vision layers Patch Relevant structure
+Qwen2-VL-2B 32 14 Homogeneous decoder
+with M-RoPE and no
+DeepStack index list.
+Qwen3-VL-2B 24 16 Interleaved M-RoPE; vi-
+sualinjectionatdecoderin-
+dices 5, 11, and 17.
+Qwen3.5-2B 24 16 18 linear-attention and six
+full-attention layers; full at-
+tention every fourth layer.
+Table 13: Vision and fusion structures relevant to recurrent
+reuse.
+G.2 Matched Retrieval Results
+Backbone Single forward ReLoop-UME∆
+Qwen2-VL-2B 60.6 63.2 +2.6
+Qwen3-VL-2B 61.763.9+2.2
+Qwen3.5-2B 60.2 62.6 +2.4
+Table 14: Backbone generalization on MMEB-V2 All using
+the same training recipe.
+Qwen3-VL has the strongest single-forward and final re-
+sult, while Qwen2-VL shows the largest absolute gain. The
+smaller Qwen3-VL gain is consistent with less headroom
+and with stage-specific DeepStack injection: later recurrent
+applications refine the fused sequence but do not introduce
+new visual features at every loop. Qwen3.5 has the low-
+est single-forward result under the shared hyperparameters.
+Its 24-layer hybrid stack provides fewer physical layers and
+only six full-attention layers, so a recipe initially developed
+around a homogeneous 28-layer decoder is not expected to
+be equally optimal. Nevertheless, its +2.4 gain shows that the
+localization-and-looping principle survives the architectural
+change. These are mechanism-aligned interpretations, not
+claims that layer count alone causally determines accuracy.
+H Extended Ablations
+H.1 Where Recurrence Is Applied
+Layers Apps. Image Video VisDoc All
+0–16 79 66.0 39.4 67.0 60.2
+0–27 112 67.1 39.8 68.8 61.3
+17–27 61 68.1 40.2 70.2 62.3
+27 31 65.2 39.0 66.2 59.5
+17–26 58 68.9 40.5 71.5 63.2
+Table 15: Ablation on the recurrent interval withM= 5 and
+T= 4.
+The complete-stack loop performs 112 decoder applica-
+tions, nearly twice the 58 applications of layers 17–26, yet
+remains 1.9 points worse. Repeating only the final mapping
+layer is also insufficient. The gain is therefore explained by
+where additional depth is allocated, not by arbitrary extra
+computation.
+H.2 Register Count and Recurrent Depth
+Setting Value Image Video VisDoc All
+Retrieval registers
+M0 67.5 39.9 70.4 61.8
+M568.940.571.5 63.2
+M8 68.5 40.6 71.2 62.9
+M10 68.040.870.8 62.7
+Recurrent depth
+T1 66.5 39.7 67.5 60.6
+T2 68.0 40.2 69.8 62.1
+T468.9 40.5 71.5 63.2
+T8 68.7 40.4 70.8 62.8
+Table 16: Register-count and recurrent-depth ablations. Five
+registers add only 7,680 trainable parameters.
+H.3 CompleteT∈ {1,4} ×M∈ {0,5}Factorial
+Test
+Table 17 completes the2×2 design on MMEB-V2 All:
+T= 1, M= 0 is single-forward encoding,T= 1, M= 5
+adds registers only,T= 4, M= 0 adds recurrence only, and
+T= 4, M= 5is the full model.
+T= 1T= 4Recurrence gain
+M= 060.6 61.8 +1.2
+M= 560.663.2+2.6
+Register gain+0.0 +1.4Interaction: +1.4
+Table17:Complete 2×2 factorialexperimentonMMEB-V2
+All. “Interaction” is the difference-in-differences(63.2−
+61.8)−(60.6−60.6).
+Averaged over M, recurrence contributes +1.9 points;
+averaged overT, registers contribute +0.7. Registers leave
+a single forward pass unchanged, but their gain increases
+to +1.4 when the block is reused, yielding a positive +1.4
+interaction. This closes the method story: recurrence supplies
+additionalretrieval-formingcomputation,whilethepersistent
+workspace becomes more valuable when evidence can be
+accumulated across repeated applications.
+
+--- Page 18 ---
+
+I Qualitative Comparisons and Failure Cases
+This section complements the aggregate tables with eleven diagnostic examples. The first eight cases compare the characteristic
+errors made by Explicit CoT and PLUME with the final retrieval selected by ReLoop-UME. The final three cases are failures of
+ReLoop-UME itself and instantiate the Video and VisDoc limitations reported in the main paper. These examples are intended to
+expose mechanisms that are difficult to see from a single average score; they are not substitutes for the controlled quantitative
+comparisons.
+I.1 Explicit CoT: Salient Narratives Can Replace Retrieval Evidence
+Texas Restaurants 
+stock holders message
+<think>So, let's analyze the query. It asks for a 
+Texas Restaurants stockholders message. Both 
+candidate pages are clearly related to Texas
+Roadhouse. The most prominent visual evidence 
+is the large restaurant photograph, the Texas 
+Roadhouse sign, and the heading "ABOUT 
+TEXAS ROADHOUSE." A message to 
+stockholders would usually introduce the 
+company, its business, and its growth, so a 
+company overview page is likely the intended 
+match.
+The other page mainly discusses sustainability, 
+recycling, emissions, and operational initiatives, 
+which appears to be an ESG report rather than a
+message for investors. Therefore, the central 
+concept is a Texas Roadhouse company 
+introduction. The page titled "ABOUT TEXAS 
+ROADHOUSE" provides the clearest 
+representation of the company and should be the 
+best match.</think>
+<answer>ABOUT TEXAS ROADHOUSE</answer>
+Explicit CoT
+Q: are there any other people
+  A: no just him
+Q:is he wearing a coat
+A:yes he is
+Q:is he wearing glassesA:no glassesQ:is it a sunny day
+A:partially sunny
+Q:is there a lodge
+A:no lodge seen
+Q:is there a lift
+A:no lift
+Q:is he preparing to go down the hill
+A:no he is on flat ground
+Q:is he smiling
+A:can't tell too far away
+Q:is he fit
+A:yes he is skinny
+Q:is he looking onward
+A:yes he is at the camera person
+<think>So, let's summarize the dialogue for 
+image retrieval. The image contains one person 
+outdoors in a snowy environment. He is wearing a 
+coat, appears fit, and is looking toward the 
+camera. There are no other people nearby. The 
+overall scene is therefore a lone man or skier 
+standing in the snow.
+The exact details about glasses, the color of the 
+coat, whether the ground is completely flat, and 
+whether a ski lift is visible are secondary details. 
+The main retrieval concept is a single person in a 
+snowy mountain scene. Both candidate images 
+contain one person in the snow, but the second 
+image more clearly depicts a lone skier and 
+therefore better captures the summarized
+scene.</think>
+<answer>the image of the lone skier on the snowy 
+slope</answer>
+Explicit CoT
+(a) Texas Roadhouse shareholder page (b) VisDial snowy-person dialogue
+Figure3:Explicit-CoTfailurescausedbyirrelevant-informationhijackingandquery-intentover-compression.In(a),thegenerated
+rationale follows visually salient company-overview cues and retrieves an “About” page rather than the shareholder message. In
+(b), a long dialogue containing multiple positive and negative constraints is reduced to the generic concept “a lone skier in snow,”
+removing the details that separate the two candidates.
+Case 1: irrelevant-information hijacking.The Texas Roadhouse query is relational: the target is not merely a page about
+Texas Roadhouse, but a shareholder message. Explicit CoT constructs a fluent company-introduction narrative from the restaurant
+photograph, logo, and “About Texas Roadhouse” heading. Once this salient but overly broad hypothesis is verbalized, the
+subsequent embedding is dominated by it and the shareholder-specific relation is lost. ReLoop-UME instead keeps the original
+visual and textual tokens inside the retrieval encoder, allowing the recurrent block and registers to preserve the narrow query
+relation while suppressing visually prominent but non-discriminative content.
+Case 2: query-intent over-compression.The VisDial query contains a sequence of constraints: one person, a coat, no visible
+glasses, no lodge, no lift, flat ground, and a camera-facing pose. Explicit CoT compresses them into “a lone skier in a snowy
+scene.” That summary is semantically plausible but insufficient for ranking two highly similar candidates. The error illustrates
+a retrieval-specific bottleneck: a natural-language summary can be shorter and more readable while being less faithful to the
+attributes that determine nearest-neighbor ranking.
+
+--- Page 19 ---
+
+<think>Let's analyze the breakfast 
+preparation shown in the video. A person is 
+standing beside a pan and repeatedly moving 
+a utensil over the food. The frames are 
+relatively distant, so the exact shape and 
+texture of the food are not completely clear.
+Repeated movement of a utensil inside a 
+frying pan is commonly associated with 
+stirring or scrambling eggs. Scrambled eggs 
+are also one of the most common breakfast 
+dishes prepared directly in a pan. A pancake 
+would usually appear as a clearly visible flat 
+circular layer and would mainly be flipped 
+rather than continuously worked with a 
+utensil. Since the dominant action
+resembles stirring, the most likely breakfast 
+type is scrambled egg.</think>
+<answer>scrambledegg</answer>
+Explicit CoT
+Recognize the breakfast type that 
+the person is cooking in the video. 
+pancake
+scrambledegg
+pancake
+<think>So, let's inspect the sequence. The 
+person is holding a pink cloth-like object with 
+both hands. At the beginning, the object is 
+compact, and in the later frames it becomes 
+larger and more spread out. The object may 
+be a scarf, a towel, or a napkin.
+The most visually dominant movement is that 
+the cloth moves outward and across the 
+surface. Since the task requires a concise 
+action label, the exact intermediate 
+manipulation may not be necessary. The 
+motion can be summarized
+as moving or throwing a piece of cloth onto a 
+surface. A napkin is a common cloth object 
+used in this type of interaction, so "throwing 
+napkin onto a surface" is the closest 
+description.</think>
+<answer>throwing napkin onto a 
+surface</answer>
+Explicit CoT
+What actions or object interactions are 
+being performed by the person in the video?
+unfolding a scarf
+throwing napkin 
+onto a surface
+unfolding a scarf
+(c) Pancake versus scrambled egg (d) Unfolding a scarf versus throwing a napkin
+Figure 4: Explicit-CoT failures in which a plausible linguistic prior overrides the discriminative visual evidence. The correct
+targets are shown in green in the supplied examples.
+Case 3: commonsense priors cover the visual evidence.The video frames correspond to preparing a pancake, but the
+generated rationale associates repeated utensil motion with scrambling eggs and then uses the frequency of that everyday action
+as additional support. This is not a failure of linguistic coherence; it is a failure of evidence weighting. A strong prior about what
+usually happens in a frying pan outweighs the weak but decisive visual pattern in the sampled frames.
+Case 4: action-process semantic drift.The target action is unfolding a scarf. Explicit CoT first recognizes a cloth-like object
+becoming larger and more spread out, but then replaces that process with the more generic action “throwing a napkin onto a
+surface.” The intermediate language therefore drifts from a temporally grounded state change to a familiar object-action phrase.
+Together, Cases 3–4 show why longer reasoning is not automatically more retrieval-faithful: every generated token is another
+opportunity to replace fine visual evidence with a high-probability verbal interpretation. ReLoop-UME adds depth without
+introducing this discrete textual handoff.
+Explicit-CoT case Discriminative query signal What the rationale retains What is lost before retrieval
+Shareholder page The document relation “message to
+shareholders”
+Texas Roadhouse identity and
+company-overview imagery
+Investor-facing document function
+and page type
+Snowy-person dia-
+logue
+Multiple positive and negative vi-
+sual constraints
+One person in a snowy outdoor sceneNolift/lodge,groundstate,pose,and
+other candidate-separating details
+Pancake video Shape and evolution of the food
+across frames
+Generic frying-pan motion and a com-
+mon breakfast prior
+The weak but decisive pancake ap-
+pearance
+Unfolding scarf Object state changes from compact
+to spread out
+Generic cloth motion and a familiar
+object-action phrase
+The temporal process of unfolding
+and the scarf identity
+Table 18: Evidence-preservation view of the four Explicit-CoT examples. In every case, the rationale retains a plausible dominant
+concept while discarding the relation, constraint, appearance, or state change that determines the positive candidate.
+
+--- Page 20 ---
+
+I.2 PLUME: Latent Compression Can Still Lose Fine-Grained Evidence
+Identify the object 
+shown in the image
+chair
+sofa
+What is the Twitter 
+handle of the 
+designer of 
+infographic?
+(a) Chair versus sofa (b) Designer Twitter handle
+Given a video and a question, select the most accurate 
+answer from the provided candidates. Return only the 
+exact text of your chosen answer. Question:  What 
+activity does the video depict?Options:(A) Holding 
+something(B) Not sure(C) Releasing something
+Holding something
+Releasing something
+Find a document image that matches 
+the given query: How do BNPL lenders 
+seek to differentiate their offerings 
+from legacy credit products according 
+to the text?
+(c) Holding versus releasing (d) BNPL differentiation
+Figure 5: Four PLUME cases selected to expose fine-grained category collapse, local OCR loss, temporal-state confusion, and
+relationmaskingbyacoarsedocumenttopic.EachPDFincludesthecandidatecomparisonandthesuppliedlayer-wisediagnostic
+curve.
+PLUME avoids a long explicit rationale, but its latent trajectory must still compress the query and multimodal evidence before
+the final embedding is read out. The four cases expose complementary forms of information loss. The chair example collapses a
+fine-grained object boundary into the nearby categorysofa. The infographic query retrieves the correct broad document type but
+loses the small OCR span containing the designer’s Twitter handle. In the video example, the model preserves the manipulated
+object but confuses the opposite temporal statesholdingandreleasing. Finally, the BNPL example matches the general financing
+topic while missing the queried relation: how BNPL lenders differentiate themselves from legacy credit products.
+Theseerrorsshareacommonstructure.Theretainedrepresentationpreservesthedominanttopicorobjectwhilediscardingthe
+attribute, exact string, state transition, or relation that actually determines the positive candidate. ReLoop-UME does not create
+an auxiliary explicit or latent generation endpoint. Instead, the same retrieval-forming layers are reapplied under the terminal
+contrastive objective, and the registers remain available as persistent workspace across loops. The selected examples illustrate
+why this design can preserve fine-grained evidence more reliably, although the aggregate results, rather than the examples alone,
+establish the overall advantage.
+Why these errors are complementary.The four PLUME cases span object identity, local text, temporal state, and cross-
+sentence relation matching. They therefore cannot be explained by one modality-specific preprocessing error. In each case the
+hard negative agrees with most of the query and differs only in the smallest decisive component: the furniture subclass, the exact
+handle, the direction of the action, or the comparison to legacy credit. A representation optimized around the dominant semantics
+can appear well aligned while still placing the wrong item slightly closer than the positive.
+Connection to the recurrent-register design.The recurrent block is useful precisely when the relevant evidence is already
+presentbutinsufficientlyconsolidated.Theregisterscancarryacandidate-separatingattributeacrossrepeatedapplications,while
+terminal InfoNCE keeps the recurrent computation tied to ranking rather than to reconstructing a verbal or latent explanation.
+This does not guarantee immunity to every local detail failure–the VisDoc example below shows that ReLoop-UME can still
+dilute an exact modifier–but it explains why the method improves the average without requiring longer generated trajectories.
+
+--- Page 21 ---
+
+I.3 ReLoop-UME Failures and Their Corresponding Limitations
+Find a video that contains the following 
+visual content: there is a man shooting 
+other people in a corridor
+Query：
+Failure case 1
+postive
+Hard Negative
+Query：
+Failure case 2
+postive
+Hard Negative
+Find the clip that corresponds to the described 
+scene in the given video: person open a door.
+⋯
+⋯
+Query：
+Failure case 3
+postive
+Hard Negative
+Find a document image that matches the given 
+query: Was sind die makroökonomischen 
+Auswirkungen von öffentlichen Investitionen 
+laut dem Bericht?
+(a) MSR-VTT shooting event (b) Charades-STA door opening (c) VisDoc public/private investment
+Figure 6: Three representative ReLoop-UME failures. The green item is the positive candidate and the red item is the retrieved
+hard negative. The examples instantiate temporal evidence omission, temporal-boundary smoothing, and local-detail dilution in
+visual documents.
+Failure case Limitation Why recurrence does not recover it Targeted remedy
+MSR-VTT: shooting event
+is absent from the sampled
+frames
+Temporal evidence omis-
+sion
+The input contains eight fixed frames sampled
+at 2 FPS. Every recurrent application refines the
+same hidden sequence, so an action that was not
+sampled or was weakly encoded by the prefix
+cannot be reconstructed by increasingT.
+Adaptive or denser frame
+sampling; per-loop re-
+injection of frame features.
+Charades-STA: an adjacent
+static segment replaces the
+door-opening moment
+Temporal-boundary
+smoothing
+Positive and hard-negative clips share the person,
+door, and room; they differ mainly in the brief
+transition. Repeated refinement strengthens sta-
+ble scene semantics and can attenuate the event
+boundary and motion direction.
+Frame-difference registers;
+transition-aware or moment-
+ranking losses.
+VisDoc: a page about pub-
+lic investment is confused
+with one about private in-
+vestment
+Local-detail dilution Both pages share the dominant topics of invest-
+ment,GDP,andeconomicgrowth.Asingleglobal
+embedding can preserve the topic while weaken-
+ingtheexactpublic/privatemodifieranditslocal
+relation.
+Page/region-specific regis-
+ters; OCR residual re-
+injection and layout-aware
+contrast.
+Table19:DirectcorrespondencebetweenthethreesuppliedReLoop-UMEfailurecasesandthelimitationsdiscussedinthepaper.
+Temporal evidence omission.Case (a) is a sampling failure before it is a recurrent-computation failure. If the decisive gunshot
+or interaction does not appear in the eight sampled frames, the later loops receive no new visual observation from which to infer
+it. More recurrent depth can reorganize available evidence, but it cannot create an unobserved event. This distinction explains
+why the method may obtain negative or small gains on videos whose label depends on a short, sparsely sampled action.
+Temporal-boundary smoothing.Case (b) contains the correct person, room, and door in both candidates; only the brief
+opening transition separates them. The recurrent block repeatedly optimizes a global retrieval state and can therefore emphasize
+the stable scene shared across neighboring moments. The result is an adjacent-clip error rather than a completely unrelated
+retrieval. Motion-sensitive residuals or a separate local temporal register bank would make the transition itself a persistent feature
+rather than a small perturbation of the scene embedding.
+Local-detail dilution in visual documents.Case (c) is similarly a near-neighbor error. Both pages discuss macroeconomic
+investment effects, but the query asks specifically aboutpublicinvestment while the hard negative centers onprivateinvestment.
+Global recurrent refinement keeps the shared document topic and can suppress the exact modifier, OCR span, or sentence-level
+relation. Hierarchical page/region registers and per-loop access to OCR and patch features are natural extensions.
+
+--- Page 22 ---
+
+J Remaining Limitations and Future
+Directions
+J.1 Scope of Stage Localization
+Stage localization should be rerun when the backbone, data
+mixture,readout,orobjectivechanges.Theintervalidentified
+here is reproducible for the tested checkpoints, but it is
+not claimed to be a universal layer index for every UME.
+Likewise, the pooled piecewise-linear criterion establishes
+a stable operational partition; it does not prove that every
+neuron inside the middle segment performs only retrieval
+formation or that the terminal layer performs only readout.
+Controlled interventions on internal states remain necessary
+for a causal account.
+J.2 Adaptive Depth and Training Cost
+A query-dependent stopping rule could improve on fixed
+T= 4 . Simple semantic matching may need only one or
+two applications, whereas compositional, OCR-heavy, or
+knowledge-intensive inputs may benefit from more. Learning
+such a controller under an explicit compute penalty would
+preserve the non-autoregressive character of ReLoop-UME
+while reducing average latency. Recurrent unrolling also
+increasestrainingFLOPsandactivationmemoryeventhough
+parameters are shared; memory can be reduced through
+selective checkpointing or truncated gradient paths, but those
+alternatives require a separate accuracy–efficiency study.
+J.3 Additional Diagnostics
+The current analysis uses terminal retrieval accuracy and
+layer-wise positive–negative separation as complementary
+evidence. Future work should add three diagnostics. First,
+token-level attribution across loops can test whether regis-
+ters repeatedly attend to the same evidence or progressively
+integratenewregions,frames,andOCRspans.Second,repre-
+sentational similarity between successive loops can quantify
+when recurrence saturates and can provide a natural signal
+for adaptive stopping. Third, counterfactual ablations that
+replace, shuffle, or reset individual registers can separate
+persistent memory from the benefit of simply adding extra
+tokens.
+J.4 Controlled Visual Re-Injection
+The most direct extension is controlled visual re-injection.
+Instead of feeding newly generated text, each recurrent ap-
+plication could receive a low-cost residual from the original
+vision features, optionally gated by the current registers. For
+video, this residual can preserve frame identity and temporal
+order; for visual documents, it can preserve region and page
+identity. Such a design would retain the central advantage
+of recurrent depth–additional retrieval-forming computation
+without autoregressive reasoning tokens–while directly ad-
+dressing the three failure mechanisms in Figure 6.
+J.5 How the Qualitative Cases Should Be
+Interpreted
+The examples in Section I were selected because the positive
+candidate, the retrieved hard negative, and the corresponding
+layer-wise diagnostic were all available, allowing the error to
+be traced to a specific missing distinction. They are not used
+to estimate the population frequency of each failure type and
+should not be read as a replacement for the full MMEB-V2
+and MRMR tables. Their role is narrower: to show that the
+aggregatepatternshaveconcretemanifestations.ExplicitCoT
+can replace evidence with a fluent narrative; PLUME can
+retain the topic while losing an attribute or relation; and
+ReLoop-UME can still fail when the required evidence was
+not sampled, lies at a brief temporal boundary, or is confined
+to a small OCR span.
+A systematic follow-up should annotate a larger error set
+with these mechanism labels and report conditional accuracy.
+For video, useful strata include whether the decisive event
+appears in the sampled frames, the duration of the target
+action,andthetemporaldistancebetweenthepositivemoment
+and the hard negative. For documents, strata should include
+OCR-span length, page count, table or chart structure, and
+whetherthepositivediffersfromthehardnegativebyasingle
+modifierornumber.Suchstratificationwouldturnthecurrent
+qualitative hypotheses into directly testable predictions.
+J.6 Evaluation of the Proposed Remedies
+Theproposedinterventionsshouldbeevaluatedwithmatched
+compute wherever possible. Denser or adaptive video sam-
+pling should be compared with fixed sampling at the same
+number of decoded visual tokens; frame-feature re-injection
+should be compared with an equally sized residual that is
+shuffled across time; and page- or region-specific registers
+should be compared with the same number of unstructured
+global registers. In addition to retrieval accuracy, temporal
+experiments should report boundary error and recall condi-
+tionedoneventcoverage,whiledocumentexperimentsshould
+report exact-modifier, exact-number, and OCR-relation sub-
+sets. These controls are necessary to distinguish genuine
+evidence preservation from gains caused only by additional
+visual computation.
+References
+Jiang, Z.; Meng, R.; Yang, X.; Yavuz, S.; Zhou, Y.; and Chen, W. 2025. VLM2Vec:
+Training Vision-Language Models for Massive Multimodal Embedding Tasks. InThe
+Thirteenth International Conference on Learning Representations.
+Meng, R.; Jiang, Z.; Liu, Y.; Su, M.; Yang, X.; Fu, Y.; Qin, C.; Thirukovalluru, R.;
+Zhang, X.; Chen, Z.; Xu, R.; Xiong, C.; Zhou, Y.; Chen, W.; and Yavuz, S. 2026.
+VLM2Vec-V2: Advancing Multimodal Embedding for Videos, Images, and Visual
+Documents.Transactions on Machine Learning Research.
+Qwen Team. 2024. Qwen2-VL-2B-Instruct: Official Model Configuration. Hugging
+Face.
+Qwen Team. 2025a. Qwen3 Embedding: Advancing Text Embedding and Reranking
+Through Foundation Models. Qwen technical blog.
+Qwen Team. 2025b. Qwen3-VL-2B-Instruct: Official Model Configuration. Hugging
+Face.
+Qwen Team. 2026. Qwen3.5-2B: Official Model Configuration. Hugging Face.
+Zhang, S.; Gao, Y.; Zhou, X.; Zhao, Y.; Song, T.; Cohan, A.; Luu, A. T.; and Zhao,
+C. 2026. MRMR: A Realistic and Expert-Level Multidisciplinary Benchmark for
+Reasoning-IntensiveMultimodalRetrieval. InTheFourteenthInternationalConference
+on Learning Representations.
+Zhang, Y.; Li, M.; Long, D.; Zhang, X.; Lin, H.; Yang, B.; Xie, P.; Yang, A.; Liu, D.;
+Lin, J.; Huang, F.; and Zhou, J. 2025. Qwen3 Embedding: Advancing Text Embedding
+and Reranking Through Foundation Models. arXiv:2506.05176.

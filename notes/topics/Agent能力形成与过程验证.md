@@ -11,7 +11,7 @@ topics:
   - 安全、鲁棒性与治理
 status: active
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-03
 cssclasses:
   - paper-note
 ---
@@ -21,6 +21,18 @@ cssclasses:
 ## 定义与边界
 
 本主题关注 Agent 怎样形成一个可跨步骤或跨任务复用的中间状态，以及怎样证明这个状态真的被后续行为使用。这里的中间状态可以是技能文档、长期记忆或视觉工作区；“形成”不等于“有效”，“被读到”不等于“被采用”，“产生了结果”也不等于“能安全修复”。
+
+## 2026-08-03 补充：长程反馈不是普通上下文
+
+[[notes/papers/2026/08/03/MerchantBench- Benchmarking LLM Agents for Long-Term Coherence in E-Commerce Operations]]、[[notes/papers/2026/08/03/AgentHPOBench- A Benchmark For Evaluating LLM Agents as Sequential Hyperparameter Optimizers]] 和 [[notes/papers/2026/08/03/Beyond Retrieval- Analytic Memory for Multimodal Agents]] 共同补上了“反馈如何进入后续行为”的评测视角。
+
+| 论文 | 反馈形态 | 采用证据 | 关键失败 |
+| --- | --- | --- | --- |
+| MerchantBench | 延迟订单结果、供应商事件、现金和评分 | 365 天最终净资产、SWR、产品/店铺级轨迹 | 活动衰减、提前放弃、错误记忆和需求漂移应对不足 |
+| AgentHPOBench | 已完成实验的配置、指标和日志 | final-step MBNS/BWR/MAA、no-feedback ablation | 找到好配置后不能保留；harness 与 best-so-far 口径影响排名 |
+| ADAMM | 多模态历史中的 attribute-value-provenance 记录 | analytic/retrieval ablation、任务级 Judge 提升 | 抽取错误和 schema 错误会传播到计算结果 |
+
+这三篇把“中间状态被使用”进一步拆细：MerchantBench 看真实延迟反馈是否长期改变策略，AgentHPOBench 看短序列实验反馈是否推动下一轮配置，ADAMM 看历史记录是否被转成可执行操作。共同结论是：把反馈塞进长上下文还不够，系统需要维护反馈的来源、适用范围、操作接口和最终结果证据。
 
 本轮三篇论文覆盖同一生命周期的不同切面：
 
