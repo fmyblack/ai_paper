@@ -1,0 +1,688 @@
+--- Page 1 ---
+
+Learning Compositional Meta-Routing for Agentic Workflows: An Executable
+Benchmark
+Natan Vidra1, Alina Kapanova1,2, Arun Kanhai1,3, Spurthi Setty4
+1Anote AI
+2Cornell University
+3CUNY
+4Stevens Institute of Technology
+nvidra@anote.ai, ak2765@cornell.edu, arun.kanhai55@qmail.cuny.edu, ssetty2@stevens.edu
+Abstract
+Agentic systems must decide not only what answer to pro-
+duce, but which reasoning and execution operations should
+precede it. A controller may answer directly, decompose a
+request, retrieve evidence, execute code, delegate to a spe-
+cialist,orverifyanintermediateresult.Existingroutingwork
+largelyselectsmodelendpoints,retrievaldepth,ortoolsiniso-
+lation. We introduce an executable benchmark and a budget-
+aware meta-router that composes heterogeneous operations
+from raw task text. The benchmark contains 216 training, 72
+development, 108 held-out test, and 108 locked lexical-shift
+challenge tasks across data analysis, frozen-corpus research,
+anddocumentprocessing.Outcomesaremachinecheckedaf-
+teroperationsexecute.Independentregularizedlogisticheads
+predict operation probabilities from word and character fea-
+tures, are temperature-scaled on development data, and are
+greedily composed under route-cost and action-count bud-
+gets. On the held-out test, the learned policy achieves 100%
+success versus 93.5% for strong static and fixed workflows,
+with 43% lower cost than the static policy; a matched learned
+one-shot router reaches 56.5%. On the untouched challenge
+split,learnedsuccessfallsto75.9%andtrailsstaticroutingat
+93.5%,whileremaining49%cheaperandexceedingone-shot
+routing by 34.3 points. The gap identifies lexical generaliza-
+tion, rather than route execution, as the principal limitation.
+These results establish a reproducible testbed and a bounded
+proof of concept, not evidence of live-LLM performance.
+1 Introduction
+Modernagenticapplicationscombinelanguagemodelswith
+retrieval, code execution, external APIs, specialist agents,
+verification, and recovery logic. Before any component can
+help, a controller must choose whether to invoke it. This
+meta-decision affects accuracy, cost, latency, and exposure
+to component failure. A direct answer is efficient but may
+lack evidence or computation; indiscriminate tool use adds
+overhead;andafixedworkflowcanfailwhenonecomponent
+is unavailable.
+Priorresearchdemonstratesthevalueofadaptiveretrieval
+(Jeongetal.2024),cost-awaremodelrouting(Chen,Zaharia,
+andZou2024;Ongetal.2025),optimizedfunction-callplans
+(Kim et al. 2024), and reflective planning (Yao et al. 2023;
+Zhang et al. 2026). Agent benchmarks evaluate planning
+arXiv submission. This version includes author names and affilia-
+tions.
+and tool execution (Liu et al. 2024; Yao et al. 2024), but
+fewer studies isolate the policy that selects amongdifferent
+classesofcognitiveandexecutionoperations.Thisleavestwo
+questions entangled: whether a controller identifies relevant
+capabilities and whether composing several capabilities is
+better than selecting one.
+We study that layer with an executable benchmark. Each
+task is presented to a policy only as raw text. A route may
+containdecomposition,retrieval,codeexecution,delegation,
+andverificationbeforeanswering.Unlikeourpreliminaryof-
+flinesimulator,successisnotsampledfromannotatedneeds:
+operations transform task state, produce a candidate answer,
+andencounterdeterministicfailureconditions;anexacteval-
+uator then checks the result. Labels are used only to train
+operation predictors and to analyze route quality.
+Our contributions are:
+•an executable meta-routing benchmark with machine-
+checked data-analysis, research, and document-
+processing tasks, held-out templates, a locked lexical-
+shift challenge split, and component-outage cases;
+•a calibrated raw-text router that predicts multiple opera-
+tiontypesandcomposesthemunderexplicitaction-count
+and cost budgets;
+•comparisons with direct, random, keyword, static-
+workload, fixed-agent, one-shot learned, and oracle poli-
+cies on success, cost, local latency, budget compliance,
+and route quality; and
+•paired statistical analysis and ablations separating com-
+position, character-level generalization, calibration, and
+budget enforcement.
+The central result is deliberately scoped. The learned
+routersolvesall108standardtesttaskswhileusing1.76nor-
+malized cost units, compared with 93.5% success and 3.08
+units for a strong static policy. Under lexical shift, however,
+it misses aggregate computation, multi-hop retrieval, and
+conflict verification, reaching only 75.9%. The result shows
+both the value of operation composition and the fragility of
+lightweight text routing.
+2 Related Work
+Model and retrieval routing.FrugalGPT constructs
+model cascades to reduce inference cost, while RouteLLM
+arXiv:2608.00106v1  [cs.LG]  31 Jul 2026
+
+--- Page 2 ---
+
+learns to select between stronger and weaker models from
+preference data (Chen, Zaharia, and Zou 2024; Ong et al.
+2025). CP-Router uses uncertainty to choose between stan-
+dardandlong-reasoningmodels(Suetal.2026);ICL-Router
+represents endpoint capabilities through in-context vectors
+(Wang et al. 2026); and ZeroRouter uses a model-agnostic
+latent space to onboard unseen endpoints while optimizing
+accuracy,cost,andlatency(Yanetal.2026).Adaptive-RAG
+predictsquestioncomplexityandselectsnoretrieval,single-
+stepretrieval,oriterativeretrieval(Jeongetal.2024).These
+methods establish conditional routing as an operational op-
+timization problem. Our decision variable is different: we
+compose heterogeneous operations around a model rather
+than choose a model or retrieval depth.
+Tool learning and workflow construction.Toolformer
+learns when and how to call APIs (Schick et al. 2023).
+API-Bank and ToolLLM provide resources for API plan-
+ning,retrieval,andexecution(Lietal.2023;Qinetal.2024);
+AnyTool combines hierarchical retrieval with reflection af-
+ter failed calls (Du, Wei, and Zhang 2024); and RESTful-
+Llama studies an industry natural-language-to-API pipeline
+(Xu et al. 2024). LLMCompiler exposes function depen-
+dencies for parallel execution and lower latency (Kim et al.
+2024),whileSmurfsdistributestoolplanningacrossspecial-
+ized agents and reduces context overhead (Chen, Liang, and
+Wang 2025). These systems optimize tool-centered plans.
+Wetreattooluseasoneoptionaloperationbesidedecompo-
+sition, code, delegation, verification, and direct answering.
+Planning and verification.ReAct interleaves reasoning
+with environmental action (Yao et al. 2023); SPIRAL sepa-
+rates planning, simulation, and critique inside reflective tree
+search (Zhang et al. 2026). ACPBench generates tasks with
+provablycorrectsolutionsfromformalplanningdomainsand
+finds uneven planning abilities across models (Kokel et al.
+2025). Our method is simpler: it predicts one bounded route
+beforeexecutionanddoesnotperformsearchorobservation-
+conditioned replanning. This simplicity makes the effect of
+route composition easier to isolate, at the cost of weaker
+adaptivity.
+Agent evaluation and diagnosis.AgentBench, SWE-
+bench,andτ-benchevaluateinteractive,executable,oruser-
+mediatedbehavior(Liuetal.2024;Jimenezetal.2024;Yao
+et al. 2024). PlanningArena evaluates planning and tool se-
+lection at macro and micro levels (Zheng et al. 2025); Tool-
+Sandbox adds stateful execution, intermediate milestones,
+and conversational evaluation (Lu et al. 2025). AgentDiag-
+nose measures trajectory competencies including decompo-
+sition, observation reading, verification, and backtracking
+(Ou et al. 2025). Our benchmark is smaller and less real-
+istic, but provides controlled supervision and paired policy
+comparisons over several operation classes.
+Novelty boundary.The contribution is not a new foun-
+dation model or general-purpose planner. It joins ideas nor-
+mally evaluated separately: task-conditioned routing, multi-
+operationworkflowconstruction,costconstraints,executable
+grading, and trajectory-level diagnosis. The matched one-
+shot learner sees the same text representation and supervi-
+sion as the compositional router, so their difference isolates
+route composition more directly than comparisons against
+direct prompting alone.
+3 Problem Formulation
+Let a task be raw textxwith cost budgetB. A router=
+(a1, . . . , am, A)terminates in answer actionAand draws
+support operations from
+O={D, T, C, G, V},(1)
+whereDis decomposition,Tretrieval/tool use,Ccode
+execution,Gspecialist delegation, andVverification. Each
+operation has preregistered normalized costc(a). A route is
+feasible whenm≤Mand P
+a∈r c(a)≤B.
+Executingron taskxproduces candidate answerˆyand
+tracez. Success isS(x, r) = 1whenˆy=yand0otherwise
+under a task-specific exact evaluator. The policy objective
+is to maximize success under route constraints, while raw
+success,cost,latency,andfailuretypearereportedseparately.
+Operation labelsL(x)⊆ Oidentify a minimum valid route
+for training and route-quality analysis; the executor never
+converts label overlap directly into success.
+4 Executable Benchmark
+Tasks and Operations
+Thesuitecontains504tasks:216train,72development,108
+test,and108challengeexamples,eachbalancedacrossthree
+workloads. Prompt templates are disjoint across splits. The
+challenge prompts were locked after observing standard-test
+development behavior and use more distant paraphrases; no
+model or threshold was changed after their first run. Val-
+ues,recordidentifiers,evidenceentries,anddocumentfields
+are generated deterministically from a fixed seed. Table 1
+summarizes the executable families.
+Operationsmanipulateanexplicitstateratherthanreceiv-
+ing success credit from route labels. For example, retrieval
+over conflicting records initially returns the older entry; ver-
+ification selects the record with the latest year. Invoice ex-
+traction initially exposes a stated but incorrect total; code
+computes the item sum and verification selects the recom-
+putedvalue.Inmulti-hopresearch,retrievalwithoutdecom-
+position returns only the intermediate laboratory. Retrieval-
+outagetasksmarkTunavailableandprovidetheansweronly
+throughG. These mechanisms yield interpretable incorrect-
+answer, no-answer, and unavailable-component failures.
+Execution is order sensitive. Decomposition writes task-
+specific subgoals or field requirements into state; retrieval
+and code consume those artifacts; verification can revise a
+candidate only when the prerequisite evidence or computa-
+tion exists. If an unavailable operation is invoked, execution
+stops with a typed component failure. Otherwise, answering
+emitsthecurrentcandidateorappliesadirect-answerparser
+for literal tasks. Thus an irrelevant extra operation may add
+cost without changing the answer, while a missing or mis-
+ordered prerequisite changes the actual artifact presented to
+the evaluator.
+
+--- Page 3 ---
+
+Table1:Executabletaskfamilies.Directliteraltasksoccurineveryworkload.Minimumroutesexcludethefinalansweraction.
+Workload Task families Minimum route Machine-checked behavior
+Data analysis Aggregate; filtered sumC;D, CCompute numeric aggregates; applying code be-
+fore decomposition sums the wrong subset
+Research Fact; multi-hop; conflicting
+sources; outage
+T;D, T;T, V;GRetrieve frozen records, follow evidence chains,
+selectnewestevidence,ordelegatewhenretrieval
+is unavailable
+Document process-
+ing
+Fieldextraction;invoicereconcilia-
+tion; locale date; cross-field identi-
+fier
+T;T, C, V;T, G;
+D, T, V
+Parsefields,recomputeincorrecttotals,normalize
+dates, and combine validated fields
+All Direct literal none Return an explicitly supplied literal without sup-
+port operations
+Thebenchmarkdesignseparatesfoursourcesofdifficulty.
+Selectiontasks require one non-answer operation.Composi-
+tiontasksrequiretwoorthreedependentoperations.Conflict
+tasks provide a plausible but wrong intermediate candidate
+thatverificationmustcorrect.Availabilitytasksinvalidatethe
+usual retrieval path and require delegation. This taxonomy
+supportsfailureanalysisbeyondaggregateaccuracyandpre-
+ventsadirectpolicyfromsucceedingthroughanswer-format
+heuristics on nonliteral tasks.
+Theoperationcostsare.45fordecomposition,1.00forre-
+trieval,1.15forcode,1.40fordelegation,.65forverification,
+and.30foranswering.EverytaskusesbudgetB= 4.5.Costs
+represent relative component usage, not dollars or tokens.
+Raw-Text Operation Model
+The router receives only the prompt text. We construct bi-
+narywordunigrams,wordbigrams,andcharacter3–5-gram
+featuresϕ(x). For each operationo, a regularized logistic
+head estimates
+po(x) =σ(w ⊤
+o ϕ(x) +b o).(2)
+Headsminimizeclass-balancedbinarycrossentropywith
+ℓ2 regularizationonthetrainingsplit.Optimizationuses500
+full-batch gradient steps with a decaying learning rate. We
+temperature-scale each head on development data by mini-
+mizing Brier score over a fixed temperature grid. Develop-
+ment Brier scores range from.00004for delegation to.102
+for retrieval.
+For operationo, the training objective is
+Lo = WBCE(y, p o(x)) +λ∥w o∥2
+2,(3)
+whereweightedbinarycrossentropy(WBCE)givesposi-
+tiveandnegativeexamplesequaltotalweight.Weuselearn-
+ing rate.35/
+p
+1 +e/50at epoche,λ=.002, and min-
+imum document frequency 2. The resulting representation
+has 3,349 features. Training all five heads takes approxi-
+mately.12seconds on the reported CPU. Temperature se-
+lectionchooses.5foreveryhead;theno-calibrationablation
+below tests whether this affects routes.
+The route thresholdτis selected from{.30, .35, . . . , .70}
+on development labels, prioritizing exact-route accuracy,
+then action F1, then lower cost. This yieldsτ=.40. Candi-
+dateoperationswithp o(x)≥τarerankedby(p o −τ)/c(o)
+Algorithm 1Budget-Aware Text Meta-Routing
+Require:textx, probabilitiesp o, thresholdτ, budgetB
+1:Q← {o:p o(x)≥τ}
+2:sortQby(p o(x)−τ)/c(o)descending
+3:R←[ ];k←c(A)
+4:foroinQdo
+5:if|R|<3andk+c(o)≤Bthen
+6:appendotoR;k←k+c(o)
+7:end if
+8:end for
+9:reorderRasD, T, C, G, V
+10:returnRfollowed byA
+and greedily added while respectingM= 3andB. Opera-
+tions are placed in canonical orderD, T, C, G, V, followed
+byA. Algorithm 1 gives the procedure.
+Baselines
+Wecomparesevenalternatives.Directalwaysanswers.Ran-
+domselects zero to three operations deterministically from
+the task identifier.Keyworduses raw-text rules.Static work-
+loaduses one route per workload.Fixed agentalways ex-
+ecutes all five support operations.Learned one-shotuses
+the same calibrated model but selects at most its highest-
+probability operation.Oracleexecutes the annotated mini-
+mum route and serves as an upper bound. Static and fixed
+policies are deliberately strong: they solve all tasks except
+research outages.
+5 Experimental Protocol
+We fit on train, calibrate and selectτon development, and
+report both standard test and the subsequently locked chal-
+lenge split. No standard-test or challenge labels are used
+for fitting or threshold selection. Every policy runs every
+task in each evaluation split. We report machine-checked
+success,2,000-sampletask-bootstrap95%intervals,normal-
+izedroutecost,localwall-clockroute-plus-executionlatency,
+budgetcompliance,exact-routematch,andmicroactionpre-
+cision/recall/F1.Pairedsuccessdifferencesusetaskbootstrap
+intervalsandanexacttwo-sidedsigntestoverdiscordantout-
+comes.
+
+--- Page 4 ---
+
+Table 2: Held-out executable results (n= 108per policy).
+CI is the bootstrap interval for success. Latency is local mil-
+liseconds.
+Policy Success 95% CI Cost F1
+Oracle 1.000 [1.000,1.000] 1.50 1.000
+Learned budget1.000[1.000,1.000] 1.76 .910
+Static workload .935 [.880,.972] 3.08 .535
+Fixed agent .935 [.880,.972] 4.95 .414
+Keyword .583 [.491,.676] 1.13 .810
+Learned one-shot .565 [.472,.657] 1.36 .643
+Random .407 [.315,.500] 1.68 .303
+Direct .259 [.185,.352] .30 .000
+Table 3: Results on 108 locked lexical-shift challenge tasks.
+Policy Success Cost Action F1
+Oracle 1.000 1.50 1.000
+Static workload .935 3.08 .535
+Fixed agent .935 4.95 .414
+Learned budget .759 1.56 .810
+Learned one-shot .417 1.19 .549
+Random .380 1.87 .304
+Keyword .324 .54 .331
+Direct .259 .30 .000
+Experiments ran CPU-only on an Apple M5 system with
+10coresand16GBmemoryundermacOS,Python3.12.13,
+and NumPy 2.5.0. Routing and execution are repeated five
+times per task solely to stabilize sub-millisecond timing,
+then averaged. The local operations do not call an LLM or
+networkservice;latencythereforemeasuresimplementation
+overhead, not deployment latency.
+6 Results
+Main Comparison
+The learned budget policy solves all 108 tasks. Relative to
+static workload routing, it improves success by 6.48 points
+(paired 95% CI [2.78,11.11], exact signp=.0156) and
+reduces mean cost by 1.32 units, or 43.0%. The difference
+consistsofsevenretrieval-outagetaskssolvedonlybylearned
+delegation.Relativetolearnedone-shotrouting,composition
+improvessuccessby43.52points([34.26,52.78],p <10 −13)
+for.40additional cost. This is the strongest evidence that
+multiple predicted operations, not text supervision alone,
+drive task completion.
+The learned policy has 100% budget compliance versus
+66.7%forstaticroutingand0%forthefixedagent.Itsmean
+local latency is.17ms, compared with less than.01ms for
+rule policies; this difference is measurable but operationally
+negligible relative to model or tool calls.
+Locked Challenge Split
+The challenge reverses the comparison with static rout-
+ing. Learned success is 17.59 points lower (paired 95% CI
+[−27.78,−7.41],p=.0013), although cost is 1.52 units,
+or 49.4%, lower. The learned policy still exceeds one-shot
+Table 4: Learned-router ablations on the same test tasks.
+Condition Success Cost Action F1
+Full1.0001.76 .910
+No calibration 1.000 1.76 .910
+No budget enforcement 1.000 1.76 .910
+Word features only .870 1.37.948
+Single operation .565 1.36 .643
+Table 5: Threshold sensitivity without refitting. Costs are
+mean normalized route costs.
+τTest Cost Challenge Cost
+.30 1.000 1.76 .759 1.56
+.40 1.000 1.76 .759 1.56
+.50 1.000 1.76 .722 1.52
+.60 1.000 1.50 .694 1.50
+.65 .963 1.48 .639 1.17
+.70 .926 1.45 .546 1.09
+routing by 34.26 points ([25.93,44.44],p <10−10). All 26
+learned failures cluster in three families: 12 aggregate tasks,
+sevenmulti-hopresearchtasks,andsevenconflicting-source
+tasks. Thus the executor and route composition remain ef-
+fective when the required operations are recalled; the failure
+is operation prediction under paraphrase. Figure 1 contrasts
+the two splits.
+Route Quality and Ablations
+Although learned and oracle success are equal, their routes
+differ. The learned policy has .741 exact-route match, .834
+actionprecision,1.000recall,and.910F1.Itinvokesretrieval
+on77tasksversus49fortheoracle,explainingits.26higher
+cost. Extra operations do not change answers in the current
+executor,buttheyexposeanefficiencygaphiddenbysuccess.
+Removing character features lowers success by 12.96
+points despite increasing action F1. The word-only model
+is more precise but misses operations under held-out phras-
+ing; character features favor recall. Restricting the model to
+oneoperationproducesthelargestloss.Calibrationandbud-
+get ablations are identical to the full policy because they do
+notalterthresholdcrossingsoractivatethebudgetboundary
+on this split. They should not be credited for the main gain
+under the tested regime.
+Sensitivity and Failure Analysis
+Table 5 shows a stable region fromτ=.30to.45. Larger
+thresholds trade cost for recall and harm the challenge split
+first.Atτ=.60,standardsuccessremainsperfectandroutes
+matchtheoracleexactly,butchallengesuccessisonly69.4%.
+Choosing a threshold solely from the standard distribution
+therefore understates generalization risk.
+The challenge failures are sharply attributable. On aggre-
+gate prompts, mean code probability is below threshold (a
+representativetaskhasp C =.192).Multi-hoppromptsretain
+retrieval (pT =.882) but miss decomposition (pD =.051),
+returning the intermediate laboratory. Conflicting-source
+
+--- Page 5 ---
+
+2 4
+Mean normalized route cost
+0.2
+0.4
+0.6
+0.8
+1.0Machine-checked success
+Oracle
+Learned
+Static
+Fixed agent
+Keyword
+One-shot
+Direct
+Held-out test
+2 4
+Mean normalized route cost
+0.2
+0.4
+0.6
+0.8
+1.0
+Oracle
+Static
+Fixed agent
+Learned
+One-shot
+Keyword
+Direct
+Lexical-shift challenge
+Figure 1: Machine-checked success versus route cost. The learned router matches oracle success on the standard test but loses
+to static routing under lexical shift, while remaining substantially cheaper.
+prompts retain retrieval (pT =.985) but miss verification
+(pV =.009), returning stale evidence. In contrast, the out-
+age paraphrase still selects delegation (pG =.675), and in-
+voice reconciliation retains retrieval, code, and verification
+probabilities above.67. These traces show that failure is not
+uniform semantic collapse; it is operation-specific recall un-
+der paraphrase.
+Wealsorefitwith36,72,108,144,and216trainingtasks.
+Standard and challenge success are unchanged at every size.
+Because each family repeats one training template with dif-
+ferent values, this flat curve indicates redundancy, not ex-
+ceptional sample efficiency. Broader template and domain
+diversity is necessary before drawing scaling conclusions.
+7 Discussion
+Interpretation and Novelty
+Three conclusions follow within the benchmark. First, static
+workflows remain strong when workload identity predicts
+the needed route; they waste cost on easy tasks and fail un-
+der component outages, but are more robust to paraphrase
+than the learned lexical router. Second, predicting a single
+operation is insufficient for tasks such as filtered computa-
+tion, multi-hop retrieval, invoice reconciliation, and locale
+normalization on both evaluation splits. Third, standard-test
+success alone overstates router quality: the learned policy
+matches the oracle on answers while selecting 28 unneces-
+sary retrieval operations and then loses 24.1 success points
+under lexical shift.
+The method inherits task conditioning from adaptive re-
+trieval,costawarenessfrommodelrouting,andmodularop-
+erations from agent planning. Its novel unit of control is
+the heterogeneous operation route. Endpoint routers decide
+which model should answer; retrieval routers decide how
+muchevidencetoacquire;toolplannersarrangecallswithin
+atool-centeredworkflow.Ourpolicydecideswhichkindsof
+reasoning and execution should constitute the workflow be-
+fore those lower-level mechanisms run. The executable suite
+and matched one-shot control make this distinction empiri-
+cally testable.
+Deployment Implications
+Apracticalsystemcouldusethisrouteraboveexistingmodel
+and tool routers. A low-cost gate predicts whether direct
+answering is sufficient; a multi-label policy then proposes
+support operations under cost and latency budgets; endpoint
+selection occurs inside each operation. Typed traces sup-
+port per-component reliability estimates, budget audits, and
+fallback rules. The outage cases illustrate why route choice
+should depend on component availability rather than only
+task category.
+Thepresentclassifierisintentionallylightweightandinter-
+pretable.Adeploymentroutershouldreplacelexicalfeatures
+with representations trained across broader tasks, condition
+on execution history and component health, and replan after
+observations.AconstrainedcontextualbanditorMarkovde-
+cisionprocesscouldoptimizesuccessandcostonline,while
+retaining static routes as fallbacks when uncertainty is high.
+Thechallengeresultsuggestsaconcretehybrid.Whencal-
+ibratedoperationprobabilitiesarediffuseorfallnearthresh-
+old, the controller can back off to a workload route rather
+thananswerwithanincompletecomposition.Onthecurrent
+challenge set, static routing covers the aggregate, multi-hop,
+andconflictfamiliesmissedbythelearner,whilelearneddel-
+egation covers the static policy’s outage failures. A learned
+confidencegatebetweenthesepoliciesisanaturalnextbase-
+line,butweleaveitunevaluatedtoavoidtuningonthelocked
+challenge split.
+Limitations and Threats to Validity
+Construct validity.Machine-checked answers are
+stronger than sampled success, but the operations are
+deterministic Python components rather than LLMs, sand-
+boxes, or network tools. Normalized route costs are design
+constants, not tokens or dollars. Local sub-millisecond
+latency should not be extrapolated to deployed agents.
+Internal validity.Minimum-route labels and executor se-
+mantics are designed together. The executor does not di-
+rectly score label overlap, but task families still encode the
+
+--- Page 6 ---
+
+authors’ assumptions about which operations should help.
+Perfect learned success reflects complete recall on a finite
+templated suite, not general intelligence. The threshold and
+temperatures are selected on only 72 development tasks.
+External validity.The locked challenge split exposes
+surface-form fragility but does not test new domains, lan-
+guages, tools, or long interactive horizons. PlanningArena
+and ToolSandbox contain richer stateful interactions (Zheng
+et al. 2025; Lu et al. 2025); SWE-bench andτ-bench pro-
+vide more realistic executable and user-mediated outcomes
+(Jimenez et al. 2024; Yao et al. 2024). Evaluation on those
+settings, semantic encoders, multiple model families, and
+adversarial distribution shifts is required.
+Benchmark-development validity.The standard test in-
+fluencedbenchmarkandfeaturedevelopmentbeforethechal-
+lenge split was introduced. We therefore treat standard-test
+performanceasanin-benchmarkresult,notapristineconfir-
+matoryestimate.Thechallengetemplatesweresubsequently
+lockedandthefirst-runoutcomewasretainedwithoutmodel
+changes, but they were still authored with knowledge of
+the benchmark ontology. An independently constructed task
+suite is needed for confirmatory evaluation.
+Statisticalvalidity.Taskbootstrapintervalsquantifyvari-
+ation over this finite suite. The 100% success interval is
+degenerate and does not estimate performance on an exter-
+nal task population. Exact sign tests cover paired outcome
+differencesbutdonotcorrectacrosseveryexploratorycom-
+parison. Future work should preregister a larger benchmark
+and report family-stratified uncertainty.
+Ethical Statement
+The benchmark contains synthetic records, documents, and
+numerical tasks; it uses no personal, proprietary, defense, or
+human-subject data and performs no external actions. De-
+ployed meta-routing can nevertheless create privacy, secu-
+rity, and accountability risks when data are sent to external
+services, code is executed, or decisions are delegated. Prac-
+tical systems should use sandboxing, allowlisted tools, data
+minimization,hardbudgets,auditlogs,andhumanescalation
+forhigh-impacttasks.Benchmarksuccessmustnotbeinter-
+preted as evidence of safety or suitability for autonomous
+consequential decisions.
+References
+Chen, J.; Liang, J.; and Wang, B. 2025. Smurfs: Multi-
+AgentSystemusingContext-EfficientDFSDTforToolPlan-
+ning. InProceedings of the 2025 Conference of the Nations
+of the Americas Chapter of the Association for Computa-
+tional Linguistics: Human Language Technologies (Volume
+1:LongPapers),3281–3298.AssociationforComputational
+Linguistics.
+Chen, L.; Zaharia, M.; and Zou, J. 2024. FrugalGPT: How
+to Use Large Language Models While Reducing Cost and
+ImprovingPerformance.TransactionsonMachineLearning
+Research.
+Du, Y.; Wei, F.; and Zhang, H. 2024. AnyTool: Self-
+Reflective, Hierarchical Agents for Large-Scale API Calls.
+InProceedings of the 41st International Conference on Ma-
+chine Learning.
+Jeong,S.;Baek,J.;Cho,S.;Hwang,S.J.;andPark,J.2024.
+Adaptive-RAG: Learning to Adapt Retrieval-Augmented
+Large Language Models through Question Complexity. In
+Proceedings of the 2024 Conference of the North American
+Chapter of the Association for Computational Linguistics:
+HumanLanguageTechnologies,7036–7050.Associationfor
+Computational Linguistics.
+Jimenez, C. E.; Yang, J.; Wettig, A.; Yao, S.; Pei, K.; Press,
+O.; and Narasimhan, K. 2024. SWE-bench: Can Language
+ModelsResolveReal-WorldGitHubIssues? InInternational
+Conference on Learning Representations.
+Kim, S.; Moon, S.; Tabrizi, R.; Lee, N.; Mahoney, M. W.;
+Keutzer, K.; and Gholami, A. 2024. An LLM Compiler for
+Parallel Function Calling. InProceedings of the 41st Inter-
+national Conference on Machine Learning, volume 235 of
+Proceedings of Machine Learning Research, 24370–24391.
+Kokel,H.;Katz,M.;Srinivas,K.;andSohrabi,S.2025.ACP-
+Bench:ReasoningAboutAction,Change,andPlanning.Pro-
+ceedings of the AAAI Conference on Artificial Intelligence,
+39(25): 26559–26568.
+Li, M.; Zhao, Y.; Yu, B.; Song, F.; Li, H.; Yu, H.; Li, Z.;
+Huang, F.; and Li, Y. 2023. API-Bank: A Comprehen-
+siveBenchmarkforTool-AugmentedLLMs. InProceedings
+of the 2023 Conference on Empirical Methods in Natural
+Language Processing, 3102–3116. Association for Compu-
+tational Linguistics.
+Liu, X.; Yu, H.; Zhang, H.; Xu, Y.; Lei, X.; Lai, H.; Gu,
+Y.; Ding, H.; Men, K.; Yang, K.; et al. 2024. AgentBench:
+EvaluatingLLMsasAgents. InInternationalConferenceon
+Learning Representations.
+Lu, J.; Holleis, T.; Zhang, Y.; Aumayer, B.; Nan, F.; Bai,
+H.; Ma, S.; Ma, S.; Li, M.; Yin, G.; Wang, Z.; and Pang, R.
+2025. ToolSandbox: A Stateful, Conversational, Interactive
+Evaluation Benchmark for LLM Tool Use Capabilities. In
+Findings of the Association for Computational Linguistics:
+NAACL 2025, 1160–1183. Association for Computational
+Linguistics.
+Ong,I.;Almahairi,A.;Wu,V.;Chiang,W.-L.;Wu,T.;Gon-
+zalez,J.E.;Kadous,M.W.;andStoica,I.2025. RouteLLM:
+Learning to Route LLMs with Preference Data. InInterna-
+tional Conference on Learning Representations.
+Ou, T.; Guo, W.; Gandhi, A.; Neubig, G.; and Yue, X.
+2025. AgentDiagnose: An Open Toolkit for Diagnosing
+LLMAgentTrajectories. InProceedingsofthe2025Confer-
+enceonEmpiricalMethodsinNaturalLanguageProcessing:
+System Demonstrations, 207–215. Association for Compu-
+tational Linguistics.
+Qin, Y.; Liang, S.; Ye, Y.; Zhu, K.; Yan, L.; Lu, Y.; Lin, Y.;
+Cong, X.; Tang, X.; Qian, B.; et al. 2024. ToolLLM: Facili-
+tatingLargeLanguageModelstoMaster16000+Real-world
+APIs. InInternational Conference on Learning Representa-
+tions.
+
+--- Page 7 ---
+
+Schick, T.; Dwivedi-Yu, J.; Dessi, R.; Raileanu, R.; Lomeli,
+M.;Hambro,E.;Zettlemoyer,L.;Cancedda,N.;andScialom,
+T. 2023. Toolformer: Language Models Can Teach Them-
+selves to Use Tools. InAdvances in Neural Information
+Processing Systems, volume 36.
+Su, J.; Lin, F.; Feng, Z.; Zheng, H.; Wang, T.; Xiao, Z.;
+Zhao, X.; Liu, Z.; Cheng, L.; and Wang, H. 2026. CP-
+Router: An Uncertainty-Aware Router Between LLM and
+LRM.Proceedings of the AAAI Conference on Artificial
+Intelligence, 40(39): 33065–33073.
+Wang, C.; Li, H.; Zhang, Y.; Chen, L.; Chen, J.; Jian, P.;
+Zhang,Q.;andHu,S.2026.ICL-Router:In-ContextLearned
+ModelRepresentationsforLLMRouting.Proceedingsofthe
+AAAI Conference on Artificial Intelligence, 40(39): 33413–
+33421.
+Xu, H.; Zhao, R.; Wang, J.; and Chen, H. 2024. RESTful-
+Llama: Connecting User Queries to RESTful APIs. InPro-
+ceedings of the 2024 Conference on Empirical Methods in
+Natural Language Processing: Industry Track, 1433–1443.
+Association for Computational Linguistics.
+Yan, C.; Zhang, W.; Ning, Z.; Xu, F.; Tao, Z.; Zhang, L.;
+Yin, B.; and Zhang, Y. 2026. Breaking Model Lock-in:
+Cost-Efficient Zero-Shot LLM Routing via a Universal La-
+tentSpace.ProceedingsoftheAAAIConferenceonArtificial
+Intelligence, 40(43): 36483–36490.
+Yao, S.; Shinn, N.; Razavi, P.; and Narasimhan, K. 2024.
+tau-bench: A Benchmark for Tool-Agent-User Interaction in
+Real-World Domains.arXiv preprint arXiv:2406.12045.
+Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan,
+K.; and Cao, Y. 2023. ReAct: Synergizing Reasoning and
+ActinginLanguageModels. InInternationalConferenceon
+Learning Representations.
+Zhang, Y.; Ganapavarapu, G.; Jayaraman, S.; Agrawal, B.;
+Patel, D.; and Fokoue, A. 2026. SPIRAL: Symbolic LLM
+Planning via Grounded and Reflective Search.Proceedings
+of the AAAI Conference on Artificial Intelligence, 40(43):
+36527–36535.
+Zheng, Z.; Cui, T.; Xie, C.; Pan, J.; Chen, Q.; and He, L.
+2025. PlanningArena: A Modular Benchmark for Multidi-
+mensional Evaluation of Planning and Tool Learning. In
+Proceedings of the 63rd Annual Meeting of the Associa-
+tionforComputationalLinguistics(Volume1:LongPapers),
+31047–31086. Association for Computational Linguistics.

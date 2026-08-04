@@ -1,0 +1,1486 @@
+--- Page 1 ---
+
+What Transfers from Text to Vision? Capability Scaling
+Laws and Transfer Dynamics for VLMs
+Ziran Li1∗, Qiang Wang2∗, Zhengyu Chen1, Shanglin Lei1
+Borun Chen1, Jingang Wang1, Xunliang Cai1
+1Meituan 2Tsinghua University
+{liziran02,chenzhengyu04}@meituan.com
+qiang-wa24@mails.tsinghua.edu.cn
+Abstract
+Choosing the right large language model (LLM) backbone is the most consequential decision
+when building a vision-language model (VLM), yet it remains fundamentally unprincipled:
+compute-based scaling laws fail to generalize across model families, and no framework exists
+for directly predicting VLM performance before training begins. We propose theCapability-
+Driven Multimodal Scaling Law, the first cross-family framework that predicts VLM bench-
+mark accuracy from directly observable textual capability. Given a low-dimensional capability
+score S extracted from LLM textual benchmarks via PCA, we model VLM performance as
+a function of S, with a per-backbonetransfer rateand anabsorption ratethat quantifies
+data-scaling efficiency. To fit and validate the framework, we train over 150 VLMs on 34
+LLMs spanning 7 model families under a strictly controlled recipe. Evaluations on more
+than 200 textual and 50 multimodal benchmarks show that the law accurately extrapolates
+transfer rate from models up to 8B parameters to 72B-scale backbones, predicts full VLM
+training trajectories with high fidelity, and generalizes to entirely held-out model families.
+Beyond the scaling law, our analysis surfaces actionable insights: certain textual benchmarks
+negatively correlate with multimodal performance, exposing latent benchmark-gaming behav-
+ior; base LLMs outperform instruction-tuned counterparts as VLM backbones due to higher
+absorption rates and lower data-scaling decay; and different model families occupy distinct
+positions in the transfer–absorption space. The framework turns backbone selection from
+costly empirical sweeps into a principled, quantitative decision. Code and data are available
+athttps://github.com/wangq-dev/CDMScaling.
+1 Introduction
+Scaling laws for large language models (LLMs) have proven remarkably predictive: given only compute
+budget, parameter count, and training data volume, one can accurately forecast not just training loss but also
+downstream task performance across diverse benchmarks [Kaplan et al., 2020, Hoffmann et al., 2022]. This
+predictability has transformed LLM development—practitioners can allocate resources, compare architectures,
+and anticipate benchmark scores before a single training run completes. Yet when it comes to vision-language
+models (VLMs), no analogous framework exists. State-of-the-art VLMs universally depend on strong LLM
+backbones [Liu et al., 2024a, Bai et al., 2025, Wang et al., 2025a], and practitioners widely accept that a
+better LLM yields a better VLM [Li et al., 2024a]—buthow muchbetter, onwhich tasks, andfor how much
+multimodal data? Choosing the right LLM backbone is the single most consequential decision when building a
+VLM, yet it remains fundamentally unprincipled.
+Compute-based scaling laws offer a natural starting point, but they fail to generalize across model families,
+because parameter count alone cannot capture the heterogeneous pre-training histories that differentiate
+modern LLMs. A more direct route is to useobservabletextual benchmark performance as a capability proxy—it
+is publicly reproducible, requires no access to training details, and is strongly correlated with multimodal
+performance across diverse model families. This observation raises a central question:can we build a unified
+framework that directly predicts VLM performance from the textual capability of its LLM backbone?
+∗Equal Contribution.
+arXiv:2608.00013v1  [cs.CL]  24 Jun 2026
+
+--- Page 2 ---
+
+Capability-Driven Multimodal Scaling Law
+Addressing this question is non-trivial. LLM capability is inherently multidimensional, spanning reasoning,
+knowledge, instruction following, and beyond, and different dimensions may contribute heterogeneously
+to multimodal transfer. Furthermore, VLM performance depends jointly on LLM capability and multimodal
+training data volume, and their interaction must be explicitly modeled: stronger backbones may respond
+differently to additional multimodal data than weaker ones. Finally, LLMs from different families exhibit
+heterogeneous capability profiles across benchmarks, making it challenging to derive a single comparable
+capability measure that generalizes across families.
+In this paper, we propose theCapability-Driven Multimodal Scaling Law, a framework that predicts mul-
+timodal model performance from the textual capability of the LLM backbone and the multimodal training
+data volume. To build this framework, we collect 34 LLM backbones spanning 7 model families and train
+over 150 VLMs under a strictly controlled multimodal training recipe, yielding a dataset of LLM–VLM pairs
+across diverse families and scales. We extract a low-dimensional capability score from more than 200 textual
+benchmarks to represent the basic capability of a LLM backbone, and build the multimodal scaling law by
+introducing transfer and absorption rates to bridge LLM capability and vision-language training.
+Beyond the scaling law itself, our framework surfaces a set of actionable insights.(i) Benchmark selection
+matters: not all textual benchmarks contribute positively to multimodal transfer; some are uncorrelated or
+even negatively correlated with VLM performance, revealing latent benchmark-gaming behavior in certain
+LLMs—high textual scores that do not translate to multimodal capability.(ii) Base models are better VLM
+backbones: despite lower initial transfer rates, base LLMs exhibit higher absorption rates and lower decay,
+yielding superior data-scaling efficiency; instruction-tuned models incur an “alignment tax” on multimodal
+generalization.(iii) Family-specific transfer profiles: different model families occupy distinct positions in the
+(transfer, absorption) space—some families show high transfer but low absorption (strong out-of-the-box but
+data-inefficient), while others show the opposite, reflecting fundamental differences in pre-training strategy
+and benchmark saturation. The framework thus turns backbone selection from costly trial-and-error into a
+principled, quantitative decision.
+Our main contributions are as follows:
+• A capability-driven scaling law for VLMs.We propose the Capability-Driven Multimodal Scaling Law, the
+first cross-family framework that predicts VLM performance from directly observable textual capabilityS
+and multimodal data volume, parameterized by a per-backbone transfer rate and an absorption rate.
+• Insights into LLM-to-VLM transfer.We reveal that (i) not all textual benchmarks contribute positively—
+some negatively correlate with multimodal performance, exposing latent benchmark gaming; (ii) base
+LLMs are more data-efficient VLM backbones than their instruction-tuned counterparts due to higher
+absorption rates and lower data-scaling decay; and (iii) model families occupy distinct positions in the
+transfer–absorption space, reflecting fundamental differences in pre-training strategy.
+• Practical applications.The framework directly supports performance prediction for candidate backbones,
+optimal joint selection of backbone and data budget under a compute constraint, and hyperparameter
+extrapolation for efficient training configuration.
+2 Capability-Driven Scaling Laws for Multimodal Performance Prediction
+In this section, we establish a capability-driven framework to formulate our multimodal scaling law. Our
+methodology proceeds in two key modeling steps. First, we introduce a low-dimensional text capability metric
+S to enable consistent cross-family loss fitting (Sec. 2.1.1). Second, we derive the end-to-end vision-language
+performance P by couplingS and the multimodal data volumeDmm through explicit transfer and absorption
+terms (Sec. 2.1.2). Ultimately, the design of these formulations captures the core components of the underlying
+learning dynamics.
+2.1 Capability-Driven Scaling Law
+2.1.1 From Classical Compute Scaling to Capability-Driven Loss Scaling
+The classical compute-based scaling law models the pre-training loss as a power-law function of parameter
+countNand data volumeD[Kaplan et al., 2020, Hoffmann et al., 2022]:
+L= A
+N α + B
+Dβ +E,(1)
+2
+
+--- Page 3 ---
+
+Capability-Driven Multimodal Scaling Law
+whereA,B,E,α, andβare fitted constants.
+AnaturalextrapolationtothemultimodalsettingistotreattheLLMbackboneasthemodeltermandmultimodal
+training data as the data term:
+L= A
+N α + B
+Dβ
+mm
++E,(2)
+where Dmm denotes multimodal training data volume. However, this extrapolation relies onN as a proxy
+for backbone capability, which becomes problematic across model families. Models with identical parameter
+counts may differ substantially in pre-training data volumeDtext as well as the training strategy, and thus
+in actual capability. Moreover, the underlying pre-training computeCtext ≈6N D text is rarely observable in
+practice, as most model providers do not discloseDtext.
+Toaddressthelimitationsofparametercountorrawpre-trainingcompute—whichfailtocaptureheterogeneous
+training histories across different model families—we propose using directly observable textual benchmarks as
+a capability proxy. However, because LLM capability is multidimensional, directly using raw benchmark scores
+as predictors leads to severe redundancy and risks overfitting on our limited VLM training pairs. To resolve
+this, we apply Principal Component Analysis (PCA) to extract a compact, low-dimensional representation.
+Specifically, we construct a benchmark-model matrixX∈R T×M containing the mean-centered scores ofM
+models acrossT benchmarks. Prior work suggests thatX exhibits a low-rank structure [Ruan et al., 2024],
+allowing the scores to be factorized into aK-dimensional capability vectorSm ∈R K that simultaneously
+satisfies:
+Sm ≈θ f log(Cm) +ν f , X i,m ≈γ ⊤
+i Sm,(3)
+where θf ,ν f ∈R K are family-specific constants and γi ∈R K are orthonormal vectors. The principal
+components extracted fromX provide a natural empirical instantiation ofSm. We therefore define the scalar
+capability scoreS m as a unit-norm linear combination of the top-Kprincipal components:
+Sm =w ⊤Sm,∥w∥= 1,(4)
+where w∈R K is optimized jointly with the downstream scaling law. SinceSm is a linear projection ofSm, it
+inherits the log-linear relationship in Eq. 3:
+S∝logC,(5)
+To balance the bias-variance tradeoff, we selectK to explain at least 95% of the total variance inX, while
+the unit-norm constraint onw ensures a well-defined and interpretable scale. Similar methods of latent
+factorization have been also employed in [Ruan et al., 2024], whose objective is primarily to predict unobserved
+textual benchmarks in a training-free manner (i.e., zero-shot benchmark prediction). In contrast, we leverage
+this latent representation to bridge LLM backbone and vision-language.
+The capability scoreS, derived directly from benchmark performance, resolves both limitations of parameter
+count: it is publicly observable and, as established in Eq. 5, satisfiesS∝logC text, jointly capturing the effect
+of both N and Dtext. Inverting givesCtext ∝e S, which motivates the substitution of Eq. 2, we arrive at the
+capability-driven scaling law:
+L=A·e −αS + B
+Dβ
+mm
++E,(6)
+where Dmm denotes the multimodal training data volume (distinct from the LLM pre-training data volume
+Dtext in Eq. 2), andS encodes the textual capability of the LLM backbone prior to multimodal training. We
+retain the power-law formB/D β
+mm for the data term, asDmm is an explicit training hyperparameter rather than
+a latent capability variable, and power-law scaling with data volume is well-established empirically [Kaplan
+et al., 2020]. The residualE represents the irreducible loss floor. BecauseS is derived from benchmark
+performance rather than from architectural hyperparameters, Eq. 6 applies uniformly across model families
+without requiring family-specific recalibration.
+2.1.2 An End-to-End Predictor for Vision-Language Performance
+Building on the capability-driven loss scaling law above, we now introduce a direct predictor for end-to-end
+vision-language performance. We propose a formula that directly predicts multimodal benchmark accuracyP
+from textual capability scoreSand multimodal training data volumeDmm:
+3
+
+--- Page 4 ---
+
+Capability-Driven Multimodal Scaling Law
+P= ˆA·S+ ˆB·lnD mm +P 0,(7)
+ˆB=B 0 −B m ·S,(8)
+where ˆA,B 0,B m, andP 0 are fitted constants.
+The formulation of Eq. 7 is phenomenologically motivated by established empirical scaling behaviors. Specif-
+ically, downstream benchmark accuracyP has been shown to scale log-linearly with training data volume
+[Kaplan et al., 2020] and linearly with primary capability proxies [Guo et al., 2025].
+2.2 Interpreting the Performance Predictor
+2.2.1 Design Principle: Transfer and Absorption
+The two additive terms in Eq. 7 capture complementary sources of multimodal performance. The first term
+reflects the capability transferred from the textual backbone to the multimodal setting, while the second
+term captures the gain absorbed from multimodal training data. Under this view, multimodal performance is
+determined not only by the strength of the initial LLM backbone, but also by how effectively the model turns
+additional multimodal data into benchmark improvements.
+2.2.2 Transfer
+The first term ˆA·S reflects thetransfer efficiencyfrom textual capability to multimodal performance: it serves
+as the capability-dependent starting point of multimodal training, determining the portion of multimodal
+performance directly attributable to the textual backbone prior to substantial multimodal adaptation. A
+stronger LLM backbone (higherS) leads to higher multimodal accuracy, withA quantifying how effectively
+textual capability transfers to the multimodal setting.
+2.2.3 Absorption
+The second term ˆB·lnD mm in Eq. 7 models the performance gain from multimodal training. The logarithmic
+form characterizes the diminishing marginal returns of data scaling. Crucially, the effective data absorption
+rate ˆB is modulated by the backbone’s capabilityS (Eq. 8). We parameterize this behavior using two constants.
+First, B0 represents the baseline absorption rate of a theoretical backbone withS= 0 . Second, Bm represents
+the absorption decay rate. This decay rate quantifies how quickly data-scaling efficiency diminishes as textual
+capability scales. A positiveBm formalizes the empirical observation that stronger textual priors attenuate the
+marginal utility of additional data, which means high-capability models accelerate performance saturation and
+require less training data. In contrast, weaker backbones require more extensive data scaling to compensate
+for deficient initialization. The constantP0 accounts for benchmark-specific baseline performance, such as
+chance-level accuracy.
+2.2.4 Transfer Tax
+While the capability scoreS aggregates textual benchmark performance into a unified predictor, the PCA
+decomposition reveals that individual benchmarks contribute heterogeneously to multimodal performance.
+Expanding Sm =w ⊤Sm in terms of benchmark scores via the PC loading vectorsγi yields an effective transfer
+coefficientλ i =w ⊤γi for each benchmarki, such that:
+P= ˆA·
+X
+i
+λiXi,m + ˆB·lnD mm +P 0,(9)
+We define thetransfer taxas the set of textual capabilities for whichˆA·λ i <0 : improving these dimensions
+raises text leaderboard scores but fails to improve multimodal performance. We revisit this concept in Sec. 4.1,
+where we identify which specific benchmark capabilities act as transfer taxes and analyze their implications
+for LLM backbone selection.
+4
+
+--- Page 5 ---
+
+Capability-Driven Multimodal Scaling Law
+3 Empirical Setup and Extrapolation Validation
+3.1 Models and Training Recipe
+We select a diverse set of open-source LLM backbones spanning a wide range of model families, scales, and
+architectures, including Qwen2.5 [Qwen et al., 2025], Qwen3 [Yang et al., 2025], Llama-3.2 [Grattafiori et al.,
+2024], Falcon3 [Team, 2024], Gemma-2 [Team et al., 2024], DeepSeek [Bi et al., 2024], and Mistral [Jiang
+et al., 2023].
+All models are built upon the LLaVA-OneVision architecture [Li et al., 2024b], comprising a SigLIP vision
+tower [Zhai et al., 2023], a two-layer MLP projector, and a language backbone. A unified vision-language
+training recipe is applied consistently across all backbones on the Infinity-MM dataset [Gu et al., 2024]: Stage
+1 trains only the projector (∼5M samples) to align visual features with the LLM’s embedding space, while
+Stage 2 fine-tunes the full model end-to-end (∼12M samples). Full details on backbone selection, model list,
+and training hyperparameters are provided in Appendix C.
+3.2 Evaluation Metrics: Textual and Multimodal Benchmarks
+Textual Benchmarks.To fully build our proposed methods, we evaluate LLM backbones on more than 200
+benchmarks across six dimensions:Knowledge(world knowledge across diverse domains),Language(reading
+comprehension and text understanding),Math(quantitative reasoning and problem-solving),Reasoning
+(multi-step logical and commonsense reasoning),NLI/NLU(logical entailment and semantic understanding),
+andInformation Extraction(structured knowledge extraction from unstructured text, e.g., named entity
+recognition). All textual benchmarks are evaluated under a few-shot setting to better reflect the intrinsic
+capabilities of the LLM backbone.
+Multimodal Benchmarks.We evaluate 35 benchmarks across four dimensions:General VQA(visual under-
+standing and commonsense reasoning),STEM Puzzle(vision-integrated scientific and mathematical reason-
+ing),Document Understanding(charts, tables, and scanned documents), andAlignment(hallucination-free,
+instruction-faithful generation). All multimodal benchmarks are evaluated under a zero-shot setting. The
+mean score across all 35 benchmarks is reported as theAverage Multimodal Accuracymetric. Details of the
+selected benchmarks are provided in Tables 5 and 6.
+3.3 Fitting Results: Validating the Capability-Driven Scaling Law
+We compare our capability-driven scaling law (Eq. 7) with the compute-based baseline (Eq. 1) towards loss
+fitting. Specifically, we fit both laws on Falcon3 and Llama-3.2 families. The PCA applied to the benchmark-
+model matrixX yields the first 3 principal components, which explains over 95% of the total variance. As
+shown in Figure 1, the capability-driven scaling law achieves consistent fits across both families within a
+single unified model, whereas the compute-based baseline requires separate fitting per family and still yields
+substantially higher error. ReplacingN with the capability scoreS reduces the Mean Absolute Error (MAE)
+from 0.0383 to 0.0087 across families.
+3.4 Predicting Multimodal Benchmark Accuracy
+Multimodal Accuracy Fitting.We fit the multimodal accuracy scaling law (Eq. 7) across all 32 LLM backbones,
+following the fitting procedure detailed in Appendix E. As shown in Figure 2, the predicted accuracy trajectories
+closely follow the observed trends across all model families and scales, with the fitted scaling law achieving a
+MAE of 1.2870% without requiring family-specific recalibration.
+Validating Transfer.To evaluate whether the fitted transfer coefficientˆA generalizes to unseen backbones at
+larger scales, we fix the multimodal training dataDmm and directly fitˆP= ˆAS+P ′
+0 for validation. We use
+the fitted law to predict the multimodal accuracy of Qwen2.5-72B, whose parameter count far exceeds that of
+any model seen during fitting. As shown in Figure 3a, the predicted accuracy closely matches the observed
+values, with an absolute error of 1.92% for the Base variant and 0.70% for the Instruct variant, demonstrating
+that ˆAcaptures transfer efficiency reliably even for model scales beyond the training distribution.
+Validating Absorption.To validate the rationality of the absorption coefficientˆB, we first predict the full
+accuracy trajectorys of Qwen2.5-72B across all training checkpoints using the complete prediction formula
+5
+
+--- Page 6 ---
+
+Capability-Driven Multimodal Scaling Law
+0 20 40 60 80 100
+D (B tokens)
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+1.05
+1.10L
+Compute-Based Scaling Law
+0 20 40 60 80 100
+D (B tokens)
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+1.05
+1.10L
+Capability-Driven Scaling Law
+Falcon3-1B-Base Falcon3-3B-Base Falcon3-7B-Base Falcon3-10B-Base Llama-3.2-1B Llama-3.2-3B
+Figure 1 | Comparison of two scaling law formulations fitted to the Falcon3 and Llama-3.2 base model families.
+Left:Compute-based scaling law, where model scale is parameterized directly by the number of parametersN.
+Right:Capability-driven scaling law, where the effective model scale is parameterized by principal components
+derived from downstream benchmark performance. Solid lines denote observed training loss trajectories and
+dashed lines denote fitted predictions.
+0.025
+ 0.000 0.025 0.050 0.075 0.100 0.125 0.150
+A S + (B0 Bm S) ln(D)
+0.40
+0.45
+0.50
+0.55
+0.60Average Multimodal Accuracy
+MAE = 1.2871%
+Qwen3-0.6B
+Qwen3-0.6B-Base
+Falcon3-1B-Instruct
+Falcon3-1B-Base
+Llama-3.2-1B-Instruct
+Llama-3.2-1B
+Qwen3-1.7B
+Qwen3-1.7B-Base gemma-2-2b-it
+gemma-2-2b
+Falcon3-3B-Instruct
+Falcon3-3B-Base
+Llama-3.2-3B-Instruct
+Llama-3.2-3B
+Qwen3-4B
+Qwen3-4B-Base
+deepseek-llm-7b-chat
+deepseek-llm-7b-basedeepseek-math-7b-instruct
+deepseek-math-7b-base
+Falcon3-7B-InstructFalcon3-7B-Base
+Mistral-7B-Instruct-v0.3
+Mistral-7B-v0.3
+Qwen3-8B
+Qwen3-8B-Base
+gemma-2-9b-it
+gemma-2-9b
+Falcon3-10B-Instruct
+Falcon3-10B-Base
+Qwen3-30B-A3B
+Qwen3-30B-A3B-Base
+Qwen3
+Falcon3
+LLaMA-3.2
+Gemma-2
+DeepSeek
+Mistral
+Instruct
+Base
+Fitted Scaling Law
+Figure 2 | Multimodal accuracy scaling law fitting results across all 32 LLM backbones. For clarity, only the
+first 4 training checkpoints are shown for each backbone. The dashed line shows the fitted scaling law (Eq. 7).
+(Eq. 7). As shown in Figure 3b, the predicted region correctly covers the target models, achieving a combined
+holdout MAE of only 1.225% on both Base and Instruct variants of Qwen2.5-72B.
+In addition, we further analyze the ablation of adding the decay rate (Bm ·S ), which is shown in Table 1.
+The results show that for models with moderate capability scores (S∈[−0.369,0.339] ), the two variants
+perform comparably since the scoreS is close to zero. However, when it comes to predicting models with
+substantially higher capability scores (S >0.6 ), adding the decay rate can effectively reduce the overall MAE
+(reducing the MAE of Qwen2.5-72B-Base from 2.375% to 2.055%). These results collectively demonstrate the
+importance of the interaction termBm ·S as S grows larger: stronger backbones exhibit systematically lower
+data absorption rates, and failing to account for this modulation leads to progressively larger prediction errors
+6
+
+--- Page 7 ---
+
+Capability-Driven Multimodal Scaling Law
+0.05
+ 0.00 0.05 0.10 0.15
+A S
+0.40
+0.45
+0.50
+0.55
+0.60
+0.65
+Average Multimodal Accuracy
+Train MAE = 1.2212%
+Falcon3-10B-Base
+Falcon3-10B-Instruct
+Falcon3-1B-Base
+Falcon3-1B-Instruct
+Falcon3-3B-Base
+Falcon3-3B-Instruct
+Falcon3-7B-Base
+Falcon3-7B-Instruct
+Llama-3.2-1B
+Llama-3.2-1B-Instruct
+Llama-3.2-3B
+Llama-3.2-3B-Instruct
+Mistral-7B-Instruct-v0.3
+Mistral-7B-v0.3
+Qwen3-0.6B
+Qwen3-0.6B-Base
+Qwen3-1.7B
+Qwen3-1.7B-Base
+Qwen3-30B-A3B
+Qwen3-30B-A3B-Base
+Qwen3-4B
+Qwen3-4B-Base
+Qwen3-8B
+Qwen3-8B-Base
+deepseek-llm-7b-basedeepseek-llm-7b-chat
+deepseek-math-7b-base
+deepseek-math-7b-instruct
+gemma-2-2b
+gemma-2-2b-it
+gemma-2-9b
+gemma-2-9b-it
+Falcon3
+LLaMA-3.2
+Mistral
+Qwen3
+DeepSeek
+Gemma-2
+Qwen2.5
+Train Instruct
+Train Base
+Holdout
+Fitted Scaling Law
+Prediction Error Band (±1.96 )
+Qwen2.5-72B-Instruct
+Qwen2.5-72B
+(a) Predicted vs. observed multimodal accuracy at the start-
+ing point (Dmm ≈12.5 B tokens) for the Base and Instruct
+variantsofQwen2.5 -72B.Thedashedlinedenotesthefitted
+scaling law, and the shaded region shows the 95% confi-
+dence interval (±1.96σ).
+0.05
+ 0.00 0.05 0.10 0.15 0.20
+A S + (B0 Bm S) ln(D)
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+0.65
+0.70Average Multimodal Accuracy
+Train MAE:   1.287%
+Holdout MAE: 1.193%
+Falcon3
+LLaMA-3.2
+Mistral
+Qwen3
+DeepSeek
+Gemma-2
+Instruct
+Base
+Qwen2.5-72B (true)
+Fitted Scaling Law
+Prediction Error Band (±1.96 )
+Qwen2.5-72B-Instruct
+Qwen2.5-72B
+(b) Predicted vs. observed multimodal accuracy trajectories
+for multiple model families, including Qwen2.5-72B hold-
+out variants. The dashed line denotes the fitted scaling law,
+and the shaded region shows the 95% confidence interval
+(±1.96σ).
+Figure 3 | Comparison of predicted vs. observed multimodal accuracy under different evaluation settings, with
+fitted scaling laws and 95% confidence intervals.
+when extrapolating beyond the training distribution. This validates the necessity of the capability-modulated
+absorption term in Eq. 7 for accurate out-of-distribution trajectory prediction.
+Table 1 | Comparison of in-distribution (≤8B) and out-of-distribution (72B) prediction errors (MAE %) with
+and without capability-modulated absorption (BmS).
+Variant≤8B MAE↓72B-Base MAE↓72B-Inst MAE↓
+S∈[−0.369,0.339]S >0.6
+B0 ·lnD mm 1.266% 2.374% 0.476%
+(B0 −B m ·S)·lnD mm 1.259% 2.055% 0.394%
+3.5 Cross-Family Generalization
+To validate the robustness of our methods across different model families, we systematically evaluate its
+cross-family generalization performance using leave-one-family-out validation. Specifically, we sequentially
+select each of the four representative model families (Qwen3, DeepSeek, Falcon3, and Gemma-2) as a held-
+out target, and fit our capability-driven scaling law on the remaining in-domain families to predict the
+entire trajectories of the held-out family. As illustrated in Figure 4, our method consistently yields highly
+accurate extrapolation trajectories across all target lineages, aligning the holdout checkpoints tightly within a
+narrow confidence band. This consistent generalizability demonstrates that our strategy successfully bypasses
+heterogeneous architectural and pre-training recipe differences, establishing a robust, universally applicable,
+and family-agnostic framework for multimodal performance prediction.
+4 Understanding LLM-to-VLM Transfer
+In this section, we analyze the transfer dynamics from LLM to VLM through four complementary lenses: the
+identification of beneficial and harmful textual capabilities (Sec. 4.1), the paradoxical behavior of instruction-
+tuned backbones (Sec. 4.2), a cross-family comparison of transfer dynamics via the fitted scaling coefficients
+(Sec. 4.3), and the extrapolation of optimal training hyperparameters across model scales (Sec. 4.4).
+7
+
+--- Page 8 ---
+
+Capability-Driven Multimodal Scaling Law
+0.00 0.05 0.10 0.15
+A S + (B0 Bm S) ln(D)
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60Average Multimodal Accuracy
+Train MAE:   1.233%
+Holdout MAE: 2.169%
+Qwen3
+0.05
+ 0.00 0.05 0.10 0.15
+A S + (B0 Bm S) ln(D)
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+0.65
+ Train MAE:   1.226%
+Holdout MAE: 1.809%
+DeepSeek
+0.00 0.05 0.10 0.15
+A S + (B0 Bm S) ln(D)
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+0.65
+ Train MAE:   1.391%
+Holdout MAE: 2.225%
+Falcon3
+0.025
+0.000 0.025 0.050 0.075 0.100 0.125 0.150
+A S + (B0 Bm S) ln(D)
+0.35
+0.40
+0.45
+0.50
+0.55
+0.60
+Train MAE:   1.493%
+Holdout MAE: 1.524%
+Gemma-2
+Qwen3 DeepSeek Falcon3 Gemma-2 Llama-3.2 Mistral Train Instruct Train Base Holdout True Fitted Scaling Law ±4.6% band
+Figure 4 | Cross-family generalization using the capability-driven formula (Eq. 7).
+4.1 Analyzing LLM-to-VLM Transfer Efficiency
+Thetransfercoefficient λj =w ⊤γj inEq.9indicateshowthe j-thtextualbenchmarkcontributestodownstream
+multimodal performance. Specifically, positive coefficients (λj >0 ) reveal capabilities that naturally transfer,
+such as structured reasoning (dyck_languages_hard,matrixshapes) providing spatial-structural priors, and
+factual knowledge (mmlu_stem) acting as a retrieval base for VQA. Neutral coefficients (λj ≈0 ) stem from
+dimensional orthogonality (e.g., purely syntactictensedetection) or saturated performance (e.g.,piqa).
+Crucially, negativecoefficients(λj <0 )representatransfertax: over-optimizingtext-specificformats(e.g., rigid
+symbolic execution inboolean_expressions_hardor prior suppression incontextual_param_knowledge_conflicts)
+biases the latent space toward discrete textual artifacts, crowding out the continuous capacity needed for
+visual alignment. Selecting backbones by unweighted leaderboard averages can thus be misleading, as scores
+can be artificially inflated by gaming negative-transfer benchmarks; practitioners should instead prioritize
+capabilities with significantly positive coefficients (λj ≫0 ). The full list of the fitted transfer coefficients for
+all textual benchmarks is provided in Table 7.
+4.2 The Instruction-Tuning Disparity in Multimodal Training
+Instruction-tuned (IT/Chat) language models frequently yield suboptimal vision-language model (VLM)
+backbones compared to their base counterparts, despite their superior textual benchmark performance. To
+systematically analyze this instruction-tuning disparity, we summarize the fitted scaling parameters of Eq. 7
+for all the Base and Instruct backbones separately, as shown in Table 2.
+The fitted parameters characterize the baseline divergence in scaling behavior between the two regimes.
+Although instruction tuning does not attenuate the initial transfer efficiency—as evidenced by instruct models’
+higher transfer slope (A= 0.254 vs. 0.212)—it imposes a significant constraint on subsequent data scaling.
+Specifically, the data absorption decay rateBm of Instruct models is1.33× higher than that of Base models
+(0.0104 vs. 0.0078). This accelerated decay indicates that as textual capabilityS increases, Instruct models’
+capacity to absorb multimodal data saturates faster than that of Base models. We attribute this phenomenon to
+the alignment tax: over-optimizing the representational space for text-specific instruction formatting (such as
+prior suppression, Sec. 4.1) constrains the latent space’s geometric flexibility, reducing its residual capacity to
+align with continuous visual embeddings. Consequently, Base backbones demonstrate clear scaling advantages
+in large-data regimes (highDmm) and at higher backbone capacities, where their superior average absorption
+rate (¯B= 0.0161 vs. 0.0147) overcomes Instruct models’ initial transfer head start. Instruct backbones remain
+viable primarily in low-resource regimes (lowDmm) where post-hoc alignment is not computationally feasible.
+Table 2 | Comparison of scaling and transfer parameters between Base and Instruct backbones fitted via Eq. 7.
+TypeA B 0 (10−2)B m (10−2) ¯B(10 −2) MAE (%)
+Base 0.212 1.60 0.78 1.61 1.33
+Chat 0.254 1.49 1.04 1.47 1.11
+8
+
+--- Page 9 ---
+
+Capability-Driven Multimodal Scaling Law
+4.3 Cross-Family Analysis: Heterogeneity in Transfer and Absorption
+While Sec. 4.2 establishes systemic Base-Instruct differences, architectural variations, pretraining corpora, and
+training recipes also dictate distinct transfer dynamics. We resolve these intra-family behaviors by separately
+fitting for four representative model families with sufficient sample sizes, as summarized in Table 3.
+Interestingly, theresultsrevealdistincttrade-offsbetweentextpriorutilizationandmultimodalscalingpotential
+across different model families. Specifically,Llamaexhibits a “high-transfer, low-capacity” regime, yielding
+the highest transfer slope (A= 0.361 ) but suffering from a low basic absorption (B0 = 0.0028) and high
+decay rate (Bm = 0.0455), which leads to a rapid scaling saturation. On the contrary,Qwen3represents
+a “low-transfer, high-capacity” regime, showing a low transfer slope (A= 0.246 ) while performing well in
+absorption (¯B= 0.0126 ). The relatively lowA likely stems from over-optimizations on textual benchmarks,
+and these optimizations are difficult to be fully transferred into multimodal training. However, because of the
+strong model capacity and representation, Qwen3 family shows highly robust towards extensive data scaling.
+Table 3 | Fitted scaling and transfer parameters of Eq. 7 across representative model families. For consistency,
+B0, Bm, and ¯Bare scaled by10 2.
+FamilyA B 0 (10−2)B m (10−2) ¯B(10 −2) MAE (%)
+Llama 0.361 0.28 4.55 1.22 0.90
+Gemma 0.324 2.46 4.51 2.13 1.02
+Falcon3 0.288 1.12 1.33 1.17 0.60
+Qwen3 0.246 1.40 2.19 1.26 1.11
+4.4 Extrapolation of Hyperparameters Across Scales
+0.00 0.05 0.10 0.15 0.20
+A S + (B0 Bm S) ln(D)
+24
+26
+28
+210
+212
+214
+Batch Size
+LLaMA-3.2-1B
+Falcon3-3B-Base
+Qwen3-1.7B-Base
+Qwen3-4B-Base Qwen3-8B-Base
+Falcon3
+LLaMA-3.2
+Qwen3
+Fitted Scaling Law
+Prediction Error Band (±1.96 )
+Predicted Value
+Qwen2.5-72B
+Pred: 2663.3
+Qwen2.5-72B-Instruct
+Pred: 4194.3
+Figure 5 | Relationship between the optimal hyperparameter batch size and the proposed composite scaling
+metricinmultimodalfinetuning. ThepredictedoptimalbatchsizesforQwen2.5-72BandQwen2.5-72B-Instruct
+at 50B tokens are annotated in the figure.
+Beyond accuracy prediction, the Capability-Driven Multimodal Scaling Law also provides a reliable foundation
+for inferring optimal training hyperparameters across different model scales. To obtain the guidance, controlled
+finetuning experiments were conducted on five representative multimodal backbones: Llama-3.2-1B, Falcon3-
+3B-Base, Qwen3-1.7B-Base, Qwen3-4B-Base, and Qwen3-8B-Base. For each backbone, training was performed
+under five batch size configurations in {128, 256, 512, 1024, 2048}. The experiments started at approximately
+16B tokens, up to around 50B, ensuring consistent compute budgets across settings. Along the horizontal axis,
+we compared the loss values across the five batch size configurations at each identical metric value. The batch
+size yielding the lowest loss was plotted as the point’s vertical coordinate in the figure.
+9
+
+--- Page 10 ---
+
+Capability-Driven Multimodal Scaling Law
+AsshowninFigure5, wefindthattheoptimalbatchsizeformultimodalfinetuningincreaseswiththecomposite
+scaling metric ˆA·S+ (B 0 −B m ·S)·lnD mm, indicating that models with stronger textual capability and larger
+multimodal dataset size can process bigger data batches more efficiently. Leveraging this composite metric
+allows us to estimate suitable hyperparameters for unseen backbones directly from their benchmark scores
+and training data specifications, without costly tuning runs.
+Compared with the compute-based scaling law, which uses parameter countN as the predictor, the composite
+metric avoids misleading ordering of hyperparameter optima. For example, compute-based scaling would
+predict that Falcon3-3B-Base requires a larger optimal batch size than Qwen3-1.7B-Base due to its higher
+parameter count. In practice, the opposite holds: Qwen3-1.7B-Base, with a higher composite metric value,
+benefits from a larger batch size. This underscores that the proposed composite scaling metric captures
+backbone capability and data scaling effects more faithfully, enabling correct hyperparameter extrapolation
+across model families and scales.
+5 Conclusion
+In this paper, we proposed the Capability-Driven Multimodal Scaling Law, a predictable framework that shifts
+VLM performance forecasting from parameter-driven approximations to directly observable textual capabilities.
+Backed by an extensive empirical training suite totaling 25,000 H800 GPU-days across 34 LLM backbones, our
+law successfully predicts downstream multimodal trajectories up to 72B-scale models and entirely held-out
+lineages. Beyond prediction, our systematic analysis has exposed a "transfer tax" on gamable benchmarks,
+characterized the data-scaling advantages of base backbones over instruction-tuned variants due to lower
+absorption decay, and mapped model families onto a distinct transfer–absorption trade-off space. Ultimately,
+this work turns costly backbone selection sweeps into a principled, zero-shot quantitative decision, providing a
+scalable blueprint for future multi-modal scaling research.
+Limitations
+While the capability-driven scaling law establishes a predictable and unified framework for VLM performance,
+we position our controlled empirical setup as a pioneering first step, focusing on the primary bottlenecks
+of multimodal scaling while keeping auxiliary variables regulated. Two strategic boundaries of our current
+framework warrant discussion:
+First, all experiments were systematically conducted under a unified, late-fusion training recipe (based on
+LLaVA-OneVision) to cleanly isolate the mathematical contribution of the LLM backbone. Although this
+standardized pipeline serves as a rigorous baseline for our cross-family study, the capability-driven scaling
+paradigm is designed to be architecturally agnostic. A natural and exciting avenue for future work is to extend
+and validate this framework on alternative fusion paradigms, particularly emergingearly-fusionor native
+mixed-modal architectures, where visual and textual tokens are integrated from the very first layer.
+Second, our framework treats the pre-trained vision encoder as a fixed component. In the context of modern
+VLMs, the frozen visual encoder effectively functions as a staticvisual vocabulary. Empirically, the LLM
+backbone serves as the core reasoning engine, accounting for the vast majority of computational cost and
+behavioral complexity, whereas scaling the visual encoder often yields highly predictable and localized
+saturation. To establish a robust pioneering law, it was methodologically vital to first crack the most challenging
+variable—the LLM backbone capability. Incorporating the co-scaling dynamics of this "visual vocabulary" (e.g.,
+scaling encoder capacity or input resolutions) represents a straightforward and structured extension of our
+current law.
+References
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray,
+Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models.arXiv preprint
+arXiv:2001.08361, 2020.
+Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford,
+Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Training compute-optimal
+large language models.arXiv preprint arXiv:2203.15556, 2022.
+10
+
+--- Page 11 ---
+
+Capability-Driven Multimodal Scaling Law
+Haotian Liu, Chunyuan Li, Yuheng Li, Bo Li, Yuanhan Zhang, Sheng Shen, and Yong Jae Lee. Llava-next:
+Improved reasoning, ocr, and world knowledge, January 2024a. URLhttps://llava-vl.github.io/blog/
+2024-01-30-llava-next/.
+Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding,
+Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report.arXiv preprint arXiv:2511.21631, 2025.
+Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin
+Jing, Shenglong Ye, Jie Shao, et al. Internvl3. 5: Advancing open-source multimodal models in versatility,
+reasoning, and efficiency.arXiv preprint arXiv:2508.18265, 2025a.
+Bo Li, Kaichen Zhang, Hao Zhang, Dong Guo, Renrui Zhang, Feng Li, Yuanhan Zhang, Ziwei Liu, and
+Chunyuan Li. Llava-next: Stronger llms supercharge multimodal capabilities in the wild, May 2024a. URL
+https://llava-vl.github.io/blog/2024-05-10-llava-next-stronger-llms/.
+Yangjun Ruan, Chris J Maddison, and Tatsunori B Hashimoto. Observational scaling laws and the predictability
+of langauge model performance.Advances in Neural Information Processing Systems, 37:15841–15892, 2024.
+Dong Guo, Faming Wu, Feida Zhu, Fuxing Leng, Guang Shi, Haobin Chen, Haoqi Fan, Jian Wang, Jianyu
+Jiang, Jiawei Wang, et al. Seed1. 5-vl technical report.arXiv preprint arXiv:2505.07062, 2025.
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng
+Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang,
+Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue,
+Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng
+Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+Qwen2.5 technical report, 2025. URLhttps://arxiv.org/abs/2412.15115.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen
+Huang, Chenxu Lv, et al. Qwen3 technical report.arXiv preprint arXiv:2505.09388, 2025.
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle,
+Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of models.arXiv preprint
+arXiv:2407.21783, 2024.
+Falcon-LLM Team. The falcon 3 family of open models, December 2024. URLhttps://huggingface.co/
+blog/falcon3.
+Gemma Team, Morgane Riviere, Shreya Pathak, Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhupatiraju,
+Léonard Hussenot, Thomas Mesnard, Bobak Shahriari, Alexandre Ramé, Johan Ferret, Peter Liu, Pouya
+Tafti, Abe Friesen, Michelle Casbon, Sabela Ramos, Ravin Kumar, Charline Le Lan, Sammy Jerome, Anton
+Tsitsulin, Nino Vieillard, Piotr Stanczyk, Sertan Girgin, Nikola Momchev, Matt Hoffman, Shantanu Thakoor,
+Jean-Bastien Grill, Behnam Neyshabur, Olivier Bachem, Alanna Walton, Aliaksei Severyn, Alicia Parrish,
+Aliya Ahmad, Allen Hutchison, Alvin Abdagic, Amanda Carl, Amy Shen, Andy Brock, Andy Coenen, Anthony
+Laforge, Antonia Paterson, Ben Bastian, Bilal Piot, Bo Wu, Brandon Royal, Charlie Chen, Chintu Kumar,
+Chris Perry, Chris Welty, Christopher A. Choquette-Choo, Danila Sinopalnikov, David Weinberger, Dimple
+Vijaykumar, Dominika Rogozińska, Dustin Herbison, Elisa Bandy, Emma Wang, Eric Noland, Erica Moreira,
+Evan Senter, Evgenii Eltyshev, Francesco Visin, Gabriel Rasskin, Gary Wei, Glenn Cameron, Gus Martins,
+Hadi Hashemi, Hanna Klimczak-Plucińska, Harleen Batra, Harsh Dhand, Ivan Nardini, Jacinda Mein, Jack
+Zhou, James Svensson, Jeff Stanway, Jetha Chan, Jin Peng Zhou, Joana Carrasqueira, Joana Iljazi, Jocelyn
+Becker, Joe Fernandez, Joost van Amersfoort, Josh Gordon, Josh Lipschultz, Josh Newlan, Ju yeong Ji,
+Kareem Mohamed, Kartikeya Badola, Kat Black, Katie Millican, Keelin McDonell, Kelvin Nguyen, Kiranbir
+Sodhia, Kish Greene, Lars Lowe Sjoesund, Lauren Usui, Laurent Sifre, Lena Heuermann, Leticia Lago, Lilly
+McNealus, Livio Baldini Soares, Logan Kilpatrick, Lucas Dixon, Luciano Martins, Machel Reid, Manvinder
+Singh, Mark Iverson, Martin Görner, Mat Velloso, Mateo Wirth, Matt Davidow, Matt Miller, Matthew Rahtz,
+Matthew Watson, Meg Risdal, Mehran Kazemi, Michael Moynihan, Ming Zhang, Minsuk Kahng, Minwoo
+Park, Mofi Rahman, Mohit Khatwani, Natalie Dao, Nenshad Bardoliwalla, Nesh Devanathan, Neta Dumai,
+Nilay Chauhan, Oscar Wahltinez, Pankil Botarda, Parker Barnes, Paul Barham, Paul Michel, Pengchong
+Jin, Petko Georgiev, Phil Culliton, Pradeep Kuppala, Ramona Comanescu, Ramona Merhej, Reena Jana,
+Reza Ardeshir Rokni, Rishabh Agarwal, Ryan Mullins, Samaneh Saadat, Sara Mc Carthy, Sarah Cogan,
+Sarah Perrin, Sébastien M. R. Arnold, Sebastian Krause, Shengyang Dai, Shruti Garg, Shruti Sheth, Sue
+Ronstrom, Susan Chan, Timothy Jordan, Ting Yu, Tom Eccles, Tom Hennigan, Tomas Kocisky, Tulsee Doshi,
+Vihan Jain, Vikas Yadav, Vilobh Meshram, Vishal Dharmadhikari, Warren Barkley, Wei Wei, Wenming Ye,
+Woohyun Han, Woosuk Kwon, Xiang Xu, Zhe Shen, Zhitao Gong, Zichuan Wei, Victor Cotruta, Phoebe Kirk,
+Anand Rao, Minh Giang, Ludovic Peran, Tris Warkentin, Eli Collins, Joelle Barral, Zoubin Ghahramani, Raia
+Hadsell, D. Sculley, Jeanine Banks, Anca Dragan, Slav Petrov, Oriol Vinyals, Jeff Dean, Demis Hassabis,
+11
+
+--- Page 12 ---
+
+Capability-Driven Multimodal Scaling Law
+Koray Kavukcuoglu, Clement Farabet, Elena Buchatskaya, Sebastian Borgeaud, Noah Fiedel, Armand Joulin,
+Kathleen Kenealy, Robert Dadashi, and Alek Andreev. Gemma 2: Improving open language models at a
+practical size, 2024. URLhttps://arxiv.org/abs/2408.00118.
+Xiao Bi, Deli Chen, Guanting Chen, Shanhuang Chen, Damai Dai, Chengqi Deng, Honghui Ding, Kai Dong,
+Qiushi Du, Zhe Fu, et al. Deepseek llm: Scaling open-source language models with longtermism.arXiv
+preprint arXiv:2401.02954, 2024.
+Albert Q. Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, Devendra Singh Chaplot, Diego
+de las Casas, Florian Bressand, Gianna Lengyel, Guillaume Lample, Lucile Saulnier, Lélio Renard Lavaud,
+Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and
+William El Sayed. Mistral 7b, 2023. URLhttps://arxiv.org/abs/2310.06825.
+Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yanwei
+Li, Ziwei Liu, et al. Llava-onevision: Easy visual task transfer.arXiv preprint arXiv:2408.03326, 2024b.
+Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer. Sigmoid loss for language image pre-
+training. InProceedings of the IEEE/CVF international conference on computer vision, pages 11975–11986,
+2023.
+Shuhao Gu, Jialing Zhang, Siyuan Zhou, Kevin Yu, Zhaohu Xing, Liangdong Wang, Zhou Cao, Jintao Jia,
+Zhuoyi Zhang, Yixuan Wang, et al. Infinity-mm: Scaling multimodal performance with large-scale and
+high-quality instruction data.arXiv preprint arXiv:2410.18558, 2024.
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran
+Arulraj, Xuan He, Ziyan Jiang, et al. Mmlu-pro: A more robust and challenging multi-task language
+understanding benchmark.Advances in Neural Information Processing Systems, 37:95266–95290, 2024a.
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian
+Michael, and Samuel R Bowman. Gpqa: A graduate-level google-proof q&a benchmark.arXiv preprint
+arXiv:2311.12022, 2023.
+Mirac Suzgun, Nathan Scales, Nathanael Schärli, Sebastian Gehrmann, Yi Tay, Hyung Won Chung, Aakanksha
+Chowdhery, Quoc V Le, Ed H Chi, Denny Zhou, , and Jason Wei. Challenging big-bench tasks and whether
+chain-of-thought can solve them.arXiv preprint arXiv:2210.09261, 2022.
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob
+Steinhardt. Measuring mathematical problem solving with the math dataset.NeurIPS, 2021a.
+Jasper Dekoninck, Nikola Jovanović, Tim Gehrunger, Kári Rögnvaldsson, Ivo Petrov, Chenhao Sun, and Martin
+Vechev. Beyond benchmarks: Matharena as an evaluation platform for mathematics with llms. 2026. URL
+https://arxiv.org/abs/2605.00674.
+Naman Jain, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik
+Sen, and Ion Stoica. Livecodebench: Holistic and contamination free evaluation of large language models
+for code. InInternational Conference on Learning Representations, volume 2025, pages 58791–58831, 2025.
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri
+Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael
+Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov,
+Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such,
+Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen
+Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William
+Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec
+Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario
+Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba. Evaluating large language models trained
+on code. 2021.
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou.
+Instruction-following evaluation for large language models, 2023. URLhttps://arxiv.org/abs/2311.
+07911.
+Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang,
+Conghui He, Ziwei Liu, et al. Mmbench: Is your multi-modal model an all-around player? InEuropean
+conference on computer vision, pages 216–233. Springer, 2024b.
+Lin Chen, Jinsong Li, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Zehui Chen, Haodong Duan, Jiaqi Wang, Yu Qiao,
+Dahua Lin, et al. Are we on the right way for evaluating large vision-language models?arXiv preprint
+arXiv:2403.20330, 2024.
+12
+
+--- Page 13 ---
+
+Capability-Driven Multimodal Scaling Law
+Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang,
+Weiming Ren, Yuxuan Sun, Cong Wei, Botao Yu, Ruibin Yuan, Renliang Sun, Ming Yin, Boyuan Zheng,
+Zhenzhu Yang, Yibo Liu, Wenhao Huang, Huan Sun, Yu Su, and Wenhu Chen. Mmmu: A massive multi-
+discipline multimodal understanding and reasoning benchmark for expert agi. InProceedings of CVPR,
+2024.
+Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh Hajishirzi, Hao Cheng, Kai-Wei Chang,
+Michel Galley, and Jianfeng Gao. Mathvista: Evaluating mathematical reasoning of foundation models in
+visual contexts. InInternational Conference on Learning Representations (ICLR), 2024.
+Tianrui Guan, Fuxiao Liu, Xiyang Wu, Ruiqi Xian, Zongxia Li, Xiaoyu Liu, Xijun Wang, Lichang Chen, Furong
+Huang, Yaser Yacoob, Dinesh Manocha, and Tianyi Zhou. Hallusionbench: An advanced diagnostic suite for
+entangled language hallucination and visual illusion in large vision-language models. InProceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 14375–14385, June 2024.
+Aniruddha Kembhavi, Mike Salvato, Eric Kolve, Minjoon Seo, Hannaneh Hajishirzi, and Ali Farhadi. A diagram
+is worth a dozen images, 2016.
+Yuliang Liu, Zhang Li, Mingxin Huang, Biao Yang, Wenwen Yu, Chunyuan Li, Xu-Cheng Yin, Cheng-Lin Liu,
+Lianwen Jin, and Xiang Bai. Ocrbench: on the hidden mystery of ocr in large multimodal models.Science
+China Information Sciences, 67(12), December 2024c. ISSN 1869-1919. doi:10.1007/s11432-024-4235-6.
+URLhttp://dx.doi.org/10.1007/s11432-024-4235-6.
+Weihao Yu, Zhengyuan Yang, Linjie Li, Jianfeng Wang, Kevin Lin, Zicheng Liu, Xinchao Wang, and Lijuan
+Wang. Mm-vet: Evaluating large multimodal models for integrated capabilities. InInternational conference
+on machine learning. PMLR, 2024.
+OpenCompass Contributors. Opencompass: A universal evaluation platform for foundation models.https:
+//github.com/open-compass/opencompass, 2023.
+Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya Pathak, Nino Vieillard, Ramona Merhej, Sarah Perrin,
+Tatiana Matejovicova, Alexandre Ramé, Morgane Rivière, et al. Gemma 3 technical report.arXiv preprint
+arXiv:2503.19786, 2025.
+Mingxin Li, Yanzhao Zhang, Dingkun Long, Keqin Chen, Sibo Song, Shuai Bai, Zhibo Yang, Pengjun Xie,
+An Yang, Dayiheng Liu, et al. Qwen3-vl-embedding and qwen3-vl-reranker: A unified framework for
+state-of-the-art multimodal retrieval and ranking.arXiv preprint arXiv:2601.04720, 2026.
+Zhiyu Wu, Xiaokang Chen, Zizheng Pan, Xingchao Liu, Wen Liu, Damai Dai, Huazuo Gao, Yiyang Ma,
+Chengyue Wu, Bingxuan Wang, et al. Deepseek-vl2: Mixture-of-experts vision-language models for advanced
+multimodal understanding.arXiv preprint arXiv:2412.10302, 2024.
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning.Advances in neural
+information processing systems, 36:34892–34916, 2023a.
+DeyaoZhu, JunChen, XiaoqianShen, XiangLi, andMohamedElhoseiny. Minigpt-4: Enhancingvision-language
+understanding with advanced large language models.arXiv preprint arXiv:2304.10592, 2023.
+Shengbang Tong, Zhuang Liu, Yuexiang Zhai, Yi Ma, Yann LeCun, and Saining Xie. Eyes wide shut? exploring
+the visual shortcomings of multimodal llms. InProceedings of the IEEE/CVF conference on computer vision
+and pattern recognition, pages 9568–9578, 2024.
+Wenliang Dai, Junnan Li, Dongxu Li, Anthony Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale N Fung,
+and Steven Hoi. Instructblip: Towards general-purpose vision-language models with instruction tuning.
+Advances in neural information processing systems, 36:49250–49267, 2023.
+Lai Wei, Zihao Jiang, Weiran Huang, and Lichao Sun. Instructiongpt-4: A 200-instruction paradigm for
+fine-tuning minigpt-4.arXiv preprint arXiv:2308.12067, 2023.
+Samir Yitzhak Gadre, Georgios Smyrnis, Vaishaal Shankar, Suchin Gururangan, Mitchell Wortsman, Rulin Shao,
+Jean Mercat, Alex Fang, Jeffrey Li, Sedrick Keh, et al. Language models scale reliably with over-training and
+on downstream tasks.arXiv preprint arXiv:2403.08540, 2024.
+Berivan Isik, Natalia Ponomareva, Hussein Hazimeh, Dimitris Paparas, Sergei Vassilvitskii, and Sanmi Koyejo.
+Scaling laws for downstream task performance of large language models. InICLR 2024 Workshop on
+Mathematical and Empirical Understanding of Foundation Models, 2024.
+Nikhil Sardana, Jacob Portes, Sasha Doubov, and Jonathan Frankle. Beyond chinchilla-optimal: Accounting
+for inference in language model scaling laws.arXiv preprint arXiv:2401.00448, 2023.
+13
+
+--- Page 14 ---
+
+Capability-Driven Multimodal Scaling Law
+Niklas Muennighoff, Alexander Rush, Boaz Barak, Teven Le Scao, Nouamane Tazi, Aleksandra Piktus, Sampo
+Pyysalo, Thomas Wolf, and Colin A Raffel. Scaling data-constrained language models.Advances in Neural
+Information Processing Systems, 36:50358–50376, 2023.
+Fuzhao Xue, Yao Fu, Wangchunshu Zhou, Zangwei Zheng, and Yang You. To repeat or not to repeat: Insights
+from scaling llm under token-crisis.Advances in Neural Information Processing Systems, 36:59304–59322,
+2023.
+Armen Aghajanyan, Lili Yu, Alexis Conneau, Wei-Ning Hsu, Karen Hambardzumyan, Susan Zhang, Stephen
+Roller, Naman Goyal, Omer Levy, and Luke Zettlemoyer. Scaling laws for generative mixed-modal language
+models. InInternational Conference on Machine Learning, pages 265–279. PMLR, 2023.
+Mustafa Shukor, Enrico Fini, Victor Guilherme Turrisi da Costa, Matthieu Cord, Joshua Susskind, and Alaaeldin
+El-Nouby. Scaling laws for native multimodal models.arXiv preprint arXiv:2504.07951, 2025.
+Aarohi Srivastava, Abhinav Rastogi, Abhishek Rao, Abu Awal Md Shoeb, Abubakar Abid, Adam Fisch, Adam R
+Brown, Adam Santoro, Aditya Gupta, Adrià Garriga-Alonso, et al. Beyond the imitation game: Quantifying
+and extrapolating the capabilities of language models.arXiv preprint arXiv:2206.04615, 2022.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding.Proceedings of the International Conference on Learning
+Representations (ICLR), 2021b.
+Zihan Liu, Yan Xu, Tiezheng Yu, Wenliang Dai, Ziwei Ji, Samuel Cahyawijaya, Andrea Madotto, and Pascale
+Fung. Crossner: Evaluating cross-domain named entity recognition. InProceedings of the AAAI conference on
+artificial intelligence, volume 35, pages 13452–13460, 2021.
+Mohammad Taher Pilehvar and Jose Camacho-Collados. Wic: the word-in-context dataset for evaluating
+context-sensitive meaning representations. InProceedings of the 2019 Conference of the North American
+Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and
+Short Papers), pages 1267–1273, 2019.
+Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Winogrande: An adversarial
+winograd schema challenge at scale.Communications of the ACM, 64(9):99–106, 2021.
+Daniel Khashabi, Snigdha Chaturvedi, Michael Roth, Shyam Upadhyay, and Dan Roth. Looking beyond the
+surface:a challenge set for reading comprehension over multiple sentences. InNAACL, 2018.
+Yonatan Bisk, Rowan Zellers, Ronan Le Bras, Jianfeng Gao, and Yejin Choi. Piqa: Reasoning about physical
+commonsense in natural language. InThirty-Fourth AAAI Conference on Artificial Intelligence, 2020.
+Jian Liu, Leyang Cui, Hanmeng Liu, Dandan Huang, Yile Wang, and Yue Zhang. Logiqa: A challenge dataset
+for machine reading comprehension with logical reasoning.arXiv preprint arXiv:2007.08124, 2020.
+Oyvind Tafjord, Bhavana Dalvi, and Peter Clark. Proofwriter: Generating implications, proofs, and abductive
+statements over natural language. InFindings of the Association for Computational Linguistics: ACL-IJCNLP
+2021, pages 3621–3634, 2021.
+Bohao Li, Rui Wang, Guangzhi Wang, Yuying Ge, Yixiao Ge, and Ying Shan. Seed-bench: Benchmarking
+multimodal llms with generative comprehension.arXiv preprint arXiv:2307.16125, 2023a.
+Bohao Li, Yuying Ge, Yixiao Ge, Guangzhi Wang, Rui Wang, Ruimao Zhang, and Ying Shan. Seed-bench-2:
+Benchmarking multimodal large language models.arXiv preprint arXiv:2311.17092, 2023b.
+Bohao Li, Yuying Ge, Yi Chen, Yixiao Ge, Ruimao Zhang, and Ying Shan. Seed-bench-2-plus: Benchmarking
+multimodal large language models with text-rich visual comprehension.arXiv preprint arXiv:2404.16790,
+2024c.
+Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Jinrui Yang, Xiawu Zheng,
+Ke Li, Xing Sun, et al. Mme: A comprehensive evaluation benchmark for multimodal large language models.
+Advances in Neural Information Processing Systems, 38, 2026.
+Jieyu Zhang, Weikai Huang, Zixian Ma, Oscar Michel, Dong He, Tanmay Gupta, Wei-Chiu Ma, Ali Farhadi,
+Aniruddha Kembhavi, and Ranjay Krishna. Task me anything.arXiv preprint arXiv:2406.11775, 2024a.
+Dustin Schwenk, Apoorv Khandelwal, Christopher Clark, Kenneth Marino, and Roozbeh Mottaghi. A-okvqa: A
+benchmark for visual question answering using world knowledge. InEuropean conference on computer vision,
+pages 146–162. Springer, 2022.
+X.AI. Grok-1.5 vision preview.https://x.ai/blog/grok-1.5v, 2024.
+14
+
+--- Page 15 ---
+
+Capability-Driven Multimodal Scaling Law
+Wenbin Wang, Liang Ding, Minyan Zeng, Xiabin Zhou, Li Shen, Yong Luo, Wei Yu, and Dacheng Tao. Divide,
+conquer and combine: A training-free framework for high-resolution image perception in multimodal large
+language models. InProceedings of the AAAI Conference on Artificial Intelligence, volume 39, pages 7907–7915,
+2025b.
+YiFan Zhang, Huanyu Zhang, Haochen Tian, Chaoyou Fu, Shuangqing Zhang, Junfei Wu, Feng Li, Kun Wang,
+Qingsong Wen, Zhang Zhang, et al. Mme-realworld: Could your multimodal llm challenge high-resolution
+real-world scenarios that are difficult for humans? InInternational Conference on Learning Representations,
+volume 2025, pages 89655–89701, 2025.
+Penghao Wu and Saining Xie. V*: Guided visual search as a core mechanism in multimodal llms.arXiv preprint
+arXiv:2312.14135, 2023.
+Zekun Li, Xianjun Yang, Kyuri Choi, Wanrong Zhu, Ryan Hsieh, HyeonJung Kim, Jin Hyuk Lim, Sungyoung
+Ji, Byungju Lee, Xifeng Yan, et al. Mmsci: A multimodal multi-discipline dataset for phd-level scientific
+comprehension. InAI for Accelerated Materials Design-Vienna 2024, 2024d.
+Chengke Zou, Xingang Guo, Rui Yang, Junyu Zhang, Bin Hu, and Huan Zhang. Dynamath: A dynamic
+visual benchmark for evaluating mathematical reasoning robustness of vision language models, 2024. URL
+https://arxiv.org/abs/2411.00836.
+Pan Lu, Swaroop Mishra, Tony Xia, Liang Qiu, Kai-Wei Chang, Song-Chun Zhu, Oyvind Tafjord, Peter Clark, and
+Ashwin Kalyan. Learn to explain: Multimodal reasoning via thought chains for science question answering.
+InThe 36th Conference on Neural Information Processing Systems (NeurIPS), 2022.
+James Burgess, Jeffrey J Nirschl, Laura Bravo-Sánchez, Alejandro Lozano, Sanket Rajan Gupte, Jesus G
+Galaz-Montoya, Yuhui Zhang, Yuchang Su, Disha Bhowmik, Zachary Coman, et al. Microvqa: A multimodal
+reasoning benchmark for microscopy-based scientific research. InProceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pages 19552–19564, 2025.
+Yuxuan Sun, Hao Wu, Chenglu Zhu, Sunyi Zheng, Qizi Chen, Kai Zhang, Yunlong Zhang, Dan Wan, Xiaoxiao
+Lan, Mengyue Zheng, et al. Pathmmu: A massive multimodal expert-level benchmark for understanding
+and reasoning in pathology. InEuropean Conference on Computer Vision, pages 56–73. Springer, 2024.
+Ke Wang, Junting Pan, Weikang Shi, Zimu Lu, Houxing Ren, Aojun Zhou, Mingjie Zhan, and Hongsheng Li.
+Measuring multimodal mathematical reasoning with math-vision dataset. InThe Thirty-eight Conference on
+Neural Information Processing Systems Datasets and Benchmarks Track, 2024b. URLhttps://openreview.
+net/forum?id=QWTCcxMpPA.
+Renrui Zhang, Dongzhi Jiang, Yichi Zhang, Haokun Lin, Ziyu Guo, Pengshuo Qiu, Aojun Zhou, Pan Lu, Kai-Wei
+Chang, Yu Qiao, et al. Mathverse: Does your multi-modal llm truly see the diagrams in visual math problems?
+InEuropean Conference on Computer Vision, pages 169–186. Springer, 2024b.
+MineshMathew, VirajBagal, RubènTito, DimosthenisKaratzas, ErnestValveny, andCVJawahar. Infographicvqa.
+InProceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision, pages 1697–1706,
+2022.
+Yoonsik Kim, Moonbin Yim, and Ka Yeon Song. Tablevqa-bench: A visual question answering benchmark on
+multiple table domains.arXiv preprint arXiv:2404.19205, 2024.
+Anand Mishra, Shashank Shekhar, Ajeet Kumar Singh, and Anirban Chakraborty. Ocr-vqa: Visual question
+answering by reading text in images. InICDAR, 2019.
+Minesh Mathew, Dimosthenis Karatzas, and C.V. Jawahar. Docvqa: A dataset for vqa on document images. In
+Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV), pages 2200–2209,
+January 2021.
+Drew A Hudson and Christopher D Manning. Gqa: A new dataset for real-world visual reasoning and
+compositional question answering.Conference on Computer Vision and Pattern Recognition (CVPR), 2019.
+Yusu Qian, Hanrong Ye, Jean-Philippe Fauconnier, Peter Grasch, Yinfei Yang, and Zhe Gan. Mia-bench:
+Towards better instruction following evaluation of multimodal llms. InInternational Conference on Learning
+Representations, volume 2025, pages 35145–35165, 2025.
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning. InNeurIPS, 2023b.
+YifanLi, YifanDu, KunZhou, JinpengWang, WayneXinZhao, andJi-RongWen. Evaluatingobjecthallucination
+in large vision-language models. InThe 2023 Conference on Empirical Methods in Natural Language Processing,
+2023c. URLhttps://openreview.net/forum?id=xozJw0kZXF.
+15
+
+--- Page 16 ---
+
+Capability-Driven Multimodal Scaling Law
+Yipo Huang, Quan Yuan, Xiangfei Sheng, Zhichao Yang, Haoning Wu, Pengfei Chen, Yuzhe Yang, Leida Li,
+and Weisi Lin. Aesbench: An expert benchmark for multimodal large language models on image aesthetics
+perception.arXiv preprint arXiv:2401.08276, 2024.
+Junyang Wang, Yuhang Wang, Guohai Xu, Jing Zhang, Yukai Gu, Haitao Jia, Ming Yan, Ji Zhang, and
+Jitao Sang. An llm-free multi-dimensional benchmark for mllms hallucination evaluation.arXiv preprint
+arXiv:2311.07397, 2023.
+Dan Hendrycks and Kevin Gimpel. Gaussian error linear units (gelus).arXiv preprint arXiv:1606.08415, 2016.
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee. Improved baselines with visual instruction tuning.
+InProceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 26296–26306,
+2024d.
+Bo Li, Hao Zhang, Kaichen Zhang, Dong Guo, Yuanhan Zhang, Renrui Zhang, Feng Li, Ziwei Liu, and
+Chunyuan Li. Llava-next: What else influences visual instruction tuning beyond data?, May 2024e. URL
+https://llava-vl.github.io/blog/2024-05-25-llava-next-ablations/.
+Peter J. Huber. Robust Estimation of a Location Parameter.The Annals of Mathematical Statistics, 35
+(1):73–101, March 1964. ISSN 0003-4851, 2168-8990. doi:10.1214/aoms/1177703732. URL
+https://projecteuclid.org/journals/annals-of-mathematical-statistics/volume-35/issue-1/
+Robust-Estimation-of-a-Location-Parameter/10.1214/aoms/1177703732.full.
+Jorge Nocedal. Updating Quasi-Newton Matrices with Limited Storage.Mathematics of Computation, 35(151):
+773–782, 1980. ISSN 0025-5718. doi:10.2307/2006193. URLhttps://www.jstor.org/stable/2006193.
+Rainer Storn. Differrential evolution-a simple and efficient adaptive scheme for global optimization over
+continuous spaces.Technical report, International Computer Science Institute, 11, 1995.
+A Preliminary Observations
+A.1 Correlation Between Textual and Multimodal Capabilities
+Intuitively, a stronger LLM backbone should yield a more capable VLM. To empirically validate this, we
+collect and analyze the evaluation results of 17 representative VLMs and their corresponding LLMs from the
+OpenCompass leaderboard.
+Figure 6 illustrates the correlation between models’ textual and multimodal proficiencies. Specifically, the
+textual capability (x-axis) is computed as the average score across seven benchmarks spanning complementary
+capability dimensions: MMLU-Pro [Wang et al., 2024a], GPQA-Diamond [Rein et al., 2023], BBH [Suzgun
+et al., 2022], MATH-500 [Hendrycks et al., 2021a], AIME [Dekoninck et al., 2026], LiveCodeBench [Jain
+et al., 2025], HumanEval [Chen et al., 2021], and IFEval [Zhou et al., 2023]. The multimodal performance
+(y-axis) is calculated as the average score across eight prominent benchmarks: MMBench v1.1 Chinese and
+English test sets [Liu et al., 2024b], MMStar [Chen et al., 2024], MMMU val set [Yue et al., 2024], MathVista
+test-mini split [Lu et al., 2024], HallusionBench [Guan et al., 2024], AI2D test set [Kembhavi et al., 2016],
+OCRBench [Liu et al., 2024c], and MMVet [Yu et al., 2024]. We observe a strong positive correlation between
+the foundational textual capabilities of the LLMs and the performance of their VLM counterparts, suggesting
+that a stronger textual foundation generally leads to better multimodal performance.
+A.2 The Limitation of Compute-Based Fitting
+A natural hypothesis is that multimodal training loss follows a scaling law governed by model size and training
+data volume, consistent with well-validated scaling laws in language modeling [Hoffmann et al., 2022, Kaplan
+et al., 2020]. To verify this hypothesis, we train a series of VLMs across multiple model families using a unified
+training recipe (Appendix C.3), and model the multimodal training loss as a power-law function of parameter
+count N and multimodal training token volumeDmm, following the fitting methodology of Hoffmann et al.
+[2022]:
+L(N, D) = A
+N α + B
+Dβ
+mm
++E(10)
+where A, B, α, β, and E are fitted constants, andE represents the irreducible loss. As shown in Fig. 7a,
+this formulation fits well within the same model family: scaling up from Falcon3-1B-Base to Falcon3-10B-
+16
+
+--- Page 17 ---
+
+Capability-Driven Multimodal Scaling Law
+40 50 60 70 80 90
+LLM T ext Score
+60
+65
+70
+75
+80VLM Multimodal Score
+Spearman   = 0.791  (p < 0.001)
+Fit: y = 0.23x + 59.20
+InternVL3-78B
+InternVL3-38B Ovis2.5-9B
+MiniCPM-V-4_5Ovis2-34B
+Qwen2.5-VL-72B
+R-4BInternVL3-14B
+Qwen2.5-VL-32B
+SAIL-VL2-8B
+InternVL3-8B
+SAIL-VL-1.6-8B
+Ovis1.6-Gemma2-27B
+SAIL-VL2-2BOvis1.6-Gemma2-9B
+InternVL2.5-8B
+Ovis1.5-Gemma2-9B
+Figure 6 | Correlation between LLM text scores and VLM multimodal scores across 17 models. Each point
+represents an individual model. The dashed line indicates the linear regression fit. Spearman’s rank correlation
+coefficient (ρ= 0.791 , p <0.001 ) is shown in the upper left, and the fitted equation (y= 0.23x+ 59.20 ) is
+locatedinthelowerright. AllevaluationscoresaresourcedfromtheOpenCompassleaderboard[OpenCompass
+Contributors, 2023], available athttps://opencompass.org.cn.
+Base [Team, 2024] yields a steady reduction in multimodal training loss consistent with Eq. 10. The fitting
+procedure is detailed in Appendix D.
+0.0 0.2 0.4 0.6 0.8 1.0
+Number of Tokens 1e11
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+1.05
+1.10
+Training Loss
+Falcon3-1B-Base (Measured)
+Falcon3-3B-Base (Measured)
+Falcon3-7B-Base (Measured)
+Falcon3-10B-Base (Measured)
+Falcon3-1B-Base (Fitted)
+Falcon3-3B-Base (Fitted)
+Falcon3-7B-Base (Fitted)
+Falcon3-10B-Base (Fitted)
+(a) Falcon3 family scaling law fitting.
+0.0 0.2 0.4 0.6 0.8 1.0
+Number of Tokens 1e11
+0.75
+0.80
+0.85
+0.90
+0.95
+Training Loss
+Falcon3-3B-Base (Measured)
+Llama-3.2-3B (Measured)
+Falcon3-3B-Base (Fitted)
+Llama-3.2-3B (Fitted) (b) Cross-family comparison: Llama-3.2-3B vs. Falcon3-3B-
+Base.
+Figure 7 | Multimodal training loss scaling law fitting and cross-family comparison, using the methodology
+of Hoffmann et al. [2022]. (a) Falcon3 family fitted with a compute-based scaling law. (b) Despite similar
+parameter counts, Llama-3.2-3B and Falcon3-3B-Base show divergent loss trajectories that cannot be captured
+by a single compute-based scaling curve.
+However, this regularity breaks down across model families. The root cause is thatNalone is an incomplete
+proxy for LLM capability: it ignores the pre-training data volumeDtext, which jointly determines total training
+compute Ctext ≈6N D text [Kaplan et al., 2020]. Two models with identicalN but different Dtext therefore
+17
+
+--- Page 18 ---
+
+Capability-Driven Multimodal Scaling Law
+operate at different effective compute scales, resulting in substantially different textual capabilities that Eq. 10
+is structurally blind to.
+This is concretely illustrated by Llama-3.2-3B [Grattafiori et al., 2024] and Falcon3-3B-Base [Team, 2024]:
+despite nearly identical parameter counts, their divergent pre-training histories produce substantially different
+textual capabilities, leading to divergent VLM loss trajectories that a unifiedN-D scaling law fails to fit
+(Fig. 7b).
+This drives us to shift from parameter-driven to capability-driven fitting: rather than usingN as a surrogate
+for model quality, we directly measure the observable textual capability of an LLM as a unified proxy that
+implicitly encodes the joint effect ofN, Dtext, and training quality. The formal definition is presented in Sec. 2.
+B Related Works
+Vision Language Models.Driven by rapid advancements in LLMs [Grattafiori et al., 2024, Yang et al., 2025,
+Team et al., 2025], VLMs [Li et al., 2026, Wang et al., 2025a, Wu et al., 2024, Guo et al., 2025] have achieved
+remarkable progress in recent years. Built upon pretrained LLMs, mainstream VLM architectures such as
+Qwen3-VL [Li et al., 2026] and Seed1.5-VL [Guo et al., 2025] integrate visual tokens by projecting them
+into the language model’s embedding space as sequential inputs, following paradigms established by LLaVA
+[Liu et al., 2023a] and MiniGPT-4 [Zhu et al., 2023]. However, despite this architectural dependency, the
+impact of the underlying LLM’s intrinsic capabilities on VLM performance remains largely unexplored. While
+extensive research has focused on optimizing vision encoders and cross-modal alignment mechanisms such
+as refining CLIP-based encoders [Tong et al., 2024], designing Q-former connectors [Dai et al., 2023], and
+curating instruction-tuning data [Wei et al., 2023, Gu et al., 2024], the systematic investigation into how
+fundamental LLM attributes propagate to and shape multimodal behaviors is still lacking.
+ScalingLaws.Scaling laws establish predictive frameworks for allocating computational resources to maximize
+model performance. Kaplan et al. [2020] demonstrate power-law scaling in autoregressive language models,
+where loss improves predictably with model size, data, and compute. However, Hoffmann et al. [2022]
+challenge this through refined training configurations, arguing that model size and training tokens must be
+scaled equally—contradicting Kaplan’s earlier conclusions. Downstream performance has also been examined:
+Gadre et al. [2024] study over-training effects on task-specific metrics, while others investigate scaling laws
+for translation and agentic benchmarks [Isik et al., 2024, Ruan et al., 2024]. Beyond training, inference-
+time scaling [Sardana et al., 2023] reveals critical trade-offs: for high inference demand, models should
+be over-trained beyond Chinchilla-optimal points using smaller parameters but more tokens per parameter
+to minimize total deployment costs. Under data constraints, moderate repetition has minimal impact, but
+excessive repetition causes multi-epoch degradation and diminishing returns [Muennighoff et al., 2023, Xue
+et al., 2023]. However, most scaling laws are primarily established for large language models, with multimodal
+counterparts remaining underexplored. Notably, Aghajanyan et al. [2023] examined multimodal models that
+tokenize text, speech, and image modalities into discrete tokens for unified generation. In parallel, recent
+work on native multimodal models has focused on early-fusion architectures [Shukor et al., 2025]. In contrast,
+we systematically investigate late-fusion models that process image-text inputs and generate text outputs,
+focusing on the scaling dynamics of LLM backbones while keeping vision encoders frozen.
+C Experimental Setup
+To validate the proposed capability extrapolation framework from LLMs to VLMs, and to thoroughly investigate
+the behavior of different model families, parameter scales, and alignment stages during multimodal transfer,
+we design a strictly controlled experimental framework. The core objective of this study is to isolate and
+quantify the independent impacts of intrinsic LLM capabilities and the volume of multimodal training data on
+the final VLM performance. Therefore, across all experiments, we maintain strict consistency in the multimodal
+alignment architecture and the training recipe, treating only the selection of the LLM and the multimodal
+training data volume as independent variables.
+C.1 Model Selection
+To systematically evaluate how capabilities transfer from LLMs to VLMs and to validate our proposed extrapola-
+tion framework, we carefully curate a diverse set of base models. Rather than relying on a homogenous group
+of models, our selection is designed to control specific variables and is driven by three primary considerations:
+18
+
+--- Page 19 ---
+
+Capability-Driven Multimodal Scaling Law
+Table 4 | Summary of all 34 LLM backbones used in this study. Model names correspond to their Hugging
+Face identifiers.
+Family Model Type Size
+Qwen3
+Qwen3-0.6B-Base Base 0.6B
+Qwen3-0.6B Instruct 0.6B
+Qwen3-1.7B-Base Base 1.7B
+Qwen3-1.7B Instruct 1.7B
+Qwen3-4B-Base Base 4B
+Qwen3-4B Instruct 4B
+Qwen3-8B-Base Base 8B
+Qwen3-8B Instruct 8B
+Qwen3-30B-A3B-Base Base 30B (A3B)
+Qwen3-30B-A3B Instruct 30B (A3B)
+Qwen2.5 Qwen2.5-72B Base 72B
+Qwen2.5-72B-Instruct Instruct 72B
+Falcon3
+Falcon3-1B-Base Base 1B
+Falcon3-1B-Instruct Instruct 1B
+Falcon3-3B-Base Base 3B
+Falcon3-3B-Instruct Instruct 3B
+Falcon3-7B-Base Base 7B
+Falcon3-7B-Instruct Instruct 7B
+Falcon3-10B-Base Base 10B
+Falcon3-10B-Instruct Instruct 10B
+Llama-3.2
+Llama-3.2-1B Base 1B
+Llama-3.2-1B-Instruct Instruct 1B
+Llama-3.2-3B Base 3B
+Llama-3.2-3B-Instruct Instruct 3B
+Gemma-2
+gemma-2-2b Base 2B
+gemma-2-2b-it Instruct 2B
+gemma-2-9b Base 9B
+gemma-2-9b-it Instruct 9B
+Mistral Mistral-7B-v0.3 Base 7B
+Mistral-7B-Instruct-v0.3 Instruct 7B
+DeepSeek
+deepseek-llm-7b-base Base 7B
+deepseek-llm-7b-chat Instruct 7B
+deepseek-math-7b-base Base 7B
+deepseek-math-7b-instruct Instruct 7B
+Cross-Family Comparison and Decoupling Compute ScalingCompute scaling laws often fail across different
+model families. To decouple performance from parameter counts, we pair models with identical sizes but
+distinct text capabilities (e.g., Llama-3.2-1B vs. Falcon3-1B). This verifies our hypothesis: intrinsic text
+capability dictates the multimodal starting point.
+Alignment Stages ExplorationTo analyze how different text alignment stages affect multimodal transfer,
+we systematically select paired pre-trained and instruction-tuned versions of the same underlying LLMs. This
+paired setup allows us to quantitatively compare their transfer behaviors and investigate how the specific text
+capabilities altered during the instruction-tuning stage influence subsequent visual-language alignment.
+Scale SpanOur selected models span parameter sizes from 0.6B to 72B and include Mixture-of-Experts (MoE)
+architectures.
+Detailed specifications and family affiliations of all selected models are summarized in Table 4.
+19
+
+--- Page 20 ---
+
+Capability-Driven Multimodal Scaling Law
+Table 5 | Textual benchmarks used in this study, grouped by capability dimension. BB: BIG-Bench [Srivastava
+et al., 2022]; BBH: BIG-Bench Hard [Suzgun et al., 2022]; MMLU: Massive Multitask Language Understand-
+ing [Hendrycks et al., 2021b].
+Category Benchmark Source
+Information Extraction CrossNER [Liu et al., 2021]
+Knowledge
+hindu_knowledge BB
+mmlu_stem MMLU
+mmlu_humanities MMLU
+mmlu_other MMLU
+dark_humor_detection BB
+anachronisms BB
+Language
+play_dialog_same_or_different BB
+word_unscrambling BB
+contextual_parametric_knowledge_conflicts BB
+wic [Pilehvar and Camacho-Collados, 2019]
+winogrande [Sakaguchi et al., 2021]
+mnist_ascii BB
+movie_dialog_same_or_different BB
+ascii_word_recognition BB
+disfl_qa BB
+word_sorting_hard BBH
+winowhy BB
+tense BB
+Math
+dyck_languages_hard BBH
+matrixshapes BB
+checkmate_in_one BB
+NLI/NLU
+unit_conversion BB
+multirc [Khashabi et al., 2018]
+symbol_interpretation BB
+undo_permutation BB
+piqa [Bisk et al., 2020]
+Reasoning
+boolean_expressions_hard BBH
+logic_grid_puzzle BB
+presuppositions_as_nli BB
+logiqa [Liu et al., 2020]
+entailed_polarity BB
+proofwriter_cwa [Tafjord et al., 2021]
+proofwriter_owa [Tafjord et al., 2021]
+mathematical_induction BB
+fantasy_reasoning BB
+analogical_similarity BB
+causal_judgement_hard BBH
+navigate_hard BBH
+formal_fallacies_hard BBH
+C.2 Benchmark Details
+We provide a complete listing of all textual and multimodal benchmarks used in this study. Textual benchmarks
+are grouped into six capability dimensions as described in Sec. 3.2, and are summarized in Table 5. Multimodal
+benchmarks are grouped into four capability dimensions as described in Sec. 3.2, and are summarized in
+Table 6.
+20
+
+--- Page 21 ---
+
+Capability-Driven Multimodal Scaling Law
+Table 6 | Multimodal benchmarks used in this study, grouped by capability dimension.
+Category Benchmark
+General VQA
+MMBench_DEV_EN_V11 [Liu et al., 2024b]
+MMStar [Chen et al., 2024]
+SEEDBench_IMG [Li et al., 2023a]
+SEEDBench2 [Li et al., 2023b]
+SEEDBench2_Plus [Li et al., 2024c]
+MME [Fu et al., 2026]
+TaskMeAnything_v1_imageqa_random [Zhang et al., 2024a]
+A-OKVQA [Schwenk et al., 2022]
+RealWorldQA [X.AI, 2024]
+HRBench4K [Wang et al., 2025b]
+MMVet [Yu et al., 2024]
+MME-RealWorld-Lite [Zhang et al., 2025]
+VStarBench [Wu and Xie, 2023]
+STEM Puzzle
+MMSci_DEV_MCQ [Li et al., 2024d]
+MMMU_DEV_VAL [Yue et al., 2024]
+MathVista_MINI [Lu et al., 2024]
+DynaMath [Zou et al., 2024]
+ScienceQA_VAL [Lu et al., 2022]
+AI2D_TEST [Kembhavi et al., 2016]
+MicroVQA [Burgess et al., 2025]
+PathMMU_VAL [Sun et al., 2024]
+MathVision [Wang et al., 2024b]
+MathVerse_MINI [Zhang et al., 2024b]
+Document Understanding
+InfoVQA_VAL [Mathew et al., 2022]
+TableVQABench [Kim et al., 2024]
+OCRVQA_TEST [Mishra et al., 2019]
+DocVQA_VAL [Mathew et al., 2021]
+GQA_TestDev_Balanced [Hudson and Manning, 2019]
+Alignment
+MIA-Bench [Qian et al., 2025]
+HallusionBench [Guan et al., 2024]
+MMVP [Tong et al., 2024]
+LLaVABench [Liu et al., 2023b]
+POPE [Li et al., 2023c]
+AesBench_VAL [Huang et al., 2024]
+AMBER [Wang et al., 2023]
+C.3 Training Details
+We implement our method based on the official codebase of LLaVA-OneVision1. The training is divided into
+two stages, with detailed hyperparameter configurations summarized in Table 8.
+Model Architecture.All models are built upon the LLaVA-OneVision architecture [Li et al., 2024b], comprising
+a vision tower, a projector, and a language tower. Specifically, the vision tower employs SigLIP [Zhai et al.,
+2023] (∼400M parameters) to extract visual features from input images. A two-layer MLP with GELU
+activation [Hendrycks and Gimpel, 2016, Liu et al., 2024d] then serves as the projector to map visual features
+into the language embedding space.
+Training Data.We adopt the Infinity-MM dataset [Gu et al., 2024], which provides open-source access and
+sufficient scale for our experiments. Due to computational constraints, we train on a curated subset rather
+than the full corpus. In Stage 1, approximately 5M samples are drawn from a 50% random subset of its Stage
+1 partition. In Stage 2, we construct a combined set of approximately 12M samples, comprising the complete
+Stages 3–4 data along with∼3M samples from its Stage 2 partition.
+1https://github.com/LLaVA-VL/LLaVA-NeXT/tree/main
+21
+
+--- Page 22 ---
+
+Capability-Driven Multimodal Scaling Law
+Table 7 | Complete list of transfer coefficientsλj for all textual benchmarks (subsets are merged), ranked by
+absolute value and categorized into Positive Transfer and Transfer Tax regimes.
+Rank Benchmarkλ j Rank Benchmarkλ j
+Positive Transfer (λj >0) Positive Transfer (Continued)
+1dyck_languages_hard+0.119 21checkmate_in_one+0.019
+2hindu_knowledge+0.108 22undo_permutation+0.019
+3play_dialog_same_or_different+0.082 23mmlu_other+0.016
+4word_unscrambling+0.063 24causal_judgement_hard+0.015
+5mmlu_stem+0.057 25winowhy+0.015
+6logic_grid_puzzle+0.050 26CrossNER+0.014
+7matrixshapes+0.049 27navigate_hard+0.013
+8mmlu_humanities+0.046 28anachronisms+0.009
+9wic+0.046 29tense+0.002
+10winogrande+0.045Transfer Tax (λ j <0)
+11movie_dialog_same_or_different+0.041 1boolean_expressions_hard-0.078
+12unit_conversion+0.041 2contextual_param_knowledge_conflicts-0.048
+13presuppositions_as_nli+0.039 3mnist_ascii-0.043
+14logiqa+0.038 4entailed_polarity-0.037
+15mathematical_induction+0.036 5proofwriter_cwa-0.037
+16ascii_word_recognition+0.035 6proofwriter_owa-0.036
+17disfl_qa+0.035 7multirc-0.035
+18fantasy_reasoning+0.030 8word_sorting_hard-0.024
+19symbol_interpretation+0.030 9formal_fallacies_hard-0.011
+20analogical_similarity+0.026 10dark_humor_detection-0.010
+11piqa-0.000
+Table 8 | Configuration for training across various stages.
+Stage-1 Stage-2
+Vision
+Resolution384 384×{(1×1),...,(6×6)}
+#tokens 729 Max 10×729
+DataSamples5M 12M
+Model
+TrainableProjector Full Model
+Training
+Batch Size512 512
+LR1×10 −3 1×10 −5
+Epoch1 1
+Visual Representations.Following Li et al. [2024e], we adopt the AnyResMax-9 strategy (up to 9 sub-image
+tiles) to balance visual detail and computational cost for single-image inputs.
+D Methodology for Fitting Multimodal Training Loss
+To robustly fit the scaling law parameters, we minimize the Huber loss [Huber, 1964] between the predicted
+and observed training loss using the L-BFGS algorithm [Nocedal, 1980]:
+22
+
+--- Page 23 ---
+
+Capability-Driven Multimodal Scaling Law
+min
+A,B,E,α,β
+X
+Runsi
+Huberδ
+
+log ˆL(Ni, Di)−logL i
+
+(11)
+whereA, B, α, βandEare the scaling law parameters andδ= 10 −3 is the threshold hyperparameter.
+Given that the objective function for fitting scaling laws is highly non-convex, gradient-based optimizers like
+L-BFGS are susceptible to local minima. To mitigate this risk, we perform the optimization across multiple
+independent random initializations. We then select the parameter configuration that yields the lowest Huber
+loss on the training set as our final fit.
+Training loss is recorded at every 10 optimization steps, yielding a dense trajectory for reliable curve fitting.
+To avoid the highly volatile loss behavior observed in the early phase of training, we exclude data points prior
+to step 1000 and fit the scaling law exclusively on loss trajectories from step 1000 onward, where the training
+dynamics have stabilized and the loss curve follows a smoother convergence trend.
+Furthermore, prior to fitting, we apply a centered rolling average with a window size of 5 to smooth the raw
+training loss curves:
+˜Lt = 1
+|Wt|
+X
+i∈Wt
+Li (12)
+where Wt denotes the set of indices within the window centered at stept, and|Wt| accounts for boundary
+effects (i.e.,min_periods=1). This smoothing step attenuates high-frequency noise in the loss trajectory while
+preserving the underlying convergence trend, leading to more stable and generalizable fits.
+E Optimization Algorithm for the Performance Predictor
+We detail the optimization procedure for the multimodal performance predictor (Eq. 7), as outlined in
+Algorithm 1. The objective is to jointly learn the capability aggregation weightsw and the scaling coefficients
+{ ˆA, B0, Bm, P0}fromMLLM–VLM training trajectories.
+Algorithm Walkthrough
+Step 1 — Latent Capability Extraction.To prevent overfitting on high-dimensional text benchmarks [Ruan
+et al., 2024], we apply PCA to the benchmark-model matrixX. We extract a low-dimensional latent represen-
+tationS m ∈R K that captures at least 95% of the total variance.
+Step 2 — Joint Trajectory Parameterization.The scalar capability scoreSm =w ⊤Sm jointly drives the
+transferterm ( ˆA·S m) and theabsorptionterm ( ˆB·lnD mm). Optimizing w and the scaling parameters
+end-to-end ensures thatw captures a holistic textual capability measure governing the entire multimodal
+learning dynamics.
+Step 3 — Robust Objective with Constraints.We employ the Huber loss for robustness against noisy
+evaluations and missing checkpoints. A soft penalty enforcesˆB≥0 , satisfying the physical constraint that
+additional multimodal data should not degrade performance.
+Step 4 — Two-Stage Optimization.The bilinear interaction ( Bm ·S m ·lnD mm) renders the objective
+non-convex. Therefore, we utilize Differential Evolution [Storn, 1995] for global search, followed by L-BFGS-
+B [Nocedal, 1980] for precise local refinement.
+Step 5 — Zero-Shot Trajectory Prediction.Once fitted, the framework predicts complete multimodal
+learning trajectories of unseen backbones strictly from their text benchmark scores, enabling zero-cost, optimal
+LLM selection prior to expensive multimodal training runs.
+23
+
+--- Page 24 ---
+
+Capability-Driven Multimodal Scaling Law
+Algorithm 1:Fitting the Capability-Driven Multimodal Performance Predictor
+Args:number of LLM–VLM pairsM, number of text benchmarksT, number of principal componentsK,
+number of checkpointsNckpt, absorption penalty weightλ
+Input:text benchmark matrixX∈R T×M , multimodal data scalesD mm ∈R Nckpt, multimodal
+accuracy trajectoriesP∈R M×N ckpt
+Result:fitted performance predictorF, optimal parameters ˆA∗, B∗
+0 , B∗
+m, P ∗
+0 ,w ∗
+/* Step 1: Extract latent capability representation via PCA (cf. Eq. 3) */
+Γ,S←PCA(X, K)▷Fit PC loading vectorsΓ∈R K×T; extract capability matrixS=ΓX∈R K×M
+▷SelectKas the minimum number of components explaining≥95%of total variance inX
+/* Step 2: Parameterize the scalar capability score and predicted trajectory (cf. Eq. 4–7) */
+Sm(w)←w ⊤Sm ∀m ▷Aggregate latent capability with weightsw∈R K
+ˆB(w)←B 0 −B m ·S m(w)▷Compute model-specific data absorption rate
+Ppred(m, t;θ)← ˆA·S m(w) + ˆB(w)·lnD (t)
+mm +P 0 ▷Predicted accuracy; parameters
+θ={ ˆA, B0, Bm, P0,w}
+/* Step 3: Define the objective function with robust loss and physical constraints */
+LHuber(θ)←
+X
+(m,t):
+Pm,t̸=NaN
+Huber(Ppred(m, t;θ)−P m,t)▷ Huber loss over valid observations; robust to noisy or
+missing evaluations
+Labs(θ)←λ
+MX
+m=1
+[min(0, B 0 −B m ·S m(w))]2 ▷ Soft penalty enforcing non-negative absorption rateˆB≥0
+for all models
+L(θ)← L Huber(θ) +L abs(θ)▷Full objective function to be minimized
+/* Step 4: Two-stage optimization (global search→local refinement) */
+θinit ←DifferentialEvolution(L(θ))▷Gradient-free evolutionary search to escape local optima
+θ∗ ←L-BFGS-B(L(θ), θ init)▷Gradient-based refinement to achieve high-precision convergence
+ˆA∗, B ∗
+0 , B ∗
+m, P ∗
+0 ,w ∗ ←θ ∗ ▷Optimized subject to the unit-norm constraintˆA, B0, Bm >0
+/* Step 5: Inference — predict the full trajectory of any unseen model */
+returnF: (X new, Dmm)7→ ˆA∗ ·S new + (B∗
+0 −B ∗
+m ·S new) lnDmm +P ∗
+0 ▷whereS new =w ∗⊤ΓX new;
+requires only text benchmark scores of the new model
+24

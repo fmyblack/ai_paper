@@ -77,6 +77,18 @@ cssclasses:
 
 这仍是个人推断，三篇没有直接实现该组合。尤其不能把 SkillRise 的高 future return 当成 memory provenance 已解决，也不能把 See2Think 的 Feedback Uptake 当成正确使用；MemSecBench 已说明 adoption 本身可能是攻击成功的一环。
 
+## 2026-08-04 补充：过程开始前的 route selection 也需要审计
+
+[[notes/papers/2026/08/04/Learning Compositional Meta-Routing for Agentic Workflows- An Executable Benchmark]] 把 Agent 过程验证提前到第一步：系统还没开始调用模型/工具前，就先显式预测这题是否需要 decomposition、retrieval/tool use、code execution、specialist delegation 和 verification。它的贡献是把“为什么 agent 要走这条 workflow”变成可记录、可训练、可检查的 route，而不是事后从 trace 里猜。
+
+对本主题的补充有三点：
+
+1. **route adoption 不等于 route correctness。** Learned router 标准 test 成功 100%，但 exact-route match 只有 0.741，且多调用 retrieval 77 次而 oracle 只需 49 次；最终成功会掩盖多余操作和风险暴露。
+2. **组合能力不是单点工具选择。** one-shot learned router 只有 56.5%，说明 filtered computation、multi-hop retrieval、invoice reconciliation、locale normalization 等任务需要多操作组合。
+3. **过程验证必须测分布外措辞。** locked lexical-shift 上 learned router 从 100% 掉到 75.9%，低于 static 93.5%；失败集中在 aggregate code、multi-hop decomposition 和 conflict verification。
+
+这篇不证明真实 Agent workflow routing 已解决，但给了一个很干净的审计接口：把 route 作为 first-class artifact，分别记录 operation probabilities、budget、fallback、执行状态和 typed failure。它可以和 SkillRise/MemSecBench/See2Think 的中间状态生命周期合并，形成 `route proposal -> state/action execution -> evidence -> verification -> repair/fallback`。
+
 ## 证据地图
 
 | 结论 | 支持论文与定位 | 反证/限制 | 证据强度 |
