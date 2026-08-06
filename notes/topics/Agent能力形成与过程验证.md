@@ -11,7 +11,7 @@ topics:
   - 安全、鲁棒性与治理
 status: active
 created: 2026-07-31
-updated: 2026-08-03
+updated: 2026-08-06
 cssclasses:
   - paper-note
 ---
@@ -88,6 +88,16 @@ cssclasses:
 3. **过程验证必须测分布外措辞。** locked lexical-shift 上 learned router 从 100% 掉到 75.9%，低于 static 93.5%；失败集中在 aggregate code、multi-hop decomposition 和 conflict verification。
 
 这篇不证明真实 Agent workflow routing 已解决，但给了一个很干净的审计接口：把 route 作为 first-class artifact，分别记录 operation probabilities、budget、fallback、执行状态和 typed failure。它可以和 SkillRise/MemSecBench/See2Think 的中间状态生命周期合并，形成 `route proposal -> state/action execution -> evidence -> verification -> repair/fallback`。
+
+## 2026-08-06 增补：个性化 memory 要看“更新”而不只是“召回”
+
+[[notes/papers/2026/08/06/FinPerMA- A Theory-Informed, Event-Grounded Personalized-Memory Benchmark for LLM Agents]] 把 Agent memory 从静态 recall 推进到 personalized state update：它用 276 personas、97 真实金融事件和 2994 道题，逼模型回答“事件之后这个用户现在会怎么想”。这和前面的 memory 生命周期论文互补，因为它不只看写入和保留，还看冲击后的再校准。
+
+| 论文 | 记忆对象 | 关键 checkpoint | 最强证据 | 主要缺口 |
+| --- | --- | --- | --- | --- |
+| [[notes/papers/2026/08/06/FinPerMA- A Theory-Informed, Event-Grounded Personalized-Memory Benchmark for LLM Agents]] | 个性化金融用户状态 | post-shock、summary / retrieval / full-context 对照 | retrieval 以约 1.4k token 追回大约 88% 差距；summary 记事实但丢偏好；full-context 约 0.47 overall accuracy 饱和 | 合成金融场景；理论约束 persona 是否泛化到真实用户还未知 |
+
+这篇和 `PRO-LONG`、`MemSecBench` 的关系很清楚：`PRO-LONG` 说明结构化外部日志可以承载长程历史，`MemSecBench` 说明 memory 更新本身也可能被攻击，FinPerMA 则补上“对个体偏好的更新到底有没有跟上事件变化”这一层。
 
 ## 证据地图
 
