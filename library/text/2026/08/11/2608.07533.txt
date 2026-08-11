@@ -1,0 +1,1724 @@
+--- Page 1 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in
+Embodied Agents
+GENGYANG XU,Hong Kong University of Science and Technology, China
+DONGWEI XIAO∗,Hong Kong University of Science and Technology, China
+YITENG PENG∗,Hong Kong University of Science and Technology, China
+SHUAI WANG,Hong Kong University of Science and Technology, China
+An embodied agent is an intelligent entity that interacts with its environment through a physical body.
+Currently, the evaluation of embodied agents primarily relies on two paradigms: (1) manually annotated Visual
+Question Answering (VQA) pairs and (2) high-level task completion metrics, such as success in navigation
+or manipulation. The former is labor-intensive and subject to variability in annotation quality. The latter
+may obscure critical vulnerabilities, allowing agents to complete tasks through suboptimal means or safety
+violations, thereby concealing safety risks and inefficiencies. Given that spatial cognition is the cornerstone
+for executing embodied tasks, there is a pressing need to assess whether embodied agents possess robust
+spatial cognition during task execution.
+Inspired by metamorphic testing principles in software engineering, we propose MetaSpace, a novel frame-
+work designed to evaluate the spatial cognition of agents. By leveraging spatiotemporal multimodal states
+derived from real execution trajectories, MetaSpace automatically generates test cases based on predefined
+metamorphic relations (MRs) grounded in logical rules and physical laws. Crucially, we encode these MRs as
+executable rules in a logic programming language (Prolog). Violations of these relations indicate failures in
+spatial cognition. Our empirical evaluation across three embodied scenarios demonstrates that MetaSpace suc-
+cessfully detects 90,422 spatial cognition errors in state-of-the-art (SOTA) MLLM-driven agents. We introduce
+the Spatial Cognition (SC) score to quantify performance. Results indicate that all SOTA agents achieve average
+scores between 0.44 and 0.52, significantly lower than the human benchmark of 0.96. Additionally, these
+agents struggle with directional tasks, with SC scores consistently below 0.38. In contrast, their performance in
+magnitude-related tasks is relatively better, with most SC scores exceeding 0.5. To mitigate the identified spatial
+cognition errors, we explore potential improvement strategies. Preliminary results suggest that traditional
+prompting techniques (e.g., Chain of Thought) are limited, while spatially-aware prompting (e.g., cognitive
+maps) shows promise. Our findings underscore the importance of ongoing community efforts to enhance
+embodied agent performance by prioritizing the improvement of spatial cognition, a fundamental requirement
+for executing embodied tasks.
+CCS Concepts:•Software and its engineering→Software testing and debugging.
+Additional Key Words and Phrases: embodied agent, spatial cognition, software testing
+ACM Reference Format:
+Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang. 2026. MetaSpace: Metamorphic Testing for Spatial
+Cognition in Embodied Agents.Proc. ACM Program. Lang.10, OOPSLA1, Article 104 (April 2026), 30 pages.
+https://doi.org/10.1145/3798212
+∗Corresponding authors.
+Authors’ Contact Information: Gengyang Xu, gxuah@cse.ust.hk, Hong Kong University of Science and Technology, Hong
+Kong, China; Dongwei Xiao, dxiaoad@cse.ust.hk, Hong Kong University of Science and Technology, Hong Kong, China;
+Yiteng Peng, ypengbp@cse.ust.hk, Hong Kong University of Science and Technology, Hong Kong, China; Shuai Wang,
+shuaiw@cse.ust.hk, Hong Kong University of Science and Technology, Hong Kong, China.
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+©2026 Copyright held by the owner/author(s).
+ACM 2475-1421/2026/4-ART104
+https://doi.org/10.1145/3798212
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+arXiv:2608.07533v1  [cs.AI]  26 Jul 2026
+
+--- Page 2 ---
+
+104:2 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Move rightward by 
+three steps.
+(a) Wrong Magnitude Perception
+: optimal path
+: actual path (b) Redundant Trial-and-Error
+The door is 
+1.8 m, and 
+I'm 1.7 m, 
+so I can pass.
+2m (c) Coincidence-Driven Success
+Fig. 1. Examples of “false positive success” in high-level embodied tasks.
+1 Introduction
+Embodied agents are attracting significant attention from both academia and industry, with applica-
+tions spanning robotics [Li et al. 2024b; Roy et al. 2021; Yang et al. 2025], autonomous driving [Tian
+et al. 2025], and drones [Gao et al. 2024; Zhao et al. 2025]. Embodied agents are capable of performing
+a wide range of tasks, from semantic tasks (e.g., household chores) to core embodied functions (e.g.,
+navigation, rearrangement, and manipulation). Leveraging Multi-modal Large Language Models
+(MLLMs) to create embodied agents presents a promising avenue for tackling embodied tasks [Li
+et al. 2024b; Yang et al. 2025]. However, while Large Language Models (LLMs) have achieved re-
+markable success in linguistic tasks [Dong et al. 2025; Naveed et al. 2025; Raiaan et al. 2024; Rostam
+et al. 2024], they face critical challenges in visuospatial tasks, which significantly undermine their
+effectiveness and reliability in embodied intelligence applications.
+To evaluate the performance of embodied agents, the standard paradigm in the AI and robotics
+community relies on benchmarking with manually annotated Visual Question Answering (VQA)
+pairs (e.g., Multiple-Choice Questions (MCQs)) [Cheng et al. 2025; Dang et al. 2025; Du et al. 2024;
+Gao et al. 2024; Ma et al. 2025; Ramakrishnan et al. 2025; Zhao et al. 2025]. However, the manual
+design and annotation of test cases are labor-intensive, and variability in annotator expertise can
+introduce inconsistency and bias into benchmark assessments. Additionally, some benchmarks
+(e.g., [Ramakrishnan et al. 2025]) utilize classic cognitive psychology questions originally designed
+for humans or animals, such as the Minnesota Paper Form Board (MPFB) test [Likert and Quasha
+1941]. These approaches fail to capture the essence ofembodimentin agents, leading to inadequate
+reflection of their actual performance in real-world applications.
+In contrast, some studies have begun to rely on high-level task completion metrics, such as
+whether an agent reaches navigation targets or successfully performs manipulation tasks [Cheng
+et al. 2025; Choi et al . 2024; Yang et al . 2025; Zhou et al . 2024].1 While intuitive and easy to
+quantify, these outcome-oriented evaluations conceal underlying flaws, and agents may succeed in
+completing tasks through non-optimal means or safety violations (“false positive success”). For
+example, (1)Wrong magnitude perception: as shown in Fig. 1a, agents may complete tasks based on
+erroneous action magnitude perception (e.g., taking three steps for a navigation move, when only
+two are necessary). In virtual environments, the absence of physical collisions allows agents to
+create an illusion of success. (2)Redundant trial-and-error: agents may misjudge spatial information
+(e.g., direction perception errors) and correct their trajectories through repeated adjustments,
+thereby sacrificing efficiency for task completion without resulting in task failure (Fig. 1b). (3)
+1In this context, we define low-level tasks as the foundational tasks that underpin high-level tasks (e.g., navigation and
+manipulation). For instance, successful high-level navigation relies on low-level reasoning about object directional relations
+to avoid obstacles.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 3 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:3
+Coincidence-driven success: spatial cognition errors may not always result in failure, as agents might,
+by chance, avoid negative consequences (e.g., in Fig. 1c, the agent misjudges a 2-meter door as
+1.8 meters but successfully passes through without getting stuck due to its own height of1.7 meters).
+These “false positive successes” are not rare; existing embodied benchmark studies have similar
+observations through manual checking [Cheng et al. 2025; Li et al. 2024b; Yang et al. 2025]. Such
+defects in the existing evaluation paradigm conceal significant safety risks (e.g., non-catastrophic
+collisions) and operational inefficiencies (e.g., suboptimal paths), undermining the trustworthiness
+of embodied agents in real-world applications.
+The high-level task outcome-oriented evaluation paradigm is an end-to-end approach that
+assesses only the final results of task execution, without examining the intermediate processes
+or decision-making involved. In reality, embodied task execution is inherently compositional:
+successful completion of high-level tasks relies on first accomplishing a series of spatial cognitive
+sub-tasks. For example, to navigate to a target location, an agent must understand the spatial
+relationships between the target and surrounding landmarks, and accurately perceive its own
+movement direction and distance to ensure correct actions. In other words, spatial cognition (e.g.,
+movement perception, spatial awareness) serves as the cornerstone for embodied agents to complete
+high-level embodied tasks. These observations highlight our key motivation for this research:
+“Is spatial cognition, as the keystone of high-level embodied tasks, truly a solved problem
+for embodied agents?”
+To bridge the identified research gap, it is essential to move beyond outcome-oriented testing
+paradigms and adopt a capability-oriented approach that enables an authentic evaluation of embod-
+ied capabilities. Developing such a capability-oriented evaluation framework requires us to address
+three significant challenges:C1: Inadequacy of Static Evaluation for Embodiment.Existing
+methods for spatial cognition evaluations often fail to capture the dynamic essence of embodiment.
+Most rely on static Visual Question Answering (VQA) tasks, which lack interactive engagement
+with the environment and do not assess the agent’s ability to transform between egocentric and
+allocentric perspectives.C2: Challenge in Defining Test Oracle.Automatically determining
+the ground truth of spatial cognition is inherently challenging. Embodied tasks are dynamic and
+context-dependent, making it difficult to define the expected spatial relations and perceptions for
+all possible scenarios.C3: Challenge in Test Case Generation.Manual design and annotation of
+test cases continues to be the prevailing practice. However, this approach is both labor-intensive
+and prone to incompleteness, frequently missing rare or edge cases for robust testing. Furthermore,
+the quality and consistency of benchmark questions can vary significantly based on the expertise
+of human annotators, introducing noise and potential bias into the assessment.
+To address the above challenges, we propose MetaSpace, a metamorphic testing (MT) [Chen
+et al. 2020] framework specifically designed to evaluate the spatial cognition of embodied agents.
+MetaSpace shifts the focus of embodied agent assessment from external outcome to internal
+capability, specifically targeting SC abilities. Importantly, all test cases are automatically generated
+from real embodied task execution trajectories, ensuring a strong correlation between evaluation
+results and actual embodied performance. To addressC1andC3, MetaSpace collects spatiotemporal
+multimodal states derived from real trajectories and utilizes these states to generate test cases. To
+addressC2, we craft a set of metamorphic relations (MRs) to serve as test oracles; these MRs are
+based on principled logical rules (e.g., transitivity, symmetry) and physical laws (e.g., perspective
+geometry). We use logic programming to encode these MRs as executable rules and agents’ spatial
+observations as facts to automate the validation process. MetaSpace provides a comprehensive
+assessment of eight key embodied spatial cognitive abilities, ensuring a robust evaluation of
+embodied agents in real-world embodied scenarios. In summary, our contributions are threefold:
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 4 ---
+
+104:4 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Direction 
+Estimation
+Directional 
+Relation
+Distance 
+Estimation
+Distance 
+Relation
+Size 
+Estimation
+Depth 
+Estimation
+Egocentric-
+allocentric 
+Transformation
+Movement 
+Perception
+Spatial 
+Reasoning
+Perspective 
+Visualization
+Embodied Spatial Cognition
+SC1
+SC1-a
+Directional 
+Relation
+Distance 
+Relation
+SC2 SC3 SC4
+SC1-b SC2-a SC2-b SC4-bSC4-aSC3-bSC3-a
+Fig. 2. Taxonomy of embodied spatial cognition with numbering codes.
+• At the conceptual level, we move beyond simple end-to-end outcomes and instead scrutinize
+the intrinsic spatial cognitive abilities of embodied agents. This capability-based view unlocks
+transparency into the decision process itself, which is the foundation for high-level embodied
+tasks. We identify eight key spatial cognitive abilities essential for embodied agents, drawing
+insights from cognitive psychology and embodied intelligence literature.
+• At the technical level, we develop MetaSpace, a MT framework that implements a set of
+logic- and physics-based MRs to evaluate embodied spatial cognition. These MRs are encoded
+into a Prolog knowledge base, allowing for scalable and oracle-free validation.
+• At the empirical level, we apply MetaSpace to test six state-of-the-art (SOTA) MLLM-driven
+embodied agents across three real-world scenarios. MetaSpace executes 30,300 unique test
+cases on six agents, uncovering a total of 90,422 instances that trigger spatial cognitive
+errors. Based on our findings, we derive valuable insights and offer recommendations for
+mitigating spatial cognition errors in embodied agents. Preliminary experiments demonstrate
+that cognitive map prompting can enhance agents’ directional spatial cognitive abilities.
+2 Background
+2.1 Embodied Spatial Cognition
+Definition.The concept of spatial cognition originates from cognitive psychology. It refers to the
+study of knowledge and beliefs regarding the spatial properties of objects and events, including
+aspects such as location, size, distance, and movement [Montello 2001]. We particularly focus on
+embodied spatial cognition, which pertains to the spatial cognition of embodied intelligence in
+supporting embodied tasks.2
+Scope.While humans can derive spatial cognition from various modalities (e.g., one can estimate
+the location of a ringing phone even without seeing it), most embodied agents primarily rely on
+visual input at this stage [Burgess 2008]. Given this context, our work focuses on visual-spatial
+cognition. Additionally, while cognitive psychology provides classic spatial cognition experiments,
+including pen-and-paper tasks and the Minnesota Paper Form Board Test (MPFB) [Likert and
+Quasha 1941], our emphasis is on spatial cognition within embodied scenarios, which involves
+dynamic interactions with the environment.
+Taxonomy.We present a taxonomy of capabilities essential for embodied spatial cognition (Fig. 2).
+Rather than an arbitrary collection, our taxonomy synthesizes foundational domains from cognitive
+science and psychology. Specifically, we identify four key aspects, each grounded in established
+theories:SC1: Movement perception.Grounded in Gibson’s ecological theory of perception [Gibson
+2014], this capability captures the agent’s ability to sense self-motion for immediate control. It
+2In this paper, we use “spatial cognition”, “SC”, and “spatial cognitive capability” interchangeably to describe “embodied
+spatial cognition”.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 5 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:5
+is foundational for basic navigation and manipulation tasks.SC2: Spatial reasoning.Drawing
+on Kosslyn’s theory of spatial relations [Kosslyn 1987], we assess the ability to identify spatial
+relationships between objects and landmarks. Furthermore, based on Burgess’s model of spatial
+memory [Burgess 2006],SC4: egocentric-allocentric transformationassesses the critical ability to
+translate between egocentric views and allocentric mental maps. This is vital for envisioning actions
+from future viewpoints.SC3: Perspective visualization.This is essential as embodied agents operate
+in 3D environments. Aligned with Marr’s computational vision theory [Marr 2010], we assess the
+recovery of intrinsic properties (i.e., size and depth) from 2D observations (e.g., the 2.5D sketch).
+Across SC1, SC2, and SC4, the distinction between directional (SC*-a) and magnitude-based (SC*-b)
+capabilities is supported by Kosslyn’s theory of spatial relations [Kosslyn 1987], which differentiates
+between categorical spatial processing (e.g., relative directions) and coordinate spatial processing
+(e.g., precise distances). This suggests they involve distinct cognitive mechanisms, warranting
+separate evaluation. In contrast, SC3 focuses on recovering intrinsic properties (size and depth)
+from 2D observations, consistent with Marr’s vision theory [Marr 2010].
+2.2 Logic Programming for Spatial Cognition Validation
+In this study, we apply logic programming to implement the designed MRs for evaluating embodied
+spatial cognition. In the context of embodied spatial cognition, we encode spatial observations as
+facts and MRs as rules, facilitating rigorous validation of the cognitive consistency of embodied
+agents without human intervention. We elaborate on the specific process below.
+Automatic Fact Generation.Agent responses regarding spatial observations are automatically
+converted into Prolog facts. 3 For example, when an agent perceives movement from state 𝑠1 to 𝑠2
+as “going forward”, this generates the factmoveForward(s 1,s 2).Similarly, the object relationships
+observed by agents can be encoded into facts such aseastOf(landmark A,landmark B).
+Metamorphic Relation Rules.A rule is a conditional statement that allows new facts to be
+inferred from existing ones. A common structure for a rule is the Horn clause, which comprises a
+head predicate and a rule body (a list of predicates). In MetaSpace, each MR is encoded as Horn
+clause rules defining consistency constraints. An example demonstrating the transitivity rule is
+eastOf(X,Z):–eastOf(X,Y),eastOf(Y,Z) . This rule means that if X is east of Y, and Y is east of
+Z, the system can infer that X is east of Z. Another example, westOf(X,Y):–eastOf(Y,X) , defines
+westOfas an inverse relation ofeastOf.
+Automated MR Validation Program.A logic program, or knowledge base, consists of a collection
+of facts (e𝐹) and a collection of rules ( e𝑄) that define the system’s knowledge. For each test case,
+MetaSpace constructs a logic program combining observed facts with MR rules:
+(Program) P spatial ::= e𝐹observations ++ e𝑄MRs (1)
+Here, the tilde notation indicates a list of items. The Prolog engine then validates consistency by
+checking whether agent responses satisfy the expected spatial relations derived from the rules.
+Any inconsistency indicates a spatial cognition violation.
+3 Metamorphic Testing
+3.1 Motivation for Using MT
+A fundamental challenge in evaluating embodied agents is thetest oracle problem, i.e., the difficulty
+of determining the correct, expected output for a given test case. Embodied tasks occur in dynamic
+environments, requiring real-time route planning as environmental conditions evolve. Therefore,
+3MetaSpace constrains agents to respond in predefined formats through structured prompting. We discuss the influence of
+structured prompting in Fig. 13.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 6 ---
+
+104:6 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+evaluating the correctness and optimality of answers generated by embodied agents presents
+a significant challenge. Existing research often assesses embodied intelligence through MCQ
+benchmarks. These benchmarks typically consist of a set of images accompanied by manually
+designed questions, usually derived from human-generated scenarios. During the evaluation process,
+the agent is presented with the image, the corresponding question, and a selection of multiple-choice
+answers. However, the consistency and the quality of benchmark questions can vary significantly
+due to the differing levels of expertise among the human experts involved in their creation, which
+is not only labor-intensive but also prone to inconsistencies. Moreover, human-generated test cases
+may not adequately cover edge cases, as it is inherently challenging for human experts to annotate
+answers for tasks involving constantly changing scenarios.
+MT offers a powerful solution to the test oracle problem and the limitations of manual test
+generation in dynamic environments. Inspired by its significant success in assessing the quality of
+software [Mansur et al. 2021; Tolksdorf et al. 2019], AI models [Wang and Su 2020], compilers [Xiao
+et al. 2025, 2022], and quantum computing platforms [Paltenghi and Pradel 2023], we adapt MT to
+evaluate the embodied spatial cognition of embodied intelligence. The core strength of MT is its
+ability to validate outputs without a predefined oracle. Instead of asserting the exact output, it uses
+MRs to check for expected consistencies. For instance, to test the implementation of sin(𝑥) , we do
+not need to know the expected output for arbitrary floating-point inputs 𝑥. Instead, we can assert
+that the MR : sin(𝑥)=sin(𝜋−𝑥) must always hold. A discrepancy between the outputs for sin(𝑥)
+andsin(𝜋−𝑥)reveals an implementation error, effectively bypassing the oracle problem.
+3.2 Formulation of Conducting MT with MetaSpace
+We formalize the MT process in MetaSpace as follows. In MT, a MR defines a predictable relationship
+between the outputs of an embodied agent when its inputs are mutated. Specifically, for a function
+𝑓 : I → O , where I denotes the inputs (e.g., visual observations), O represents the outputs (e.g.,
+perceived spatial relations, movement estimations), and 𝑓 is the embodied agent under test. Based
+on a given MR, we perform a transformation 𝜙 : I → I on an original inputx ∈ I to generate a
+new inputx ′ =𝜙(x) ∈ I. The corresponding outputs arey=𝑓(x)andy ′ =𝑓(x ′).
+The MR is encoded as a boolean predicate MR(x, x′, y, y′), which evaluates to True if and only if
+yandy ′ satisfy a predefined consistency constraint P𝜙 (y, y′) based on principled logical rules and
+physical laws:
+MR(x,x ′,y,y ′)=
+(
+True⇐ ⇒ P 𝜙 (y,y ′),
+Falseotherwise. (2)
+Overall, the general process of conducting MT using MetaSpace involves the following steps:
+(1) Select an initial inputx∈ Iand obtain the outputy=𝑓(x).
+(2) Apply a metamorphic transformation 𝜙 compatible withxto generatex ′ =𝜙( x) ∈ I ), and
+obtain outputy ′ =𝑓(x ′).
+(3) Check whether the tuple (x, x′, y, y′) satisfies the predefined MR. If not, it indicates a potential
+error in the agent’s spatial cognitive responses.
+3.3 MRs in MetaSpace
+MetaSpace implements MRs derived from principled logic rules and physical laws to find potential
+errors in the outputs of embodied intelligence models. We employ logic programming to imple-
+ment these MRs (discussed soon in §4.3). These MRs holistically capture diverse spatial cognitive
+capabilities in embodied scenarios mentioned in Fig. 2. Additionally, as we will demonstrate in
+§6.4.1, these MRs are highly accurate in identifying spatial cognition errors in embodied agents.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 7 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:7
+Table 1. MRs for Spatial Cognition Evaluation (Please refer to Fig. 2 for the spatial cognitive capabilities
+associated with the codes in the table).
+Category Metamorphic Relation Foundational Principle Spatial Capability
+Logical
+MR1: Transitivity Spatial Relation Logic SC1-a, SC2-a, SC4
+MR2: Symmetry Spatial Relation Logic SC1, SC2, SC4
+MR3: Contradiction Law of Non-Contradiction SC1, SC2, SC4
+Physical
+MR4: Triangle Inequality Triangle Inequality SC1-b, SC2-b
+MR5: Size-Depth Consistency Perspective Geometry SC3-b
+MR6: Object Size Ratio Consistency Perspective Geometry SC3-a
+Our MRs can be broadly categorized into two groups based on their foundational principles:
+logical consistency-oriented MRs (§3.3.1) and physical law-oriented MRs (§3.3.2). Table 1 summarizes
+the six MRs implemented in MetaSpace, along with their foundational principles and the specific
+spatial cognitive capabilities they assess (as defined in Fig. 2). In §3.3.1 and §3.3.2, we provide a
+detailed introduction to the MRs designed in MetaSpace.
+3.3.1 Logical Consistency-Oriented MRs.MRs based on logical consistency are designed to ensure
+that the outputs of original and transformed test cases adhere to predefined logical rules. These
+MRs are grounded in fundamental principles of logic, and they help identify inconsistencies in the
+spatial cognitive responses of embodied agents.
+• MR1: Transitivity.This MR is grounded in the transitivity property of directional spatial
+relations. It asserts that any violation of the transitive property defined by Definition 1
+indicates a potential spatial cognition error regarding directional relationships.
+Definition 1 (MR1: Transitivity).Let 𝑠1, 𝑠2, 𝑠3 be three states. In MetaSpace, 𝑠𝑖 can represent
+either (i) the spatial state of an object, where 𝐷𝑖𝑟(𝑠 𝑖, 𝑠𝑗 ) denotes the spatial (e.g., directional)
+relation between objects’ states 𝑠𝑖 and 𝑠 𝑗 (e.g., north, east, southwest, above), or (ii) the state of
+an agent, where 𝐷𝑖𝑟(𝑠 𝑖, 𝑠𝑗 ) denotes the agent’s perceived movement direction from state 𝑠𝑖 to 𝑠 𝑗
+(e.g., go forward, backward, upward). The operator ⊕ denotes the composition of such relations.
+Given three state pairs (𝑠1, 𝑠2), (𝑠2, 𝑠3), and (𝑠1, 𝑠3), the relations among these pairs must satisfy
+the transitive property, defined as:
+𝑀𝑅 1(𝑠1, 𝑠2, 𝑠3):𝐷𝑖𝑟(𝑠 1, 𝑠3)=𝐷𝑖𝑟(𝑠 1, 𝑠2) ⊕𝐷𝑖𝑟(𝑠 2, 𝑠3)(3)
+That is, the direction or motion from 𝑠1 to 𝑠3 must equal the composition of the one from 𝑠1 to 𝑠2
+and from𝑠 2 to𝑠 3, ensuring logical consistency.
+Examples illustrating MR1 are shown in Fig. 3a.Example 1:With this MR, for 𝑠 representing
+an object’s state, if the directional relation between𝑠1 and 𝑠2 is east, and between 𝑠2 and 𝑠3 is
+north, then the relation between 𝑠1 and 𝑠3 must be northeast (i.e., east ⊕ north = northeast).
+Example 2:Similarly, if the directional relation between 𝑠1 and 𝑠2 is northeast, and between
+𝑠2 and 𝑠3 is north, then the relation between 𝑠1 and 𝑠3 must still be northeast (i.e., northeast ⊕
+north = northeast).Example 3:Moreover, for 𝑠 representing an agent’s state, if an agent
+perceives the movement from 𝑠1 to 𝑠2 as moving forward, and from 𝑠2 to 𝑠3 as moving right,
+then the agent’s response to the movement from𝑠1 to 𝑠3 must be equivalent to the combination
+of these two movements (i.e., move forward⊕move right).
+• MR2: Symmetry.MR2 leverages the symmetry property in spatial relations. The directional
+relation or motion should satisfy the antisymmetry property, while the magnitude (distance)
+relation should satisfy the symmetry property, as defined in Definition 2.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 8 ---
+
+104:8 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+S3
+S2S1
+Example 1
+S3
+S2
+S1
+Example 2
+S1
+S2 S3
+Example 3
+Forword
+Right
+S1 -> S2: east
+S2 -> S3: north
+S1 -> S3: northeast
+S1 -> S2: northeast
+S2 -> S3: north
+S1 -> S3: northeast
+(a) MR1: Transitivity
+Forword
+S1 S2
+Backward3 Steps 3 Steps
+S1
+S2
+Example 1
+Example 2 Example 3
+S2
+S1
+S1 -> S2: east
+S2 -> S1: west (b) MR2: Symmetry
+Fig. 3. Examples of MR1 and MR2 in both object spatial relations and agent movement perceptions.
+Definition 2 (MR2: Symmetry).Let 𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2) denote the distance from 𝑠1 to 𝑠2, and 𝐼𝑛𝑣 be
+the inverse operator for directional relations or movement directions. Given a state pair (𝑠1, 𝑠2),
+the direction or motion from 𝑠2 to 𝑠1 must be the inverse of the one from 𝑠1 to 𝑠2, and the distance
+from𝑠 2 to𝑠 1 must equal the distance from𝑠 1 to𝑠 2, as defined:
+𝑀𝑅 2(𝑠1, 𝑠2):
+(
+𝐷𝑖𝑟(𝑠 2, 𝑠1)=𝐼𝑛𝑣(𝐷𝑖𝑟(𝑠 1, 𝑠2))
+𝐷𝑖𝑠𝑡(𝑠 2, 𝑠1)=𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2) (4)
+We show examples illustrating MR2 in Fig. 3b.Example 1:If the direction between 𝑠1 and 𝑠2
+is east, then the direction between 𝑠2 and 𝑠1 must be west (i.e., 𝐼𝑛𝑣(east)=west ).Example 2:
+Similarly, if the motion from𝑠1 to 𝑠2 is moving forward, then the motion from𝑠2 to 𝑠1 must be
+moving backward (i.e., 𝐼𝑛𝑣(move forward)=move backward ).Example 3:If the distance
+between 𝑠1 and 𝑠2 is 3 steps, then the distance between 𝑠2 and 𝑠1 must also be 3 steps (i.e.,
+𝐷𝑖𝑠𝑡(𝑠 2, 𝑠1)=𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2)=3steps). 4
+• MR3: Contradiction.MR3 is based on the law of non-contradiction, which states that
+contradictory statements cannot be true simultaneously, as defined in Definition 3. It applies
+to both directional and magnitude spatial relationships.
+Definition 3 (MR3: Contradiction).It is impossible for 𝑠1 to be in two different directions
+from 𝑠2 at the same time, and similarly, the distance between 𝑠1 and 𝑠2 cannot simultaneously
+be two different values. The MR is formally defined as:
+𝑀𝑅 3(𝑠1, 𝑠2):
+(
+¬ (𝐷𝑖𝑟(𝑠 1, 𝑠2)=𝑑 1 ∧𝐷𝑖𝑟(𝑠 1, 𝑠2)=𝑑 2) ,∀𝑑 1 ≠𝑑 2
+¬ (𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2)=𝑚 1 ∧𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2)=𝑚 2) ,∀𝑚 1 ≠𝑚 2
+(5)
+Example 1:The agent cannot consider the motion from 𝑠1 to 𝑠2 as both moving forward
+and moving backward. In other words, it cannot justify that both answers are correct (i.e.,
+¬(move forward∧move backward) ).Example 2:The agent cannot simultaneously justify
+that the direction from 𝑠1 to 𝑠2 is both east and west (i.e., ¬(east∧west) ).Example 3:
+Furthermore, the agent cannot perceive the distance from 𝑠1 to 𝑠2 as both 2 steps and 3 steps
+(i.e.,¬(2steps∧3steps)). We illustrate MR3 in Fig. 4a.
+3.3.2 Physical Law-Oriented MRs.Physical law-oriented MRs validate whether the spatial cognition
+remains consistent with physical laws. They are defined as follows:
+4MetaSpace employs steps as distance units, as they are more relevant to embodied contexts.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 9 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:9
+From S1 to S2,  is 
+it move forward?
+Yes
+Example 1
+From S1 to S2,  
+is it east?
+Yes
+From S1 to S2,  
+is it west?
+Yes
+Example 2
+From S1 to S2,  is 
+it move backward?
+Yes
+From S1 to S2,  
+is it 2 steps?
+Yes
+From S1 to S2,  
+is it 3 steps?
+Yes
+Example 3
+(a) MR3: Contradiction
+S1 S2 S3
+S1 S2
+S3
+S1 S2
+S3
+S1 S3 S1 S3
+S1
+S3
+if Dir(S1, S2) = Dir(S2, S3),
+Dist(S1, S3) = Dist(S1, S2) + Dist(S2, S3) 
+if Dir(S1, S2) = Inv(Dir(S2, S3)),
+Dist(S1, S3) =|Dist(S1, S2) - Dist(S2, S3)|
+Otherwise,
+Dist(S1, S3) < Dist(S1, S2) + Dist(S2, S3) 
+(b) MR4: Triangle Inequality
+Fig. 4. Examples of MR3: Contradiction and MR4: Triangle Inequality.
+• MR4: Triangle Inequality.MR4 is based on the triangle inequality theorem. The theorem
+states that in Euclidean space, for any triangle, the sum of the lengths of any two sides must
+be greater than or equal to the length of the remaining side. Any violation of this theorem
+indicates a potential spatial cognition error by the agent, as defined in Definition 4. We
+illustrate MR4 in Fig. 4b.
+Definition 4 (MR4: Triangle Ineqality).Given three states 𝑠1, 𝑠2, 𝑠3, if they are collinear
+(i.e., lie on the same straight line), then whether considering the spatial distance between objects
+or the movement distance of an agent, the distance between 𝑠1 and 𝑠3 equals either the sum or the
+absolute difference of the other two distances, depending on their relative directions. Otherwise,
+the distance between𝑠 1 and𝑠 3 must be strictly less than the sum of the other two distances.
+𝑀𝑅 4(𝑠1, 𝑠2, 𝑠3):
+ 
+
+𝐷𝑖𝑠𝑡(𝑠 1, 𝑠3)=𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2) +𝐷𝑖𝑠𝑡(𝑠 2, 𝑠3),if𝐷𝑖𝑟(𝑠 1, 𝑠2)=𝐷𝑖𝑟(𝑠 2, 𝑠3)
+𝐷𝑖𝑠𝑡(𝑠 1, 𝑠3)= |𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2) −𝐷𝑖𝑠𝑡(𝑠 2, 𝑠3)| ,if𝐷𝑖𝑟(𝑠 1, 𝑠2)=𝐼𝑛𝑣(𝐷𝑖𝑟(𝑠 2, 𝑠3))
+𝐷𝑖𝑠𝑡(𝑠 1, 𝑠3)<𝐷𝑖𝑠𝑡(𝑠 1, 𝑠2) +𝐷𝑖𝑠𝑡(𝑠 2, 𝑠3),otherwise
+(6)
+• MR5: Size-Depth Consistency.This relation is grounded in the principles of perspective
+geometry and is used to validate the agent’s perception of depth.
+Definition 5 (MR5: Size-Depth Consistency).Let 𝑜 be a specific object observed by the
+agent in two different frames, 𝑓1 and 𝑓2. Let 𝑆(𝑓 𝑖, 𝑜) denote the projected size (e.g., pixel height)
+of object 𝑜 in frame 𝑓𝑖 , and 𝐷(𝑓 𝑖, 𝑜) denote the depth (distance from the agent) of 𝑜 in frame 𝑓𝑖 .
+Under the assumption of a pinhole camera model, perspective geometry gives 𝑆(𝑓 , 𝑜) ∝ 1
+𝐷(𝑓 ,𝑜) .
+Thus, for two frames:
+𝑀𝑅 5(𝑓 1, 𝑓2, 𝑜):
+
+𝑆(𝑓 1, 𝑜)
+𝑆(𝑓 2, 𝑜) − 𝐷(𝑓 2, 𝑜)
+𝐷(𝑓 1, 𝑜)
+ <𝜖(7)
+That is, the ratio of projected sizes should be inversely proportional to the ratio of depths, within
+a relative error tolerance𝜖.
+Fig. 5a illustrates this concept. In this MR, we adopt the ideal pinhole camera model with
+consistent intrinsic parameters (e.g., focal length, principal point) as a standard approximation.
+Although deviations may arise due to factors such as lens distortion, this assumption remains
+reasonable. This is because current MLLM-driven embodied intelligence primarily relies on
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 10 ---
+
+104:10 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+R, T
+OL
+OR
+𝑓1
+𝑓2
+𝑆(𝑓1, 𝑜)
+𝑆(𝑓2, 𝑜)
+𝐷(𝑓1, 𝑜) 
+𝐷(𝑓2, 𝑜) 
+(a) MR5
+𝑓1
+𝑜1 𝑜2
+H(𝑓1, 𝑜1) 
+𝑓2
+R, T
+H(𝑓2, 𝑜1) 
+H(𝑓1, 𝑜2) 
+H(𝑓2, 𝑜2) 
+OL
+OR (b) MR6
+Fig. 5. Under the pinhole camera model, perspective geometry dictates that the ratio of projected sizes
+should be inversely proportional to the ratio of depths for a single object. MR5 (Size-Distance Consistency
+for Multi-Frame Single Object) asserts that a single object’s size-depth relationship remains consistent across
+different frames, while MR6 (Size-Distance Consistency for Multi-Object Multiple Frames) ensures that the
+size ratio between different objects remains consistent across frames.
+RGB images as input and focuses on coarse-grained depth estimation during embodied tasks
+rather than precise depth estimation [Li et al. 2024b; Yang et al. 2025]. Therefore, we accept
+controllable deviations. Unlike the previous MRs, MR5 uses meters as the estimation unit. To
+accommodate acceptable deviations in depth estimation, we introduce a relative tolerance
+threshold𝜖. We discuss the threshold determination and sensitivity analysis in §5.5.
+• MR6: Object Size Ratio Consistency.This relation is used to validate the agent’s perception
+of object size, as defined in Definition 6.
+Definition 6 (MR6: Object Size Ratio Consistency).Let 𝑓1 and 𝑓2 be two frames from the
+agent’s trajectory, and𝑜1 and 𝑜2 be two distinct objects observed in both frames. Denote 𝐻(𝑓 𝑖, 𝑜𝑗 )
+as the estimated real-world size of object 𝑜 𝑗 in frame 𝑓𝑖 . The following approximate consistency
+relation should hold:
+𝑀𝑅 6(𝑓 1, 𝑓2, 𝑜1, 𝑜2):
+
+𝐻(𝑓 1, 𝑜1)
+𝐻(𝑓 1, 𝑜2) − 𝐻(𝑓 2, 𝑜1)
+𝐻(𝑓 2, 𝑜2)
+ <𝛿(8)
+That is, the ratio of the estimated real-world sizes of two objects should remain consistent across
+different frames within a relative error tolerance 𝛿. We discuss the determination and sensitivity
+analysis of this threshold in §5.5. The reason for comparing a ratio instead of absolute size is
+that we observe the scale of the virtual simulator environment is often altered by the stretching
+or scaling of 3D models.
+3.4 Discussions on MR Design
+Our set of six MRs is not an arbitrary collection of heuristics; rather, it is derived through a systematic
+selection process governed by three rigorous criteria: (1)Theoretical Foundation.Each MR must
+be grounded in eitheruniversal logical axiomsorfundamental physical laws. This ensures MRs
+are model-agnostic and unbiased toward specific architectures. (2)Testability.Each MR must be
+verifiable using only spatiotemporal state data available during embodied execution. This excludes
+purely cognitive phenomena that lack observable behavioral correlates. (3)Coverage of Core
+Spatial Attributes.The MR set must collectively test the four fundamental spatial attributes
+(direction, distance, size, depth) identified in §2.1.
+Based on these criteria, we derived aminimal sufficient setof MRs to cover the embodied SC spec-
+trum. Our set fully covers the four fundamental SCs identified in §2.1 without redundancy to ensure
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 11 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:11
+Embodied Execution 
+Trajectories
+···
+Trajectory Sampling
+Spatiotemporal State Data Collection (§4.1)
+Ex. Prompt
+Template: Determine 
+the directional spatial 
+relationship of 
+{object_1} relative to 
+{object_2}. Currently, 
+you are ……
+MRs
+MR1 Transitivity
+MR2 Symmetry
+MR3 Contradiction
+… …… Embodied
+Agent
+Ans: North
+Ans: North
+Inf: South
+Sk,i
+𝒯𝑘 ID Object
+0 apple
+1 pot
+... …
+Sk,r
+Multi-
+Object 
+Tracking
+Test Case Generation (§4.2)
+Source Query
+Mutated Query
+Automated Validation via Logic Programming (§4.3)
+SWI-Prolog
+Ex. Prompt
+Violation
+State Combination
+Fig. 6. Pipeline of the MetaSpace framework for evaluating embodied spatial cognition.
+the completeness of our MR set, as each MR targets distinct cognitive mechanisms. For instance,
+within directional tasks, MR1 (Transitivity) focuses on multi-hop reasoning (e.g., 𝑠1 →𝑠 2 →𝑠 3),
+whereas MR2 (Symmetry) assesses single-step reasoning. Similarly, within magnitude tasks, MR6
+(Object Size Ratio Consistency) evaluates relative perception between objects’ sizes, whereas MR5
+(Size-Depth Consistency) demands adherence to perspective geometry linking projected size to
+depth. Regarding reliability, as demonstrated in §6.2, the high human baseline (0.96) confirms that
+our MRs accommodate valid spatial interpretations, ensuring minimal over-flagging. We further
+provide a quantitative false positive analysis in §6.4.2. Finally, our MR design ensures universality.
+By grounding MRs in fundamental spatial attributes rather than specific tasks, they remain appli-
+cable across diverse SC types. For instance, MR1 (Transitivity) applies equally to object relations
+(SC2-a) and motion perception (SC1-a), ensuring adaptability even as new SC tasks emerge. We
+empirically validate the effectiveness of these MRs in §6.4.1.
+4 Methodology
+We design and implement MetaSpace to address the challenges mentioned above. The overall
+architecture of MetaSpace consists of four main modules, as illustrated in Fig. 6:
+• Spatiotemporal State Data Collection (§4.1):Collects and preprocesses real-world trajectory
+data from embodied agents, sampling state combinations and extracting objects for downstream
+test case generation.
+• Test Case Generation (§4.2):Automatically generates original and transformed test cases from
+state combinations using metamorphic transformations based on predefined MRs.
+• Automated Validation via Logic Programming (§4.3):Encodes agent responses and MRs as
+Prolog facts and rules, and validates consistency between original and transformed outputs to
+detect violations in embodied spatial cognition responses.
+• Spatial Capability Scoring and Analysis (§4.4):Aggregates violation statistics and computes
+scores for each spatial cognition capability, enabling detailed evaluation and comparison.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 12 ---
+
+104:12 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+4.1 Spatiotemporal State Data Collection
+In MetaSpace, we utilize real-world trajectories of embodied intelligence to evaluate spatial cognition
+capabilities, ensuring a strong correlation between evaluation results and actual embodied task
+performance. Therefore, instead of relying on static, manually curated test cases, our framework
+processes real execution trajectories from embodied agents (more details in §5.1). Let T represent
+the set of raw trajectory data collected from embodied agents performing embodied tasks (e.g.,
+navigation or manipulation), defined asT={T 1,T2, . . . ,T𝑚 }, where each trajectory T𝑘 is a sequence
+of states defined as T𝑘 ={𝑠 𝑘,1, 𝑠𝑘,2, . . . , 𝑠𝑘,𝑛 }. Each state 𝑠𝑘,𝑖 includes an egocentric visual observation
+by the embodied agent, represented as 𝑓𝑘,𝑖 (image frame). These states are then used to generate test
+cases (detailed in §4.2). We preprocess the trajectory data for test case generation in the following:
+➀ Trajectory Sampling.Each trajectory T𝑘 is processed to extract state combinations (e.g., two or
+three states) based on the specific SC and MR utilized. Each combination is then used for individual
+test case generation. For instance, to adaptMR2: SymmetryinSC1, we extract pairs of consecutive
+states (𝑠𝑘,𝑖, 𝑠𝑘,𝑖+1 ) from the trajectory T𝑘. The implementation details of state combination extraction
+are provided in §5.3.
+➁ Object Detection and Tracking.For each state combination, we extract the objects (e.g.,
+landmarks, manipulable items) for test case generation. We implement this using Ultralytics
+YOLO [Redmon et al . 2016] for multi-object tracking across the whole trajectory. Let O𝑘,𝑖 =
+{𝑜𝑘,𝑖,1, 𝑜𝑘,𝑖,2, . . . , 𝑜𝑘,𝑖,𝑙 } denote the set of objects detected in a frame 𝑓𝑘,𝑖 within trajectory T𝑘. Each
+object 𝑜𝑘,𝑖,𝑗 is detected with its bounding box coordinates, class label, and confidence score. Since the
+objective of MetaSpace is to evaluate embodied spatial cognition capabilities, we aim to minimize
+interference from perception capability failures (e.g., the agent failing to recognize the target apple).
+Therefore, we adopt the following strategies: 1) Assign a unique identifier (ID) to each object across
+frames. 2) Retain only detections with a confidence score above 0.6 to minimize noise (the threshold
+determination process is detailed in §5.5). 3) Incorporate the detected bounding boxes into the
+input prompt for the embodied agent to further reduce the impact of perception errors. We further
+investigate the performance of YOLO and the robustness against perception noise in §5.3.
+4.2 Test Case Generation
+The state combinations and their corresponding object sets obtained from the §4.1 are used to
+generate test cases. In this module, the trajectories are utilized to generate test cases based on
+the MRs defined in §3.3.1 and §3.3.2. Each test case consists of an original input query 𝑥 and a
+transformed input query𝑥 ′ =𝜙(𝑥) , which is generated by applying the metamorphic transformation
+𝜙associated with a specific type of MR. Both are derived from the same state combination.
+MetaSpace adopts an automated and spatial cognitive capability-aware approach to sample
+trajectories and generate test cases. The detailed process is outlined in Algorithm 1. For each
+trajectory (T𝑘) in the trajectory set (T ), and for each MR associated with the target SC, the algorithm
+selects state combinations using different strategies based on the SC type. Specifically, for movement
+perception (SC1), a sliding window of size𝑤 (determined by the MR) is applied to extract consecutive
+state combinations (Lines 5–6). For SC2, SC3, and SC4, the algorithm first identifies persistent
+objects across the trajectory and then generates object-centric state combinations based on these
+objects (Lines 8–9). For each state combination, the appropriate prompt template is retrieved from
+the predefined set 𝑡𝑒𝑚𝑝𝑙𝑎𝑡𝑒[𝑆𝐶, 𝑀𝑅] and filled with the state combinations and objects (objects
+are excluded for SC1) (Lines 12). Subsequently, the original input query 𝑥 is generated from the
+filled prompt (Line 13). The transformed input query 𝑥 ′ is created by applying the metamorphic
+transformation 𝜙 associated with the current MR to the filled prompt (Line 13). Finally, the pair
+(𝑥, 𝑥 ′), along with the corresponding MR, is appended to the test case set C (Line 14). After
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 13 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:13
+Algorithm 1Automated Test Case Generation
+Require:Trajectory setT, Prompt Templates 𝑡𝑒𝑚𝑝𝑙𝑎𝑡𝑒, target spatial cognition𝑆𝐶
+Ensure:Test CasesC
+1:C ← [ ], g𝑀𝑅←GetMRsBySC(𝑆𝐶)
+2:foreach trajectoryT 𝑘 inTdo
+3:foreach𝑀𝑅in g𝑀𝑅do
+4:if𝑆𝐶=SC1then
+5:𝑤←GetWindowSize(𝑀𝑅)
+6:S ←GenerateConsecutiveCombinations(T 𝑘,𝑤)
+7:else
+8:P ←GetPersistentObjects(T 𝑘)
+9:S ←GenerateObjectBasedCombinations(T 𝑘,P)
+10:end if
+11:foreach state combination𝑆inSdo
+12:𝑓 𝑖𝑙𝑙𝑒𝑑_𝑝𝑟𝑜𝑚𝑝𝑡←FillTemplate( 𝑡𝑒𝑚𝑝𝑙𝑎𝑡𝑒[𝑆𝐶, 𝑀𝑅],𝑆,𝑆𝐶)
+13:(𝑥, 𝑥 ′) ←GenerateQueries(𝑓 𝑖𝑙𝑙𝑒𝑑_𝑝𝑟𝑜𝑚𝑝𝑡,𝑀𝑅)
+14:C.append((𝑥, 𝑥 ′, 𝑀𝑅))
+15:end for
+16:end for
+17:end for
+18:returnC
+processing all trajectories and MRs, the algorithm returns the complete set of generated test cases
+C (Line 18). This approach ensures that test case generation is fully automated, reproducible, and
+scalable, while remaining agnostic to the specific MR or the length of the agent’s trajectories.
+4.3 Automated Validation via Logic Programming
+MetaSpace automates output validation by encoding spatial observations as Prolog facts and MRs
+as rules. For each test case, the Prolog engine infers the expected output for the transformed input
+using these facts and rules, then compares it to the agent’s actual response. Any inconsistency
+indicates a spatial cognition error.
+As detailed in Algorithm 2, the process begins with an automatic rule parser that iterates over
+all MRs, extracting for each relation a specific query pattern (a Prolog predicate template for
+enumerating relevant test case instances) and the corresponding reasoning rule (line 3). A Prolog
+program is constructed by combining the facts from observations with the reasoning rule for the
+MR (line 4). Using this program, all possible instantiations of the MR predicate template, which
+represent valid combinations of states or objects present in the ground facts, are enumerated for
+validation (line 5). For each instantiation, the algorithm checks consistency between the expected
+output inferred by the Prolog engine and the agent’s actual response; if the check fails, a violation
+is recorded and appended to a set for further analysis (lines 6–9). This automated process enables
+MetaSpace to comprehensively assess the spatial cognitive consistency of the agent across all
+possible test cases derived from its observations. We utilize SWI-Prolog [Wielemaker et al. 2012],
+an open-source advanced logic programming interpreter to implement the Prolog engine.
+4.4 Spatial Capability Scoring and Accuracy Analysis
+After executing all test cases and collecting the violation set e𝑉 , MetaSpace computes a spatial
+capability score for each spatial cognitive capability defined in Fig. 2. The scoring process is defined
+in the following. For each embodied spatial cognitive capability 𝑆𝐶𝑖, identify the set of associated
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 14 ---
+
+104:14 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Algorithm 2Automated Consistency Validation via Logic Programming
+Require:Observations e𝐹𝑜𝑏𝑠 , Metamorphic Relations g𝑀𝑅
+Ensure:Violation Set e𝑉
+1: e𝑉← [ ] ⊲Initialization
+2:foreach𝑀𝑅in g𝑀𝑅do⊲Iterate over each MR
+3:(𝑄 𝑀𝑅 ,R 𝑀𝑅 ) ←ParseMR(𝑀𝑅)⊲Obtain MR-specific query and reasoning rule
+4:P ← e𝐹𝑜𝑏𝑠 + +R𝑀𝑅 ⊲Construct Prolog program with facts and MR rule
+5:𝐼𝑛𝑠𝑡←FindAllInstantiations(P,𝑄 𝑀𝑅 )⊲Enumerate all entity tuples to check
+6:foreach𝑖𝑛𝑠𝑡in𝐼𝑛𝑠𝑡do⊲Iterate over each instantiation
+7:if notCheckConsistency(P,𝑄 𝑀𝑅 ,𝑖𝑛𝑠𝑡)then
+8:𝑉 𝑛𝑒𝑤 ← (𝑀𝑅, 𝑖𝑛𝑠𝑡)⊲Record violation: MR and instance
+9: e𝑉 .append(𝑉𝑛𝑒𝑤 )
+10:end if
+11:end for
+12:end for
+13:return e𝑉⊲Return all detected violations
+metamorphic relations g𝑀𝑅(𝑆𝐶 𝑖 ). Let eC (𝑆𝐶𝑖 ) denote the set of all test cases generated for 𝑆𝐶𝑖 based
+on g𝑀𝑅(𝑆𝐶 𝑖 ), and e𝑉(𝑆𝐶 𝑖 ) denote the set of violations detected for 𝑆𝐶𝑖. Compute the capability score
+using the formula:
+𝑆𝑐𝑜𝑟𝑒(𝑆𝐶 𝑖 )=1− |e𝑉(𝑆𝐶 𝑖 )|
+|eC (𝑆𝐶𝑖 )|
+(9)
+where |eC (𝑆𝐶𝑖 )| is the total number of test cases and |e𝑉(𝑆𝐶 𝑖 )| is the number of violations. This
+score ranges from 0 to 1, where a score of 1 indicates perfect performance (no violations), and a
+score of 0 indicates complete failure (all test cases resulted in violations).
+5 Implementation
+5.1 Dataset
+The three embodied scenarios and their corresponding datasets used in our evaluation are as follows:
+Household robot:We use the EB-Navigation dataset from [Yang et al . 2025], which is based on
+AI2-THOR [Kolve et al. 2017]. It contains 60 navigation trajectories in different household scenes
+(e.g., kitchens, living rooms, and bedrooms).Robotic arm:We use the EB-Manipulation dataset
+from [Yang et al. 2025], which is based on VLMBench [Zheng et al. 2022] using the CoppeliaSim
+simulator [Rohmer et al. 2013] to control a 7-DoF Franka Emika Panda robotic arm. The dataset
+contains 48 manipulation trajectories in different tabletop scenes.Drone:We use a sub-dataset of
+drone navigation trajectories from [Zhao et al. 2025], which is based on the AerialVLN [Liu et al.
+2023b]. The sub-dataset contains 50 navigation trajectories in various outdoor scenes (e.g., urban
+areas, parks, and highways).
+5.2 Benchmark Agents
+Model Selection.To ensure reliable evaluation, we assess embodied agents powered by 6 SOTA
+MLLMs using MetaSpace. We select two categories for analysis: (1) closed-source, API-accessible
+models, including GPT-5 [OpenAI 2025], GPT-4o [OpenAI 2024], and Claude Sonnet 4 [Anthropic
+2025]; and (2) open-source, locally deployable models, including Qwen-VL [Wang et al . 2024],
+InternVL3.5-8B [Wang et al. 2025], and DeepSeek-VL2-small [Wu et al. 2024].
+Model Configurations.To ensure the stability and consistency of model outputs during evaluation,
+we set thetemperatureparameter to 0, resulting in deterministic responses. We further settop-pto
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 15 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:15
+Table 2. MR5 Threshold Sensitivity Analysis (Score).
+Threshold Variation𝜖Human GPT-4o Gap
+Strict (-50%) 0.050 0.88 0.39 0.49
+Strict (-25%) 0.075 0.91 0.41 0.50
+Original (Ref) 0.100 0.93 0.44 0.49
+Relaxed (+25%) 0.125 0.95 0.45 0.50
+Relaxed (+50%) 0.150 0.97 0.48 0.49
+Table 3. MR6 Threshold Sensitivity Analysis (Score).
+Threshold Variation𝛿Human GPT-4o Gap
+Strict (-50%) 0.0250 0.86 0.75 0.11
+Strict (-25%) 0.0375 0.88 0.76 0.12
+Original (Ref) 0.0500 0.91 0.79 0.12
+Relaxed (+25%) 0.0625 0.93 0.82 0.11
+Relaxed (+50%) 0.0750 0.94 0.84 0.10
+0.9 and disabletop-ksampling (set to 0), so that only the most probable tokens are selected, thereby
+improving the reliability of generated results.
+Consistency in Model Outputs.To rigorously assess the consistency of MLLM responses in our
+approach, we conduct statistical significance tests. Specifically, for each embodied scenario and SC,
+we randomly sample 30 test cases, yielding a total of 720 test cases. Taking GPT-4o as an example,
+each test case was executed five times under the above configuration. To evaluate whether the
+responses from different runs were statistically indistinguishable, we then applied the Friedman
+test [Friedman 1937], a non-parametric method for detecting differences across multiple repeated
+measures. The results showed no significant differences between runs (average 𝑝-value = 0.57),
+confirming that the MLLM outputs are highly consistent under our settings. Therefore, a single
+run is sufficient for evaluation in MetaSpace, ensuring both efficiency and reliability.
+5.3 Spatiotemporal State Data Collection
+Trajectory Sampling Strategy.The trajectory sampling strategy varies based on the SC capability
+being evaluated. For movement perception evaluation, we exclusively utilize consecutive states to
+assess agents’ immediate motion perception rather than their long-term path planning abilities. This
+distinction enables embodied agents to support step-by-step action decisions through continuous
+perception-action loops, while higher-level planning capabilities rely on goal-oriented strategies
+for long-term navigation. This approach emphasizes our focus on core SC skills rather than the
+extensively discussed path planning capabilities [Kong et al. 2024; Zhang et al. 2024a]. For evalu-
+ations of spatial reasoning, perspective visualization, and egocentric-allocentric transformation,
+we do not restrict to consecutive states, as these capabilities have different requirements. Spatial
+reasoning requires understanding the relationships between objects in space, often necessitating
+multiple time steps to observe the same objects from various angles. Perspective visualization
+often requires observations from multiple viewpoints that may not be captured in consecutive
+frames. Additionally, egocentric-allocentric transformation requires agents to integrate information
+from different spatiotemporal positions to construct coherent mental maps. Therefore, we extract
+different state combinations from the trajectories based on the SC being evaluated.
+Object Detection and Tracking.We utilize YOLOv11 [Ultralytics 2024] for multi-object tracking
+in the collected spatiotemporal states. Notably, MetaSpace utilizes YOLO solely for candidate
+object discovery to generate queries, rather than defining the ground-truth of spatial relations. The
+oracle of MetaSpace relies on internal logical consistency (e.g., Transitivity) or relative physical
+ratios, independent of absolute YOLO coordinates. Therefore, potential missed objects (due to recall
+limitations) merely reduce the quantity of generated test cases without introducing false violations.
+We evaluated YOLO’s tracking performance on a dataset of 500 images across 50 episodes. The
+results demonstrate that YOLOv11 achieves 94% IoU without false positives, ensuring minimal
+perception errors. To further validate robustness against perception noise, we injected synthetic
+noise (including label inaccuracies and bounding box jitter of up to ±20%) into 1,000 test instances.
+We observed only six cognitive failures resulting from this noise, which were attributed to the
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 16 ---
+
+104:16 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+MLLM’s inherent perception capabilities for self-correction. This confirms that perception noise
+has a negligible impact on our cognitive evaluation, and our modular design allows MetaSpace to
+adopt future perception advancements. We discuss the threshold for YOLO in §5.5.
+5.4 Test Case Generation Implementation
+In total, we generate 30,300 unique test cases. This number is derived by exhaustively enumerating
+all valid state and object combinations across all scenarios, SC capabilities, and MRs, as determined
+by the automated test case generation process in §4.2. These test cases comprehensively cover the
+eight SCs outlined in Fig. 2. For each SC, we create test cases based on the associated MRs defined
+in §3.3.1 and §3.3.2. We then utilize these test cases to evaluate the six benchmark embodied agents.
+5.5 Threshold Determination
+To determine the optimal threshold for MR5 and MR6, the criterion is to ensure that the embodied
+agent achieves human-level performance. To establish a rigorous baseline, we recruited five adult
+participants, and each participant was presented with the same set of SC tasks and visual stimuli as
+the evaluated agents, under standardized instructions and conditions. Participants completed the
+tasks independently, without time limits or external assistance, to minimize potential biases. All
+responses were collected and evaluated using the same automated logic-based validation framework
+applied to the agents. The five participants exhibited high inter-subject consistency with low
+standard deviations (approx.0 .05for MR5 and approx.0 .025for MR6), indicating that increasing
+the participant count would unlikely shift the derived thresholds significantly. By analyzing the
+relative errors between the participants’ estimates and the ground truth, the selected thresholds
+were calibrated to approximately the 90th percentile of human precision. This allows for minor
+estimation deviations while rigorously capturing SC capabilities. Consequently, we set the relative
+error threshold for MR5 (𝜖) and MR6 (𝛿) to 0.1 and 0.05, respectively. This implies that we accept
+a 10% relative error for MR5 and 5% for MR6 as the bounds of human-level performance; any
+estimates exceeding these thresholds are considered violations. We further quantified robustness
+by testing human and GPT-4o performance under threshold variations (±25%, ±50%). As shown in
+Tab. 2 and Tab. 3, the GPT-4o SC score improved by only approximately 0.05 even when relaxing
+the threshold by 50%. This suggests that the detected errors are catastrophic logic violations rather
+than marginal misses; therefore, slight changes in thresholds do not alter our research conclusions.
+To determine the optimal confidence score threshold for multi-object tracking using YOLO, we
+conduct experiments on 500 images from 50 episodes, testing thresholds ranging from 0.4 to 0.9.
+Manual inspection of the detection results indicates that a threshold of 0.6 yields an average of four
+detected objects per image, with a precision of 100% and a recall of 82%. This threshold ensures
+both low false positive rates and adequate object coverage for spatial cognition evaluation.
+6 Evaluation
+Our evaluation aims to answer the following research questions (RQs):
+• RQ1 (SC Performance): How do different MLLM-driven embodied agents perform in
+embodied spatial cognition?This question evaluates the embodied spatial cognition capabilities
+of various MLLM-driven embodied agents by using MetaSpace.
+• RQ2 (Comparison with Existing Works): How does MetaSpace compare with existing
+approaches in evaluating embodied SC capabilities?This RQ studies whether MetaSpace
+outperforms existing benchmarks from both quantitative and qualitative perspectives.
+• RQ3 (Internal Evaluation): How effective are individual MRs and how reliable is the
+overall detection mechanism?This RQ investigates the effectiveness of each MR in detecting
+embodied spatial cognition errors and assesses the reliability of the entire detection framework.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 17 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:17
+SC1-aSC1-bSC2-aSC2-bSC3-aSC3-bSC4-aSC4-b
+Claude
+Sonnet 4
+DeepSeek-VL2-small
+GPT-4o
+GPT-5
+InternVL3.5-8B
+Qwen-VL
+Human
+0.14 0.86 0.23 0.66 0.82 0.41 0.14 0.56
+0.29 0.47 0.33 0.66 0.78 0.32 0.31 0.60
+0.17 0.78 0.14 0.57 0.79 0.44 0.11 0.54
+0.38 0.89 0.29 0.73 0.69 0.24 0.28 0.63
+0.34 0.66 0.23 0.60 0.71 0.45 0.19 0.58
+0.21 0.51 0.33 0.75 0.48 0.38 0.32 0.71
+0.98 0.96 0.99 0.96 0.91 0.93 0.98 0.95
+ 0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Score
+Fig. 7. Heatmap of embodied spatial cognition
+scores across different embodied agents.
+SC1-a
+SC2-a
+SC4-a
+SC3-b
+SC3-a
+SC1-b
+SC2-b
+SC4-b
+ 
+0.4
+0.6
+0.8
+1.0
+ GPT-4o
+GPT-5
+Claude Sonnet 4
+DeepSeek-VL2-small
+InternVL3.5-8B
+Qwen-VL
+Human
+Fig. 8. Radar chart comparing embodied spatial cogni-
+tion scores among different embodied agents.
+• RQ4 (Mitigation): How can we mitigate the limitations of current MLLM-driven embod-
+ied agents in spatial cognition tasks?This RQ explores potential strategies for improving the
+performance of embodied agents in spatial cognition tasks.
+6.1 Experimental Setup
+Our experiments are conducted on a server running Ubuntu 22.04, equipped with dual 56-core Intel
+Xeon Scalable processors,2 TB of RAM, and an NVIDIA H800 GPU node. The total GPU hours
+consumed for all experiments on open-source MLLMs (all scenarios) amount to31 660 .412 seconds,
+which is acceptable given the scale of our evaluation.
+6.2 RQ1: SC Performance
+To evaluate the embodied spatial cognition capabilities of six benchmark MLLM-driven embodied
+agents, we analyze the statistics of test cases and violations detected by MetaSpace. The detailed
+embodied spatial cognition scores for each agent across all SCs are displayed in Fig.7 and Fig. 8.
+Additionally, Tab. 4 reports normalized error statistics. The high failure density (e.g.,>82 errors per
+trajectory) verifies that the substantial volume of detected errors stems from pervasive cognitive
+failures throughout task execution, rather than being an artifact of the test case scale.
+Magnitude vs. Directional Tasks.Results show that direction estimation and directional spatial
+reasoning tasks (e.g., movement direction estimation in SC1-a, directional reasoning in SC2-a and
+SC4-a) are relatively challenging for most agents compared to magnitude estimation tasks (e.g.,
+distance estimation in SC1-b, SC2-b, SC4-b, size estimation in SC3-a, and depth estimation in SC3-b).
+This phenomenon can be attributed to the fact that magnitude-related tasks primarily require
+direct numerical inference and quantitative reasoning based on visual input, without necessitating
+complex spatial relationship modeling. Current mainstream MLLMs are pre-trained on large-scale
+corpora that emphasize static visual descriptions, object attribute recognition, and fundamental
+quantitative judgments, making these capabilities more readily generalizable to magnitude estima-
+tion tasks [Chatterjee et al. 2024; Zhu et al. 2023]. In contrast, direction estimation and directional
+spatial reasoning tasks require advanced spatial representations and reasoning chains in three-
+dimensional space, which are not yet sufficiently developed in existing MLLMs [Chatterjee et al.
+2024; Hoehing et al. 2023; Ramakrishnan et al. 2025; Zhang et al. 2025c]. As a result, while agents
+perform relatively well on magnitude tasks, their poor performance on directional SC highlights
+the limitations in spatial reasoning capabilities of current MLLM-driven embodied agents.
+Size Estimation (SC3-a).Among all spatial cognition tasks, most agents demonstrate outstanding
+performance in SC3-a (size estimation), with all models except Qwen-VL scoring above 0.7. This
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 18 ---
+
+104:18 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Human GPT-5
+Claude
+Sonnet 4DeepSeek-VL2-small
+InternVL3.5-8BQwen-VLGPT-4o
+MLLM-Driven Embodied Agent
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0Average Score
+0.96
+0.52 0.48 0.47 0.47 0.46 0.44
+Fig. 9. Ranking of average scores for embodied spa-
+tial cognition capabilities across various agents.
+MetaSpace
+EmbodiedBench
+3DSRBenchECBenchEmbSpatial-Bench
+SPACE
+0
+200
+400
+600
+800
+1000Number of Errors
+1100
+35
+590
+693 680
+580
+988
+35
+310
+407
+300 288
+total detected errors
+# of meaningful errors
+share of meaningful errors
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Proportion of Meaningful Errors
+0.91
+0.03 0.29
+0.38
+0.28 0.27
+Fig. 10. Quantitative comparison of MetaSpace with
+existing approaches in SC error detection.
+can be attributed to the robust spatial common sense knowledge base of MLLMs, which includes
+typical dimensions of common objects. By referencing nearby objects with known sizes, MLLMs
+can effectively estimate the sizes of unknown objects. This strategy renders size estimation tasks
+relatively easier for MLLM-driven agents.
+Egocentric-Allocentric Transformation (SC4).SC4 evaluates the agent’s ability to construct
+mental maps and perform reference frame transformations. Similar to SC2 (spatial reasoning), SC4
+involves reasoning about spatial relationships, but places greater emphasis on transforming from a
+first-person to an allocentric perspective. This requires the agent not only to comprehend spatial
+relationships between objects, but also to map these relationships across different viewpoints.
+Given the complexity involved, all MLLM-driven agents perform poorly on this capability, with
+scores consistently lower than those achieved on SC2 tasks. This highlights the current limitations
+of MLLMs in handling dynamic reference frame changes and constructing mental maps.
+Human Baseline Performance.To further contextualize the overall performance of embodied
+agents in spatial cognition, we invite five human participants (none of whom have any known
+spatial cognition impairments) to complete the same set of test cases, serving as a baseline for
+comparison.5 As shown in Fig. 7 and Fig. 8, humans consistently outperform all embodied agents
+across all spatial cognition tasks, underscoring the significant gap between current MLLM-driven
+embodied agents and human-level spatial cognition.
+Ranking of Average Scores.In Fig. 9, we present the ranking of average scores for embodied
+spatial cognition capabilities across different embodied agents. The agent powered by the propri-
+etary model GPT-5 achieves the highest average score of 0.52, indicating relatively robust spatial
+cognition abilities. Notably, open-source models (e.g., DeepSeek-VL2-small and InternVL3.5-8B) also
+demonstrate competitive performance, with an average score of 0.47, surpassing the proprietary
+model GPT-4o. While there are variations in average scores among MLLM-driven agents, these
+discrepancies are relatively minor, with all models scoring between 0.44 and 0.52. In contrast,
+the human baseline achieves an average score of 0.96, highlighting a substantial gap between
+embodied agents and human performance. We further clarify that similar rankings in Fig. 9 result
+from averaging scores across all SCs. This reflects the generally limited cognitive capabilities of
+current agents and highlights the substantial human-agent performance gap. However, granular
+diagnostics for each agent are still evident in Fig. 7, such as identifying GPT-5’s specific weakness
+in SC3-b. By leveraging MT with fine-grained MRs to comprehensively assess four SCs, MetaSpace
+5Considering the large scale of the test cases, which would create a significant workload for human respondents, we decided
+to conduct the evaluation on a subset comprising 10% of the original dataset.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 19 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:19
+Table 4. Normalized error statistics.Err. Rate: Error Rate (%, per test case);Avg. Err. Tra.: Average Errors
+per Trajectory;Avg. Err. Obj.: Average Errors per Object.
+GPT-5 Claude Qwen-VL InternVL DeepSeek GPT-4oSonnet 4 3.5-8B VL2-small
+Total Test Cases30,300 per agent
+Total Errors13,048 14,527 15,024 15,636 15,737 16,449
+Err. Rate43.06% 47.94% 49.58% 51.60% 51.94% 54.29%
+Avg. Err. Tra.82.58 91.94 95.09 98.96 99.60 104.11
+Avg. Err. Obj.16.52 18.39 19.02 19.79 19.92 20.82
+mitigates the “success by coincidence” issue found in existing benchmarks and provides granular
+diagnostics that binary success metrics in other benchmarks cannot reveal.
+ANSWER to RQ1
+Our evaluation using MetaSpace reveals that benchmark MLLM-driven embodied agents exhibit
+significant limitations in embodied spatial cognition, particularly in tasks involving direction esti-
+mation and spatial directional reasoning. While these agents perform relatively well on magnitude
+estimation tasks, their overall scores remain substantially lower than human performance.
+6.3 RQ2: Comparison with Existing Works
+6.3.1 Qualitative Analysis.We qualitatively compare MetaSpace with the SOTA embodied agents
+benchmarks and embodied spatial cognition evaluation approaches to illustrate the advantages of
+MetaSpace. As shown in Tab. 5, we compare MetaSpace with EmbodiedBench [Yang et al. 2025],
+3DSRBench [Ma et al. 2025], ECBench [Dang et al. 2025], EmbSpatial-Bench [Du et al. 2024], and
+SPACE [Ramakrishnan et al. 2025] from four core dimensions.
+Test Case Generation.Existing benchmarks primarily rely on manually annotated VQA or MCQ
+datasets, which are labor-intensive and costly to create, limiting their scalability. Besides, the
+quality of manually created test cases can vary significantly due to human subjectivity, leading
+to potential biases and inconsistencies. In contrast, MetaSpace employs an automated test case
+generation approach based on MRs, enabling the creation of a vast number of test cases without
+human intervention. This automation not only enhances scalability but also ensures reproducibility
+and consistency in test case generation.
+Embodiment.Some existing benchmarks (e.g., 3DSRBench, EmbSpatial-Bench) focus on static
+VQA tasks without considering the embodied nature of agents, which limits their ability to evaluate
+spatial cognition in embodied settings. For example, SPACE includes some classic human cognitive
+tests (e.g., Minnesota Paper Form Board test), which do not involve any interaction with the
+environment. In contrast, MetaSpace is specifically designed for testing in real embodied settings,
+by utilizing the real embodied execution trajectories of agents to generate test cases. Our approach
+allows for a more realistic embodiment evaluation of spatial cognition capabilities.
+Test Oracle.Existing benchmarks typically use high-level task success, VQA/MCQ correctness
+(by comparing with human-annotated answers), or human evaluation as the test oracle. However,
+high-level task success can miss errors that do not directly cause task failure (Fig. 1), while manual
+annotation and human evaluation are labor-intensive and may introduce noise. In contrast, MetaS-
+pace uses violations of MRs as the test oracle. These MRs are grounded in established logic rules
+and physical laws, providing an objective, scalable, and reliable validation process.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 20 ---
+
+104:20 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Table 5. Qualitative comparison of MetaSpace with existing SOTA evaluation approaches.
+Test Case Generation Embodiment Test Oracle SC Categories
+MetaSpace Auto-gen based on MRs!MR violation SC1, SC2, SC3, SC4
+EmbodiedBench -!Task success SC2, Perception
+3DSRBench Man. annotated VQA VQA correctness SC2,Height estimation
+EmbSpatial-Bench Auto-gen MCQs MCQ correctness SC2-a, SC3-b
+ECBench Man. annotated VQA ! VQA correctness, SC2, Perception,
+Human eval. Hallucination
+SPACE Man. annotated MCQs, √∖ MCQ correctness,Classic cognitive tests,
+Interactive tasks SPL SC2
+Spatial Cognition Categories.Existing benchmarks typically emphasize SC2 (spatial reasoning),
+with limited coverage of other essential SC capabilities (e.g., SC1, SC3, and SC4). This narrow
+focus restricts the ability to holistically evaluate embodied agents. In contrast, MetaSpace provides
+comprehensive coverage of all eight key SC capabilities, enabling a more complete and robust
+assessment of embodied SC. We will further discuss the necessity of these SCs in §6.3.2.
+6.3.2 Quantitative Analysis.To compare MetaSpace with existing SOTA approaches in testing
+SC capabilities of embodied agents, we do a small-scale quantitative analysis. The challenge is
+that different methods may target distinct aspects of spatial cognition, making direct quantitative
+comparison among detection results impractical and unfair. Therefore, we design a heuristic
+evaluation protocol to solve this challenge. Specifically, we apply MetaSpace and other approaches
+to the trajectories executed by the same embodied agent (these trajectories are not utilized in our
+framework to avoid data leakage), and collect the union of all detected errors. Next, we invite
+five independent human reviewers, who have no involvement in the design of our framework
+and possess extensive experience in embodied intelligence, to annotate whether each detected
+error ismeaningfulfor embodied tasks. The annotation criteria focus on whether the error could
+negatively impact embodied task performance. These negative impacts include: (1) errors that
+directly cause task failure, (2) errors that reduce task efficiency, (3) errors that may lead to safety
+risks in real-world deployment, and (4) errors that did not cause failure in the current task due to
+coincidence but represent potential risks in similar cases. This protocol allows us to evaluate the
+proportion of trulymeaningfulspatial cognition errors detected by each method fairly. Finally, we
+calculate the ratio ofmeaningfulerrors detected by each method and show results in Fig. 10.
+From the results, the union ofmeaningfulerrors detected by all methods has a total of 1080
+errors. Among them, MetaSpace detects 988meaningfulerrors, accounting for 91.5% of the union.
+This corresponds to a false negative rate of approximately 8.5%, substantially lower than other
+SOTA approaches. The remaining 8.5% stems from scenarios where the agent’s spatial reasoning
+isconsistent with MRs yet factually incorrect(e.g., claiming A is left of B and B is right of A while
+ground truth is A is right of B). Such errors are only detectable by human-annotated strong oracles.
+In contrast, 3DSRBench detects 310meaningfulerrors (29%), ECBench detects 407meaningfulerrors
+(38%), EmbSpatial-Bench detects 300meaningfulerrors (28%), and SPACE detects 288meaningful
+errors (27%). It is notable that EmbodiedBench only detects 35 spatial cognition errors, of which
+all aremeaningful, but the total number is very small. This is because EmbodiedBench primarily
+focuses on high-level task success as the test oracle, which overlooks many spatial cognition errors
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 21 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:21
+SC1-a SC2-a SC4-a SC1-b SC2-b SC4-b
+Claude
+Sonnet 4
+DeepSeek-VL2
+-small
+GPT-4o
+GPT-5
+InternVL3.5
+-8B
+Qwen-VL
+0.40 0.70 0.52 0.51 0.47 0.40
+0.48 0.43 0.54 0.56 0.39 0.42
+0.39 0.69 0.74 0.48 0.55 0.46
+0.37 0.74 0.83 0.60 0.58 0.68
+0.46 0.53 0.68 0.69 0.40 0.55
+0.43 0.46 0.52 0.64 0.91 0.97
+MR1 MR2 MR3 MR2 MR3 MR4
+Fig. 11. MRs that trigger the most SC errors
+on diverse agents across SCs. The number in
+each cell represents the triggered SC error ra-
+tio of the corresponding MR type, calculated by
+|Errors(𝑀𝑅 𝑢, 𝑆𝐶𝑣 )| / |Total Errors(𝑆𝐶 𝑣 )|.
+A
+B
+C
+D
+E
+Object
+A
+B
+C
+D
+E
+Agent
+Fig. 12. An example of a cognitive map, where the
+agent predicts object/landmark positions within an
+11 × 11 grid, with the agent located at the center of
+the map.
+that do not directly lead to task failure. Crucially, since all approaches were evaluated on identical
+trajectories, the resulting error concentration in MetaSpace is not due to experimental bias. Instead,
+it reflects MetaSpace’s capability to test a broader spectrum of SCs than other SOTAs. These results
+demonstrate that MetaSpace significantly outperforms existing approaches in detecting spatial
+cognition errors that are trulymeaningfulfor embodied task performance. We provide a more
+detailed comparison with related testing efforts in § 8.
+ANSWER to RQ2
+Compared to existing SC evaluation approaches, MetaSpace offers significant advantages in
+test case generation, embodiment, and test oracle design. Quantitatively, MetaSpace detects a
+substantially higher proportion of spatial cognition errors that impact embodied task performance.
+6.4 RQ3: Internal Evaluation
+To investigate the effectiveness of individual MRs in detecting embodied SC errors and to assess the
+reliability of MetaSpace, we conduct an internal evaluation. Firstly, to understand the effectiveness
+of different MRs, we conduct an ablation study in §6.4.1. After that, in §6.4.2, we perform a false
+positive analysis to assess the accuracy of MetaSpace in detecting embodied SC errors.
+6.4.1 Ablation Study.To assess the effectiveness of different MRs in detecting embodied spatial
+cognition errors, we conduct an ablation study. For better visualization and understanding, we
+present the distribution of embodied spatial cognition errors discovered with various MRs in Fig. 11.
+This figure illustrates which MR is able to identify more spatial cognition errors for different SCs
+and agents. The blue section represents the error detection ratio ofMR1,MR2andMR3in directional
+SCs (i.e., SC1-a, SC2-a, SC4-a), while the green section shows the number of errors detected by
+MR2,MR3, andMR4in magnitude SCs (i.e., SC1-b, SC2-b, SC4-b).MR1identifies relatively more
+spatial cognition errors in directional tasks, whereas MR3 detects a relatively higher number of
+errors in magnitude SCs. Overall, all types of MR identify a significant number of spatial cognition
+errors across various embodied spatial cognition types, so we can conclude that all MRs contribute
+meaningfully to the overall evaluation of embodied spatial cognition.
+6.4.2 False Positive Analysis.To evaluate the accuracy of MetaSpace in detecting embodied SC
+errors, we conducted a manual validation of a randomly selected subset of 1,000 detected errors
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 22 ---
+
+104:22 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+from the total set of violations e𝑉 . The results indicate that MetaSpace produced nine false positives,
+achieving a precision rate of 99.1%. Adjusting for this 0.9% FP rate shifts overall scores negligibly
+(approx.0 .005), leaving our core conclusions unaltered. Similarly, other SOTAs mentioned in §6.3.2
+also suffer from FPs due to annotator inconsistency and subjective bias.
+Notably, all false positive instances were concentrated in the evaluations of MR5 and MR6.
+In these two MRs, we employed fixed thresholds (e.g., 𝜖= 0.1for MR5 and 𝛿= 0.05for MR6)
+to quantify violations, which were derived from human baselines. However, it is important to
+recognize that in extreme test cases, human participants often struggle to make precise judgments.
+This can lead to larger estimation discrepancies and instances where thresholds exceed 𝜖= 0.1.
+While this limitation is acknowledged, it is also a necessary trade-off to achieve the benefits of
+quantitative, automated verification. Overall, the results underscore MetaSpace’s high precision in
+advancing error detection in embodied spatial cognition. We discuss the generalizability of this
+result in §3.4 and further discuss the accuracy in § 7.
+ANSWER to RQ3
+Our ablation study reveals that all MRs contribute meaningfully to identifying spatial cognition
+errors across various SCs, demonstrating their collective effectiveness in evaluating embodied
+spatial cognition. Moreover, our false positive analysis on the 1,000 randomly selected errors
+confirms the high accuracy of MetaSpace, achieving a precision of 99.1% in error detection.
+6.5 RQ4: Mitigation
+In light of the significant number of embodied spatial cognition errors observed, we conduct
+case studies to investigate the underlying causes of these errors and explore potential mitigation
+strategies. However, given the extensive workload required to examine all spatial cognition types
+and the fact that this falls somewhatoutside the primary focusof our research (i.e., testing embodied
+spatial cognition), we decide to concentrate our efforts on the most critical issue: SC4-a: directional
+spatial reasoning under egocentric-allocentric transformation. This focus enables us to provide
+a thorough analysis and develop targeted solutions without being overwhelmed by the breadth
+of the problem. Meanwhile, we acknowledge that addressing the broader spectrum of embodied
+spatial cognition errors will require additional research, which we plan to pursue in future work.
+We conduct an error analysis including a case study and propose mitigation strategies as follows.
+All experiments are conducted on GPT-4o.
+6.5.1 Error Analysis.In SC4-a, we observe that all six benchmark MLLM-driven embodied agents
+perform poorly (Fig. 7), with scores below 0.35. To investigate the root causes of these errors, we
+randomly selected 100 detected errors from the total violations for manual analysis. Our investiga-
+tion reveals that most of these errors occur during the agents’ reference frame transformations,
+which involve translating spatial relationships obtained from one reference frame to another.
+In the case illustrated in Fig. 13, the agent is required to determine the direction between two
+objects (i.e., the kettle and the window) based on an allocentric description. Notably, the agent
+demonstrates an impressive ability to perform step-by-step reasoning, outlining processes such as
+“original orientation”, “from the door”, and “when you turn to” for spatial tasks. This showcases
+its capability in modeling spatial reasoning. Additionally, the agent recognizes the nuances of
+perspective transformation and differentiates between spatial relationships, indicating its ability
+to understand egocentric and allocentric perspectives. Meanwhile, it attempts to transform the
+reference frame system to infer the answer, rather than resorting to random guessing.
+Initially, the agent accurately describes directions within a single frame of reference, both before
+and after reference frame transformation. However, it encounters errors when translating spatial
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 23 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:23
+{“relation”: “northeast”}
+You are a household embodied agent operating in
+a room, capable of performing various tasks. The
+input images given to you are first-person view
+observations. In the first image, you are facing
+{facing direction initial}. Your goal is to justify the
+spatial relationship between objects. Determine
+the spatial relationship of {object_1} to {object_2}
+when you are standing at the position of {reference
+position}, facing {facing direction target}. Output
+the directional spatial relationship, and explain
+your answer step by step. Available directions
+include {direction set}. Please end your response
+with a structured JSON object containing the final
+result, e.g., {“relation”: “direction”}.
+To determine the spatial relationship of the kettle to the window when 
+standing at the door, facing west, let's analyze the given images:
+First Image (Facing North): The kettle is on the counter to the left of the 
+stove. The fridge is to the right of the stove.
+Second Image (Facing East): The door is observed with the window to its 
+right.
+Steps:
+Original Orientation (Facing North): Kettle: On the counter to the left 
+(west) of the fridge and stove area. Window: To the right (east) of the 
+fridge.
+From the Door (Facing West): When you turn to face west, your left is 
+towards the south and your right is towards the north. The kettle was 
+originally on the left (west) side, so when you turn to face west, it will be 
+behind you towards your right. The window, originally on the right (north), 
+will be directly in front of you when you turn to face west.
+Conclusion:
+Standing at the door and facing west, the kettle is northeast of the window.{facing direction initial}: north
+{object_1}: kettle; {object_2}: window
+{reference position}: door
+{facing direction target}: west
+Input Output
+JSON
+Fig. 13. Case study of embodied spatial cognition errors in SC4-a, using orange and green backgrounds
+to highlight incorrect and correct reasoning steps, respectively. Note: Structured constraints apply solely to
+the final action outputs; the intermediate reasoning process via chain of thought (CoT) remains natural and
+unaffected. This design aligns with the widely adopted “CoT reasoning + structured action” paradigm in
+embodied systems [Savva et al. 2019; Yang et al. 2025].
+information from one perspective to another, leading to the collapse of the entire reasoning chain.
+This indicates that while the agent can perceive spatial relationships within a single reference
+frame, it struggles to translate these relationships across different perspectives.
+Table 6. Performance compari-
+son of different prompting tech-
+niques in SC4-a (measured by
+score).
+Case Score
+GPT-4o 0.11
+GPT-4o (w/ CoT) 0.15
+GPT-4o (w/ cognitive map) 0.45
+6.5.2 Mitigation Strategies.After identifying the primary root
+causes of errors in SC4-a, we propose potential mitigation strategies
+to address these issues. The decision-making of embodied agents is
+influenced by both the model itself (e.g., MLLM) and the instruction
+prompts. Therefore, similar to performance enhancements in LLMs
+[Chen et al. 2025; Han et al. 2024; Liu et al. 2023a; Sahoo et al. 2024;
+Wu et al. 2025], there is potential to improve the performance of
+embodied agents through various approaches, including but not
+limited to model architecture redesign, task-specific fine-tuning, and
+prompt engineering. In this work, we focus specifically on prompt
+engineering to mitigate the identified issues in SC4-a. We employ
+two prompting techniques: (1) Chain-of-Thought (CoT) Prompting, which is frequently used in
+NLP tasks to encourages the model to generate intermediate reasoning steps, thereby enhancing
+its ability to perform complex reasoning tasks; and (2) Cognitive Map Prompting, which asks the
+MLLM to explicitly construct a mental map of the environment and then use this map to perform
+spatial tasks. Fig. 12 illustrates an example of cognitive map. The results are shown in Tab. 6, where
+CoT prompting yields a limited improvement, increasing the score from 0.11 to 0.15. In contrast,
+Cognitive Map Prompting significantly enhances performance, boosting the score to 0.45. This
+substantial improvement suggests that building a mental spatial model or cognitive map serves as
+a promising solution to tackle SC problems in embodied settings.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 24 ---
+
+104:24 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+ANSWER to RQ4
+Our error analysis identifies reference frame transformation as the primary cause of SC4-a
+failures. To mitigate this, we explore prompt engineering and find that cognitive map prompting
+significantly improves performance by constructing an environmental mental map, whereas
+traditional techniques (e.g., CoT) yield only marginal gains.
+7 Discussion
+7.1 Threat to Validity
+Internal Validity.Our manual validation demonstrates high precision (see §6.4.2), with gener-
+alizability discussed in §3.4. However, we acknowledge that false negatives may still occur. This
+limitation is common in testing and highlights the need for ongoing refinement. Open-sourced
+MetaSpace allows the community to contribute additional MRs, thereby improving coverage and
+reducing false negatives over time. Furthermore, one might question whether reasoning failures
+matter if the agent’s final action is correct. We contend that achieving correct actions from flawed
+reasoning amounts to “success by coincidence”. Such models pose safety risks and undermine trust.
+MetaSpace specifically exposes these latent cognitive defects that outcome-oriented metrics miss.
+External Validity.The current implementation of MetaSpace focuses on three embodied scenarios
+and eight SC capabilities. While this selection is diverse, it does not encompass all potential
+embodied tasks. Additionally, all experiments are conducted in simulated environments, which
+may introduce the Sim-to-Real Gap. However, MetaSpace mitigates this concern through its robust
+design. The logic-based MRs rely on qualitative relations (e.g., Transitivity) that are inherently
+resilient to pixel-level noise, while the physics-based MRs utilize relative ratios and tolerance
+thresholds to filter out systematic errors. Our experiments in § 6 focus on RGB-based MLLMs.
+Nonetheless, as discussed in §3.4, our MR design constraints target fundamental attributes of spatial
+cognition (e.g., direction, distance), rather than specific SCs or agent types, thereby allowing for
+broader applicability across various embodiments and agents. With the open-sourced MetaSpace
+framework, we believe researchers can extend the current set of MRs to better meet their specific
+evaluation needs. Also, our future work will focus on investigating these validity concerns.
+7.2 Takeaway Messages
+Prioritize Embodied Spatial Cognition.Enhancing the embodied spatial cognition capabilities of
+MLLM-driven embodied agents is essential, particularly in areas such as direction estimation, spatial
+directional reasoning, and egocentric-allocentric transformations. This enhancement spans model
+architecture design, task-specific fine-tuning, and developing self-supervised learning objectives
+for spatial reasoning to build robust, embodied-adapted MLLMs. Since embodied spatial capabilities
+are the cornerstone of embodied tasks, pursuing advanced high-level tasks is futile without first
+addressing these fundamental spatial cognition challenges.
+Spatially-Aware Engineering for Embodied Systems.The limited effectiveness of NLP tech-
+niques (e.g., CoT) in spatial tasks underscores the need for domain-specific engineering approaches.
+Our cognitive map prompting results demonstrate that spatially-aware interventions can achieve
+relatively better performance, emphasizing embodied agents demand fundamentally different ar-
+chitectural designs and prompt engineering strategies compared with LLMs. We advocate for the
+development of embodied-specific design patterns, training objectives, and prompting strategies
+that account for the unique challenges of spatial understanding and environmental interaction.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 25 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:25
+8 Related Work
+Testing and Evaluation of AI Systems.Software testing techniques have been widely applied to
+AI systems, such as deep learning systems [Pei et al. 2017; Wang and Su 2020; Yuan et al. 2021],
+autonomous driving systems [Tian et al. 2018; Zhang et al. 2018], and LLMs [Bouzenia et al. 2025; Li
+et al. 2024a; Zhang et al. 2024b]. However, these approaches do not address the unique challenges of
+embodied agents. First, existing frameworks primarily evaluate static inputs (e.g., single images or
+text prompts), whereas embodied agents operate in dynamic environments. Embodied tasks require
+agents to reason about continuous state transitions rather than isolated snapshots. MetaSpace
+evaluates the logical coherence of the agent’s spatial understanding across temporal sequences (e.g.,
+during navigation or manipulation), a dimension largely absent in existing testing tools. Secondly,
+traditional MT often relies on semantic invariance (e.g., robustness against pixel noise or synonym
+substitution). MetaSpace, however, introduces physical and logical covariance. We define MRs
+based on logical rules and physical laws, requiring the agent’s reasoning to evolve consistently with
+its physical interactions, rather than simply remaining invariant to perturbations. Thirdly, while
+some Video Question Answering benchmarks [Zhang et al. 2025a,b] address dynamic features, they
+focus on semantic understanding via passive perception. In contrast, MetaSpace targets the active
+perception-action loop. We verify whether the agent constructs a consistent internal mental map
+(SC4) and correctly perceives its own ego-motion (SC1) to guide actions. This shifts the evaluation
+focus from passive pattern recognition to active spatial cognition.
+Neurosymbolic Approaches.Recent work in neurosymbolic has focused on integrating symbolic
+operators with neural perception modules to combine their complementary strengths [Andreas
+et al. 2016; Li et al . 2023; Verbruggen et al. 2021; Yi et al . 2018]. These approaches have led to
+novel solutions across several domains, including the synthesis of neurosymbolic programs for
+fine-grained image editing [Barnaby et al . 2023] or image interpretation [Mao et al . 2019], the
+creation of semantic regular expressions for data extraction [Chen et al. 2023], and the generation of
+executable programs from natural language questions [Chen et al. 2021]. Unlike these works, which
+focus on building integrated reasoning systems, our approach applies neurosymbolic principles to
+the testing and validation phase. Specifically, MetaSpace uses symbolic MRs to create formal and
+precise specifications for the ambiguous spatial cognition concept of embodied agents.
+Property-Based Testing.Property-based testing (PBT) [Claessen and Hughes 2000] is a main-
+stream technique that verifies high-level properties of a system against a multitude of randomly
+generated inputs. Prior work has applied PBT to test a wide range of systems [Goldstein et al. 2024],
+from validating compilers for languages like Haskell [Pałka et al. 2011] and OCaml [Midtgaard et al.
+2017] to automated testing of Android applications [Xiong et al. 2024] and performing acceptance
+testing for complex web user interfaces [O’Connor and Wickström 2022]. Our work extends this
+paradigm to the fundamentally different domain of embodied spatial cognition, an area previously
+unexplored by PBT. The core contribution lies in crafting novel MRs grounded not in program
+semantics, but in the principles of logic and physics that govern an agent’s interaction with its
+environment. These MRs function ascognitive invariants, formalizing and testing the underlying
+spatial cognition properties of embodied agents in a continuous, dynamic environment.
+9 Conclusion
+We present MetaSpace, a metamorphic testing framework for embodied spatial cognition, revealing
+significant limitations in current agents. We show that cognitive map prompting mitigates these
+errors, advocating for improved spatial cognition to build reliable real-world agents.
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 26 ---
+
+104:26 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Data-Availability Statement
+The MetaSpace framework, including source code, experiment scripts, and reproduction instructions,
+is available in the artifact [Xu et al. 2026]. Due to privacy and licensing constraints, some third-
+party datasets used in our experiments (e.g., EB-Navigation, EB-Manipulation, AerialVLN) cannot
+be redistributed directly. However, we provide documentation to assist users in obtaining these
+datasets from their official sources. All custom-generated configuration files are included in the
+artifact package, designed to facilitate reproducibility and further research.
+Please note that MLLM inference requires access to proprietary model APIs, open-source model
+deployments, and suitable hardware (e.g., GPU) for full-scale experiments, which are not included
+in the artifact package. Again, we provide relevant links to guide users in obtaining access to these
+resources. Additional limitations and setup instructions are documented in the artifact repository.
+Acknowledgments
+The HKUST authors were supported in part by a RGC GRF grant under the contract 16214723, an
+ITF grant under the contract ITS/161/24FP, and a HKUST Bridge The Gap fund BGF.001.2025. We
+are grateful to the anonymous reviewers for their valuable comments.
+References
+Jacob Andreas, Marcus Rohrbach, Trevor Darrell, and Dan Klein. 2016. Learning to Compose Neural Networks for Question
+Answering. InProceedings of NAACL-HLT. 1545–1554. doi:10.18653/v1/N16-1181
+Anthropic. 2025. Claude Sonnet 4. https://www.anthropic.com/claude/sonnet
+Celeste Barnaby, Qiaochu Chen, Roopsha Samanta, and Işıl Dillig. 2023. Imageeye: Batch image processing using program
+synthesis.Proceedings of the ACM on Programming Languages7, PLDI (2023), 686–711. doi:10.1145/3591248
+Islem Bouzenia, Premkumar Devanbu, and Michael Pradel. 2025. RepairAgent: An Autonomous, LLM-Based Agent for
+Program Repair. In2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE). IEEE, 2188–2200.
+doi:10.1109/ICSE55347.2025.00157
+Neil Burgess. 2006. Spatial memory: how egocentric and allocentric combine.Trends in cognitive sciences10, 12 (2006),
+551–557. doi:10.1016/j.tics.2006.10.005
+Neil Burgess. 2008. Spatial cognition and the brain.Annals of the New York Academy of Sciences1124, 1 (2008), 77–97.
+doi:10.1196/annals.1440.002
+Agneet Chatterjee, Gabriela Ben Melech Stan, Estelle Aflalo, Sayak Paul, Dhruba Ghosh, Tejas Gokhale, Ludwig Schmidt,
+Hannaneh Hajishirzi, Vasudev Lal, Chitta Baral, et al. 2024. Getting it right: Improving spatial consistency in text-to-image
+models. InEuropean Conference on Computer Vision. Springer, 204–222. doi:10.1007/978-3-031-72670-5_12
+Banghao Chen, Zhaofeng Zhang, Nicolas Langrené, and Shengxin Zhu. 2025. Unleashing the potential of prompt engineering
+for large language models.Patterns(2025). doi:10.1016/j.patter.2025.101260
+Qiaochu Chen, Arko Banerjee, Çağatay Demiralp, Greg Durrett, and Işıl Dillig. 2023. Data extraction via semantic
+regular expression synthesis.Proceedings of the ACM on Programming Languages7, OOPSLA2 (2023), 1848–1877.
+doi:10.1145/3622863
+Qiaochu Chen, Aaron Lamoreaux, Xinyu Wang, Greg Durrett, Osbert Bastani, and Isil Dillig. 2021. Web question answering
+with neurosymbolic program synthesis. InProceedings of the 42nd ACM SIGPLAN International Conference on Programming
+Language Design and Implementation. 328–343. doi:10.1145/3453483.3454047
+Tsong Y Chen, Shing C Cheung, and Shiu Ming Yiu. 2020. Metamorphic testing: a new approach for generating next test
+cases.arXiv preprint arXiv:2002.12543(2020).
+Zhili Cheng, Yuge Tu, Ran Li, Shiqi Dai, Jinyi Hu, Shengding Hu, Jiahao Li, Yang Shi, Tianyu Yu, Weize Chen, et al. 2025.
+Embodiedeval: Evaluate multimodal llms as embodied agents.arXiv preprint arXiv:2501.11858(2025).
+Jae-Woo Choi, Youngwoo Yoon, Hyobin Ong, Jaehong Kim, and Minsu Jang. 2024. LoTa-Bench: Benchmarking Language-
+oriented Task Planners for Embodied Agents. InInternational Conference on Learning Representations (ICLR) 2024. 1–27.
+https://openreview.net/pdf?id=ADSxCpCu9s
+Koen Claessen and John Hughes. 2000. QuickCheck: a lightweight tool for random testing of Haskell programs. InProceedings
+of the fifth ACM SIGPLAN international conference on Functional programming. 268–279. doi:10.1145/351240.351266
+Ronghao Dang, Yuqian Yuan, Wenqi Zhang, Yifei Xin, Boqiang Zhang, Long Li, Liuyi Wang, Qinyang Zeng, Xin Li, and
+Lidong Bing. 2025. ECBench: Can Multi-modal Foundation Models Understand the Egocentric World? A Holistic
+Embodied Cognition Benchmark. InProceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 27 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:27
+(CVPR). 24593–24602. doi:10.1109/CVPR52734.2025.02290
+Jinhao Dong, Jun Sun, Wenjie Zhang, Jin Song Dong, and Dan Hao. 2025. ConTested: Consistency-Aided Tested Code
+Generation with LLM.Proceedings of the ACM on Software Engineering2, ISSTA (2025), 596–617. doi:10.1145/3728902
+Mengfei Du, Binhao Wu, Zejun Li, Xuan-Jing Huang, and Zhongyu Wei. 2024. Embspatial-bench: Benchmarking spatial
+understanding for embodied tasks with large vision-language models. InProceedings of the 62nd Annual Meeting of the
+Association for Computational Linguistics (Volume 2: Short Papers). 346–355. doi:10.18653/v1/2024.acl-short.33
+Milton Friedman. 1937. The use of ranks to avoid the assumption of normality implicit in the analysis of variance.Journal
+of the american statistical association32, 200 (1937), 675–701. doi:10.1080/01621459.1937.10503522
+Chen Gao, Baining Zhao, Weichen Zhang, Jinzhu Mao, Jun Zhang, Zhiheng Zheng, Fanhang Man, Jianjie Fang, Zile Zhou,
+Jinqiang Cui, et al. 2024. Embodiedcity: A benchmark platform for embodied agent in real-world city environment.arXiv
+preprint arXiv:2410.09604(2024).
+James J Gibson. 2014.The ecological approach to visual perception: classic edition. Psychology press. doi:10.4324/9781315740218
+Harrison Goldstein, Joseph W Cutler, Daniel Dickstein, Benjamin C Pierce, and Andrew Head. 2024. Property-based testing
+in practice. InProceedings of the IEEE/ACM 46th International Conference on Software Engineering. 1–13. doi:10.1145/
+3597503.3639581
+Zeyu Han, Chao Gao, Jinyang Liu, Jeff Zhang, and Sai Qian Zhang. 2024. Parameter-efficient fine-tuning for large models: A
+comprehensive survey.arXiv preprint arXiv:2403.14608(2024).
+Nils Hoehing, Ellen Rushe, and Anthony Ventresque. 2023. What’s left can’t be right–The remaining positional incompetence
+of contrastive vision-language models.arXiv preprint arXiv:2311.11477(2023).
+Eric Kolve, Roozbeh Mottaghi, Winson Han, Eli VanderBilt, Luca Weihs, Alvaro Herrasti, Matt Deitke, Kiana Ehsani, Daniel
+Gordon, Yuke Zhu, et al. 2017. Ai2-thor: An interactive 3d environment for visual ai.arXiv preprint arXiv:1712.05474
+(2017).
+Xiangrui Kong, Wenxiao Zhang, Jin Hong, and Thomas Braunl. 2024. Embodied AI in mobile robots: Coverage path planning
+with large language models.arXiv preprint arXiv:2407.02220(2024).
+Stephen M Kosslyn. 1987. Seeing and imagining in the cerebral hemispheres: a computational approach.Psychological
+review94, 2 (1987), 148. doi:10.1037/0033-295X.94.2.148
+Manling Li, Shiyu Zhao, Qineng Wang, Kangrui Wang, Yu Zhou, Sanjana Srivastava, Cem Gokmen, Tony Lee, Li Erran Li,
+Ruohan Zhang, et al. 2024b. Embodied agent interface: benchmarking LLMs for embodied decision making. InProceedings
+of the 38th International Conference on Neural Information Processing Systems. 100428–100534. doi:10.52202/079017-3188
+Ningke Li, Yuekang Li, Yi Liu, Ling Shi, Kailong Wang, and Haoyu Wang. 2024a. Drowzee: Metamorphic testing for
+fact-conflicting hallucination detection in large language models.Proceedings of the ACM on Programming Languages8,
+OOPSLA2 (2024), 1843–1872. doi:10.1145/3689776
+Ziyang Li, Jiani Huang, and Mayur Naik. 2023. Scallop: A language for neurosymbolic programming.Proceedings of the
+ACM on Programming Languages7, PLDI (2023), 1463–1487. doi:10.1145/3591280
+Rensis Likert and WH Quasha. 1941.Minnesota Paper Form Board Test. Psychological Corporation.
+Shubo Liu, Hongsheng Zhang, Yuankai Qi, Peng Wang, Yanning Zhang, and Qi Wu. 2023b. Aerialvln: Vision-and-language
+navigation for uavs. InProceedings of the IEEE/CVF International Conference on Computer Vision. 15384–15394. doi:10.
+1109/ICCV51070.2023.01411
+Xiaoxia Liu, Jingyi Wang, Jun Sun, Xiaohan Yuan, Guoliang Dong, Peng Di, Wenhai Wang, and Dongxia Wang. 2023a.
+Prompting frameworks for large language models: A survey.arXiv preprint arXiv:2311.12785(2023).
+Wufei Ma, Haoyu Chen, Guofeng Zhang, Yu-Cheng Chou, Jieneng Chen, Celso de Melo, and Alan Yuille. 2025. 3dsrbench:
+A comprehensive 3d spatial reasoning benchmark. InProceedings of the IEEE/CVF International Conference on Computer
+Vision. 6924–6934. https://openaccess.thecvf.com/content/ICCV2025/html/Ma_3DSRBench_A_Comprehensive_3D_
+Spatial_Reasoning_Benchmark_ICCV_2025_paper.html
+Muhammad Numair Mansur, Maria Christakis, and Valentin Wüstholz. 2021. Metamorphic testing of Datalog engines. In
+Proceedings of the 29th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations
+of Software Engineering. 639–650. doi:10.1145/3468264.3468573
+Jiayuan Mao, Chuang Gan, Pushmeet Kohli, Joshua B Tenenbaum, and Jiajun Wu. 2019. The Neuro-Symbolic Concept
+Learner: Interpreting Scenes, Words, and Sentences From Natural Supervision. InInternational Conference on Learning
+Representations (ICLR). https://openreview.net/forum?id=rJgMlhRctm
+David Marr. 2010.Vision: A computational investigation into the human representation and processing of visual information.
+MIT press. doi:10.7551/mitpress/9780262514620.001.0001
+Jan Midtgaard, Mathias Nygaard Justesen, Patrick Kasting, Flemming Nielson, and Hanne Riis Nielson. 2017. Effect-driven
+QuickChecking of compilers.Proceedings of the ACM on Programming Languages1, ICFP (2017), 1–23. doi:10.1145/3110259
+D.R. Montello. 2001. Spatial Cognition. InInternational Encyclopedia of the Social & Behavioral Sciences, Neil J. Smelser and
+Paul B. Baltes (Eds.). Pergamon, Oxford, 14771–14775. doi:10.1016/B0-08-043076-7/02492-X
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 28 ---
+
+104:28 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Humza Naveed, Asad Ullah Khan, Shi Qiu, Muhammad Saqib, Saeed Anwar, Muhammad Usman, Naveed Akhtar, Nick
+Barnes, and Ajmal Mian. 2025. A comprehensive overview of large language models.ACM Transactions on Intelligent
+Systems and Technology16, 5 (2025), 1–72. doi:10.1145/3744746
+Liam O’Connor and Oskar Wickström. 2022. Quickstrom: property-based acceptance testing with LTL specifications. In
+Proceedings of the 43rd ACM SIGPLAN International Conference on Programming Language Design and Implementation.
+1025–1038. doi:10.1145/3519939.3523728
+OpenAI. 2024. Hello GPT-4o. https://openai.com/index/hello-gpt-4o/
+OpenAI. 2025. Introducing GPT-5. https://openai.com/index/introducing-gpt-5/
+Michał H Pałka, Koen Claessen, Alejandro Russo, and John Hughes. 2011. Testing an optimising compiler by generating
+random lambda terms. InProceedings of the 6th International Workshop on Automation of Software Test. 91–97. doi:10.
+1145/1982595.1982615
+Matteo Paltenghi and Michael Pradel. 2023. MorphQ: Metamorphic testing of the Qiskit quantum computing platform. In
+2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE). IEEE, 2413–2424. doi:10.1109/ICSE48619.
+2023.00202
+Kexin Pei, Yinzhi Cao, Junfeng Yang, and Suman Jana. 2017. Deepxplore: Automated whitebox testing of deep learning
+systems. Inproceedings of the 26th Symposium on Operating Systems Principles. 1–18. doi:10.1145/3132747.3132785
+Mohaimenul Azam Khan Raiaan, Md Saddam Hossain Mukta, Kaniz Fatema, Nur Mohammad Fahad, Sadman Sakib, Most
+Marufatul Jannat Mim, Jubaer Ahmad, Mohammed Eunus Ali, and Sami Azam. 2024. A review on large language
+models: Architectures, applications, taxonomies, open issues and challenges.IEEE access12 (2024), 26839–26874.
+doi:10.1109/ACCESS.2024.3365742
+Santhosh Kumar Ramakrishnan, Erik Wijmans, Philipp Kraehenbuehl, and Vladlen Koltun. 2025. Does Spatial Cognition
+Emerge in Frontier Models?. InThe Thirteenth International Conference on Learning Representations (ICLR). https:
+//openreview.net/forum?id=WK6K1FMEQ1
+Joseph Redmon, Santosh Divvala, Ross Girshick, and Ali Farhadi. 2016. You only look once: Unified, real-time object detection.
+InProceedings of the IEEE conference on computer vision and pattern recognition. 779–788. doi:10.1109/CVPR.2016.91
+Eric Rohmer, Surya PN Singh, and Marc Freese. 2013. V-REP: A versatile and scalable robot simulation framework. In2013
+IEEE/RSJ international conference on intelligent robots and systems. IEEE, 1321–1326. doi:10.1109/IROS.2013.6696520
+Zhyar Rzgar K Rostam, Sándor Szénási, and Gábor Kertész. 2024. Achieving peak performance for large language models: A
+systematic review.IEEE access(2024). doi:10.1109/ACCESS.2024.3424945
+Nicholas Roy, Ingmar Posner, Tim Barfoot, Philippe Beaudoin, Yoshua Bengio, Jeannette Bohg, Oliver Brock, Isabelle Depatie,
+Dieter Fox, Dan Koditschek, et al. 2021. From machine learning to robotics: Challenges and opportunities for embodied
+intelligence.arXiv preprint arXiv:2110.15245(2021).
+Pranab Sahoo, Ayush Kumar Singh, Sriparna Saha, Vinija Jain, Samrat Mondal, and Aman Chadha. 2024. A systematic
+survey of prompt engineering in large language models: Techniques and applications.arXiv preprint arXiv:2402.07927
+(2024).
+Manolis Savva, Abhishek Kadian, Oleksandr Maksymets, Yili Zhao, Erik Wijmans, Bhavana Jain, Julian Straub, Jia Liu,
+Vladlen Koltun, Jitendra Malik, et al. 2019. Habitat: A platform for embodied ai research. InProceedings of the IEEE/CVF
+international conference on computer vision. 9339–9347. doi:10.1109/ICCV.2019.00943
+Xiaoyu Tian, Junru Gu, Bailin Li, Yicheng Liu, Yang Wang, Zhiyong Zhao, Kun Zhan, Peng Jia, XianPeng Lang, and Hang
+Zhao. 2025. DriveVLM: The Convergence of Autonomous Driving and Large Vision-Language Models. InConference on
+Robot Learning. PMLR, 4698–4726. https://proceedings.mlr.press/v270/tian25c.html
+Yuchi Tian, Kexin Pei, Suman Jana, and Baishakhi Ray. 2018. Deeptest: Automated testing of deep-neural-network-driven
+autonomous cars. InProceedings of the 40th international conference on software engineering. 303–314. doi:10.1145/3180155.
+3180220
+Sandro Tolksdorf, Daniel Lehmann, and Michael Pradel. 2019. Interactive metamorphic testing of debuggers. InProceedings
+of the 28th ACM SIGSOFT International Symposium on Software Testing and Analysis. 273–283. doi:10.1145/3293882.3330567
+Ultralytics. 2024. Ultralytics YOLO11 Documentation. https://docs.ultralytics.com/models/yolo11/
+Gust Verbruggen, Vu Le, and Sumit Gulwani. 2021. Semantic programming by example with pre-trained models.Proceedings
+of the ACM on Programming Languages5, OOPSLA (2021), 1–25. doi:10.1145/3485477
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge,
+et al. 2024. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution.arXiv preprint
+arXiv:2409.12191(2024).
+Shuai Wang and Zhendong Su. 2020. Metamorphic object insertion for testing object detection systems. InProceedings of
+the 35th IEEE/ACM International Conference on Automated Software Engineering. 1053–1065. doi:10.1145/3324884.3416584
+Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Shenglong Ye,
+Jie Shao, et al. 2025. Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency.
+arXiv preprint arXiv:2508.18265(2025).
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 29 ---
+
+MetaSpace: Metamorphic Testing for Spatial Cognition in Embodied Agents 104:29
+Jan Wielemaker, Tom Schrijvers, Markus Triska, and Torbjörn Lager. 2012. SWI-Prolog.Theory and Practice of Logic
+Programming12, 1-2 (2012), 67–96. doi:10.1017/S1471068411000494
+Xiao-Kun Wu, Min Chen, Wanyi Li, Rui Wang, Limeng Lu, Jia Liu, Kai Hwang, Yixue Hao, Yanru Pan, Qingguo Meng,
+et al. 2025. Llm fine-tuning: Concepts, opportunities, and challenges.Big Data and Cognitive Computing9, 4 (2025), 87.
+doi:10.3390/bdcc9040087
+Zhiyu Wu, Xiaokang Chen, Zizheng Pan, Xingchao Liu, Wen Liu, Damai Dai, Huazuo Gao, Yiyang Ma, Chengyue Wu,
+Bingxuan Wang, et al . 2024. Deepseek-vl2: Mixture-of-experts vision-language models for advanced multimodal
+understanding.arXiv preprint arXiv:2412.10302(2024).
+Dongwei Xiao, Zhibo Liu, Yiteng Peng, and Shuai Wang. 2025. MTZK: Testing and Exploring Bugs in Zero-Knowledge (ZK)
+Compilers.. InNDSS. doi:10.14722/ndss.2025.230530
+Dongwei Xiao, Zhibo Liu, Yuanyuan Yuan, Qi Pang, and Shuai Wang. 2022. Metamorphic testing of deep learning compilers.
+Proceedings of the ACM on Measurement and Analysis of Computing Systems6, 1 (2022), 1–28. doi:10.1145/3508035
+Yiheng Xiong, Ting Su, Jue Wang, Jingling Sun, Geguang Pu, and Zhendong Su. 2024. General and Practical Property-
+based Testing for Android Apps. InProceedings of the 39th IEEE/ACM International Conference on Automated Software
+Engineering. 53–64. doi:10.1145/3691620.3694986
+Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang. 2026. Reproduction Package for Article ‘Metaspace: Metamor-
+phic Testing for Spatial Cognition in Embodied Agents’. Zenodo. doi:10.5281/zenodo.19394476
+Rui Yang, Hanyang Chen, Junyu Zhang, Mark Zhao, Cheng Qian, Kangrui Wang, Qineng Wang, Teja Venkat Koripella,
+Marziyeh Movahedi, Manling Li, et al . 2025. EmbodiedBench: Comprehensive Benchmarking Multi-modal Large
+Language Models for Vision-Driven Embodied Agents. InInternational Conference on Machine Learning. PMLR, 70576–
+70631. https://proceedings.mlr.press/v267/yang25f.html
+Kexin Yi, Jiajun Wu, Chuang Gan, Antonio Torralba, Pushmeet Kohli, and Josh Tenenbaum. 2018. Neural-symbolic vqa:
+Disentangling reasoning from vision and language understanding.Advances in neural information processing systems31
+(2018). https://dl.acm.org/doi/10.5555/3326943.3327039
+Yuanyuan Yuan, Shuai Wang, Mingyue Jiang, and Tsong Yueh Chen. 2021. Perception matters: Detecting perception failures
+of vqa models using metamorphic testing. InProceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition. 16908–16917. doi:10.1109/CVPR46437.2021.01663
+Huanyu Zhang, Chengzu Li, Wenshan Wu, Shaoguang Mao, Yifan Zhang, Haochen Tian, Ivan Vulić, Zhang Zhang, Liang
+Wang, Tieniu Tan, et al. 2025c. Scaling and Beyond: Advancing Spatial Reasoning in MLLMs Requires New Recipes.
+arXiv preprint arXiv:2504.15037(2025).
+Mengshi Zhang, Yuqun Zhang, Lingming Zhang, Cong Liu, and Sarfraz Khurshid. 2018. Deeproad: Gan-based metamorphic
+testing and input validation framework for autonomous driving systems. InProceedings of the 33rd ACM/IEEE international
+conference on automated software engineering. 132–142. doi:10.1145/3238147.3238187
+Xiao-Yi Zhang, Yang Liu, Paolo Arcaini, Mingyue Jiang, and Zheng Zheng. 2024a. Met-mapf: A metamorphic testing
+approach for multi-agent path finding algorithms.ACM Transactions on Software Engineering and Methodology33, 8
+(2024), 1–37. doi:10.1145/3669663
+Yuanhan Zhang, Yunice Chew, Yuhao Dong, Aria Leo, Bo Hu, and Ziwei Liu. 2025a. Towards video thinking test: A holistic
+benchmark for advanced video reasoning and understanding. InProceedings of the IEEE/CVF International Conference
+on Computer Vision. 20626–20636. https://openaccess.thecvf.com/content/ICCV2025/papers/Zhang_Towards_Video_
+Thinking_Test_A_Holistic_Benchmark_for_Advanced_Video_ICCV_2025_paper.pdf
+Yuntong Zhang, Haifeng Ruan, Zhiyu Fan, and Abhik Roychoudhury. 2024b. Autocoderover: Autonomous program
+improvement. InProceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis.
+1592–1604. doi:10.1145/3650212.3680384
+Zicheng Zhang, Ziheng Jia, Haoning Wu, Chunyi Li, Zijian Chen, Yingjie Zhou, Wei Sun, Xiaohong Liu, Xiongkuo Min,
+Weisi Lin, et al. 2025b. Q-Bench-Video: Benchmark the Video Quality Understanding of LMMs. InProceedings of the
+Computer Vision and Pattern Recognition Conference. 3229–3239. doi:10.1109/CVPR52734.2025.00307
+Baining Zhao, Jianjie Fang, Zichao Dai, Ziyou Wang, Jirong Zha, Weichen Zhang, Chen Gao, Yue Wang, Jinqiang Cui, Xinlei
+Chen, et al. 2025. Urbanvideo-bench: Benchmarking vision-language models on embodied intelligence with video data
+in urban spaces. InProceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1:
+Long Papers). 32400–32423. doi:10.18653/v1/2025.acl-long.1558
+Kaizhi Zheng, Xiaotong Chen, Odest Chadwicke Jenkins, and Xin Wang. 2022. Vlmbench: A compositional benchmark
+for vision-and-language manipulation.Advances in Neural Information Processing Systems35 (2022), 665–678. https:
+//dl.acm.org/doi/10.5555/3600270.3600318
+Qinhong Zhou, Sunli Chen, Yisong Wang, Haozhe Xu, Weihua Du, Hongxin Zhang, Yilun Du, Joshua B Tenenbaum, and
+Chuang Gan. 2024. Hazard challenge: Embodied decision making in dynamically changing environments. InInternational
+Conference on Learning Representations. https://research.ibm.com/publications/hazard-challenge-embodied-decision-
+making-in-dynamically-changing-environments
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.
+
+--- Page 30 ---
+
+104:30 Gengyang Xu, Dongwei Xiao, Yiteng Peng, and Shuai Wang
+Wanrong Zhu, Jack Hessel, Anas Awadalla, Samir Yitzhak Gadre, Jesse Dodge, Alex Fang, Youngjae Yu, Ludwig Schmidt,
+William Yang Wang, and Yejin Choi. 2023. Multimodal c4: An open, billion-scale corpus of images interleaved with text.
+Advances in Neural Information Processing Systems36 (2023), 8958–8974. https://dl.acm.org/doi/10.5555/3666122.3666515
+Received 2025-10-10; accepted 2026-02-17
+Proc. ACM Program. Lang., Vol. 10, No. OOPSLA1, Article 104. Publication date: April 2026.

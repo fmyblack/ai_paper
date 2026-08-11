@@ -1,0 +1,599 @@
+--- Page 1 ---
+
+Towards an Argumentative Foundation for Evaluative AI
+Xiang Yin
+Imperial College London
+London, United Kingdom
+xy620@ic.ac.uk
+Tim Miller
+The University of Queensland
+Brisbane, Australia
+timothy.miller@uq.edu.au
+Nico Potyka
+Cardiff University
+Cardiff, United Kingdom
+PotykaN@cardiff.ac.uk
+Antonio Rago
+King’s College London
+London, United Kingdom
+antonio.rago@kcl.ac.uk
+Francesca Toni
+Imperial College London
+London, United Kingdom
+ft@ic.ac.uk
+ABSTRACT
+Evaluative AI (EAI) has been recently proposed as a way to sup-
+port human decision-making, not by producing a single recom-
+mendation, but by presenting competing hypotheses together with
+evidence for and against each. In this position paper, we advo-
+cate (computational) argumentation as a most suitable paradigm to
+provide a formal, computable foundation for forms of EAI that are
+explainable and contestable. Argumentation can also naturally pave
+the way to a multi-agent vision for EAI in which diverse evaluative
+models, derived from different sources and reasoning styles, can
+interact and jointly deliberate on hypotheses and evidence. Overall,
+this position paper sets the ground for a long-term research agenda
+towards distributed and human-centred EAI systems.
+KEYWORDS
+Evaluative AI, Argumentation, Explainability, Contestability
+1 INTRODUCTION
+Explainable AI (XAI) aims to enhance the transparency and trust-
+worthiness of AI systems by elucidating their decision-making
+processes [1], a capability that is essential in high-stakes domains
+such as healthcare, the judiciary, and finance.Evaluative AI (EAI)
+[33] has been recently proposed as a new form of XAI to sup-
+port human decision-making in ahypothesis-drivenrather than
+recommendation-drivenfashion. The latter is a widely used para-
+digm in XAI: an AI model first produces an output, and XAI methods
+subsequently explain or justify it (e.g., [31, 40, 43]). Yet, recent stud-
+ies show that such “recommend-and-explain” paradigm can induce
+cognitive fixation, leading users to either over-rely on or dismiss AI
+recommendations without sufficient deliberation [9, 19, 41]. To ad-
+dress these issues, instead of directly presenting a recommendation,
+EAI offers multiple plausiblehypothesestogether with structured
+evidencefor and against each. Thus, by ensuring that the human
+actively evaluates and deliberates between competing hypotheses,
+EAI preserves human agency in decision-making. This, in turn,
+strengthens the human-in-the-loop paradigm and repositions AI
+systems from decision-makers to facilitators.
+In this position paper we set the ground for a long-term research
+agenda towards distributed and human-centred EAI systems with
+clear formal and algorithmic backings. Specifically, we adopt a for-
+mal understanding of the EAI problem as aranking-basedproblem
+arXiv preprint, ,. 2026.
+Figure 1: Skeleton of an argumentative solution to an
+example ranking-based EAI problem in healthcare. Blue
+nodes denote arguments; green/red edges indicate, resp., sup-
+port/attack relations. If, in the corresponding wQBAF, all
+arguments have an initial weight of 0.5 (the neutral value in
+[0,1]) and the edges all have the same edge weight of 1 (the top
+value in [0,1]) , then the O-QuAD semantics [ 12] yields the
+ranking Anti-viral=Antibiotics≻Bronchodilator with
+corresponding strengths 0.40, 0.40, 0.31.
+over all potential hypotheses, given the pro and con evidence asso-
+ciated with each, as was suggested as future work by Miller [33].
+For example, in healthcare, given a patient’s symptoms (evidence),
+an EAI-driven system may generate a ranked list of possible diag-
+noses (hypotheses) to assist practitioners in their decision-making
+process. We see a ranking over the hypotheses not as a final deci-
+sion but, rather, as reflecting the “preferences” of the EAI-driven
+system proposing it, given the evidence. Then, our main position
+is that (computational) argumentation, particularly through the
+use of weighted Quantitative Bipolar Argumentation Frameworks
+(wQBAFs) [12, 34, 37], is a most suitable paradigm to provide a
+formal and computational foundation for ranking-based EAI, with
+advantages over the originally proposed Weight of Evidence (WoE)
+method [28] in terms of reasoning with structured hypotheses and
+evidence, explainability [13, 42], human engagement (in particular
+as concerns the possibility for humans to contest [29] specifically
+evidence, hypotheses, and ultimately rankings), and finally dis-
+tributed variants of EAI where diverse agents, derived from differ-
+ent sources and reasoning styles, can interact and jointly deliberate
+on hypotheses and evidence.
+Motivating Illustration.Figure 1 depicts the skeleton of an
+argumentative solution to the ranking-based EAI problem in a
+arXiv:2608.07473v1  [cs.AI]  25 Apr 2026
+
+--- Page 2 ---
+
+healthcare scenario1. This amounts toarguments, organised hier-
+archically across three layers viaattack and support relations. The
+arguments in the ‘symptom layer’ represent observable evidence
+(e.g., high fever, cough), in the ‘treatment layer’ represent possi-
+ble clinical decisions (e.g., anti-viral therapy, antibiotics), and in
+the intermediate ‘diagnosis layer’ (e.g., viral/bacterial pneumonia,
+asthma) play a dual role: as hypotheses with respect to the evidence
+below, but also as evidence for the hypotheses above.2 The support
+and attack relations reflect dependencies between hypotheses and
+evidence. A wQBAF then augments this skeleton by associating
+to each argument aninitial weight, which may represent their im-
+portance or the confidence level in its validity, and to each edge
+arelation weight, which may capture the influence of the edge
+towards the affected argument. Further, quantitativeevaluation
+methods(e.g., [ 12, 37] can be used to determine the(final) strength
+of each argument, recursively based on its own initial weight and
+the combined strengths of its supporters and attackers, enabling
+conflict resolution with the available information [7, 13, 37, 38]. Fi-
+nally, from the arguments’ strength, we can obtain a ranked list of
+the hypotheses in the treatment layer. The wQBAF and associated
+strengths are interpretable and can be used for explanation of the
+ranking and/or the validity of any hypothesis or evidence, in the
+spirit of [13, 42], in a variety of formats, e.g., [2, 6, 24, 26, 35, 46, 48]
+Moreover, should a human disagree with any component of the
+QBAF and/or the ranking, they can contest it, in the spirit of [45],
+e.g. to disagree with the initial weight of some evidence and/or
+add additional pro and con evidence or hypotheses. This ability to
+contest promotes human-in-the-loop decision-making, which lies
+at the heart of EAI. Finally, the wQBAF may present the opinion
+of an agent and could be integrated with opinions by other agents,
+e.g., with argumentative exchanges as in [39], or result from the
+aggregation of QBAFs from different agents, e.g., as in [11].
+Contributions.The vision of this position paper is threefold.
+• EAI can be formally understood as a ranking-based problem
+(Section 3).
+• wQBAFs from the field of (computational) argumentation
+provide a principled paradigm for realising ranking-based
+EAI in an explainable and contestable manner suitable for
+human-centred EAI systems (Section 4).
+• wQBAFs can empower agent-level EAI within a multi-agent
+vision for EAI, in which diverse evaluative models interact
+and jointly deliberate (Section 5).
+2 RELATED WORK
+Evaluative AI (EAI).EAI is a recent paradigm [ 33], and its
+practical realisation is still in the early stages of investigation. Only
+a handful of approaches have been proposed so far to realise EAI,
+notably [17, 28]: Le et al. [28] adopt Weight of Evidence (WoE) [32]
+to quantify both the direction (supporting or opposing) and the
+magnitude of the impact that each piece of evidence has on can-
+didate hypotheses; and Ermellino et al. [17] utilise large language
+models (LLMs) to generate pro and con evidence in a conversational
+1This is a simplified example used solely for illustration and does not reflect clinically
+validated relations.
+2Note that our argumentative solution is not restricted to 3-layer structure, and can
+accommodate any structure.
+style. In contrast to these approaches, our envisaged ranking-based
+argumentative approach to EAI allows richer structures of depen-
+dencies between hypotheses and evidence, e.g., hypotheses may
+influence other hypotheses. It also allows (i) to separate the stance
+of evidence, (ii) to determine the rating and ranking of hypotheses
+via existing evaluation methods from wQBAFs, benefiting from an
+extensive literature on their formal and practical properties [8, 45]
+and (iii) to derive faithful explanations for the rankings from the
+evaluations, while also (iv) mitigating against hallucination risks
+when evidence and hypotheses are drawn from LLMs with the help
+of the contestable nature of argumentative solutions [18].
+Argumentative XAI.Argumentation has emerged as an influen-
+tial paradigm for supporting XAI with structured, transparent, and
+human-aligned reasoning processes (see recent surveys [13, 42]).
+Our EAI vision can be seen as falling under the category ofintrinsic
+argumentative explanations [13] in which the underlying model
+is already argumentative (in our vision, a wQBAF). We can then
+leverage on a variety of explanation formats for explaining rankings
+between hypotheses, e.g. based on assessing the most influential
+evidence for or against various ranked hypotheses, in the spirit ofar-
+gument/relation attribution explanations[ 2, 6, 24, 26, 35, 46, 48]. For
+instance, the top-ranked hypothesis Anti-viral (Figure 1) attains
+a strength of 0.40, where High Fever , Cough and Positive PCR
+test are computed as the most influential symptoms following the
+approach of [46]. An important aspect of explanations drawn from
+intrinsically argumentative solutions is that they are by definition
+faithful[ 18]. We envisage that this is an important endorsement
+for our vision for trustworthy EAI.
+Contestability.The need for AI to be contestable in general
+is widely acknowledged [3], and argumentation is advocated by
+several as a most suitable formalism to achieve principled forms of
+contestable AI [16, 29]. Contestable argumentative solutions have
+been proposed, e.g., when QBAFs are generated by LLMs [18] and
+with the help ofcounterfactual explanations[ 25, 45, 47]. The latter
+indicate how to modify the weights of arguments or relations to
+change the strength of a hypothesis to a desired one, which allow
+users to interact with and challenge EAI systems built argumen-
+tatively. The contestability naturally afforded by argumentative
+solution is a strong motivation for our vision of ranking-based
+argumentative EAI that is amenable to human consumption.
+Multi-Agent Argumentation.Several works envisage argu-
+mentation as the basis for multi-agent interaction and deliberation,
+and can serve as a starting point for a multi-agent vision of argu-
+mentative EAI. Existing approaches are based on static aggregation
+of argumentation frameworks from various agents, e.g., abstract ar-
+gumentation frameworks in [11] and bipolar argumentation frame-
+works in [15], or on dynamic, dialogue-based combinations, e.g., of
+weighted abstract argumentation frameworks in [14] and of QBAFs
+in [39]. The latter could be especially useful as a starting point to
+support our vision of wQBAF-based EAI.
+3 THE RANKING-BASED EAI PROBLEM
+Let H be a finite, non-empty set ofhypotheses, and E be a finite set
+of (pieces of)evidence. Hypotheses and evidence can be associated
+
+--- Page 3 ---
+
+with aninitial weightthat capture how plausible they are before
+considering any dependencies amongst them.
+Definition 1(Initial Weight).The function 𝜏 : (E ∪ H ) → [ 0, 1]
+maps each𝑥∈ (E ∪ H )to itsinitial weight𝜏(𝑥).
+In the motivating illustration, the initial weight of a symptom
+(e.g., cough) or of a medical condition (e.g., asthma) may capture
+its perceived severity for a given patient. For instance, a higher
+fever corresponds to a higher initial weight, reflecting the greater
+severity of the symptom.
+(Positive and negative) dependencies within hypotheses and
+evidence can be modelled in terms of (pro and con, resp.) relations.
+Definition 2(Pro/Con Relations). pro,con⊆ (E × (E ∪ H )) ∪
+(H × H ) are disjoint binary relations, referred to, resp., as thepro
+andcon relations. For all 𝑥, 𝑦∈ (E ∪ H ) , 𝑥 is calledpro/con evidence
+or hypothesisfor𝑦iff(𝑥, 𝑦) ∈pro/(𝑥, 𝑦) ∈con, resp.
+Note that here we consider, besides direct relations from evidence
+to hypotheses (E × H ) as in [33], also relations among evidence
+(E × E ) and among hypotheses ( H × H ). In this way, evidence
+may also attack or support other evidence. This extension allows
+multi-step reasoning and evaluation.
+To quantify how strongly a piece of evidence affects the plau-
+sibility of another element (hypothesis or evidence), we use the
+notion ofrelation weight.
+Definition 3(Relation Weight).The function 𝑤 : (pro∪con) →
+[0,1]maps each𝑟∈ (pro∪con)to itsrelation weight𝑤(𝑟).
+In the motivating illustration, the relation weight for an evidence-
+hypothesis pair (e.g., (cough,asthma)) represents the strength of
+the influence from the symptom cough to the diagnosis asthma. A
+higher weight indicates a stronger influence.
+We next formally define EAI as aranking-based problem.
+Definition 4(The Ranking-based EAI Problem).Given 𝐸= ⟨E,H,
+pro,con, 𝜏, 𝑤 ⟩, theranking-based EAI problemis to determine a total
+preorder≽ 𝐸 onH. 3
+Intuitively, ≽𝐸 represents the relativeplausibilityof hypotheses
+given the weighted pro and con relations, and the initial weights
+of evidence and hypotheses. For any ℎ1, ℎ2 ∈ H , ℎ1 ≽𝐸 ℎ2 implies
+thatℎ 2 is not more plausible thanℎ 1 given𝐸.
+Formalising EAI as a ranking-based problem offers two key ad-
+vantages. First, ranking naturally accommodates multiple hypothe-
+ses rather than forcing a single recommendation, which aligns
+directly with the core philosophy of EAI. Second, ranking offers
+a concrete computational framework, both for generating rank-
+ings (e.g., [10, 23]) and for evaluating them (e.g., Kendall’s𝜏 [27]),
+which transforms EAI from a conceptual vision into a practicable
+research agenda. We discuss next how to use argumentation to
+identify solutions to the ranking-based EAI problem.
+4 AN ARGUMENTATIVE SOLUTION
+In this section, we advocate that argumentation can lead to the
+identification of solutions to the ranking-based EAI problem with
+desirable properties. Specifically, we envisage the use ofweighted
+3A total preorder is a reflexive, transitive and total relation.
+Quantitative Bipolar Argumentation Frameworks (wQBAFs)[ 12, 34,
+37], which are quintuplesQ= ⟨A,R −,R +, 𝜏, 𝑤⟩ where A is a finite
+set ofarguments, R −,R + ⊆ A × A are disjoint binary relations
+calledattackandsupport, 𝜏 : A → [ 0, 1] is abase score function, and
+𝑤 : R − ∪ R + → [ 0, 1] is anedge weight function. These wQBAFs
+can be used to represent EAI problems.
+Definition 5(wQBAF Representation for EAI Problems).The
+wQBAF representation of 𝐸= ⟨E,H,pro,con, 𝜏, 𝑤 ⟩ is the wQBAF
+Q=⟨A,R +,R −, 𝜏, 𝑤⟩such that:
+• A=E ∪ H;
+• R − =con;
+• R + =pro.
+We define A as the set H ∪ E , so that debate can take place
+about all evidence and hypotheses. As for the other components,
+we use those of the EAI problem directly.
+Once we map the EAI problem into an argumentative represen-
+tation, identifying solutions to the ranking-based EAI problem re-
+quires two steps. First, we compute the strengths of arguments (both
+evidence and hypotheses) using quantitative evaluation methods,
+which update the initial weights of arguments by taking support
+and attack relations into account (see, e.g., [12, 37]).4 Second, we
+derive a ranking over hypotheses by comparing their strengths, as
+illustrated in the Introduction. The wQBAF solution to the ranking-
+based EAI problem is naturally explainable: qualitatively, the graph-
+ical structure shows the relationship between different arguments
+and users can see the reasoning path from a piece of evidence to
+a hypothesis; quantitatively, the final strength of each hypothesis
+is explainable via many possible explanation method for QBAFs,
+such as attribution method [46, 48] and counterfactual explanations
+[45, 47], affording also contestability by humans who can modify
+the weights of arguments or relations to change the strength of a
+hypothesis to a desired one. Our envisaged argumentative solution
+also leads naturally to the satisfaction of a number of desirable
+principles for EAI, introduced. These principles serve both as de-
+sign guidelines for selecting or developing ranking methods and as
+criteria for evaluating their behaviour.
+Point-wise Principles.Point-wise principles consider the rank-
+ing of individual hypotheses.
+Principle 1 (Monotonicity).Monotonicity is a fundamental
+guarantee to ensure that rankings remain aligned with rational
+intuition and expectation. Monotonicity requires that the relative
+ranking of an individual hypothesis should change in a way consis-
+tent with the direction of change in the underlying factors, such
+as the introduction of new evidence or updates to the weights of
+existing evidence. For instance, adding additional pro evidence for
+a hypothesis should never cause its rank to fall; and increasing
+the initial weight of its piece of pro evidence should not lower its
+position relative to others.
+Many widely used evaluation methods for wQBAFs (e.g., O-
+QuAD [12], MLP-based semantics [37], and edge-weighted variants
+of REB [5] and QE [36]) are known to satisfy Principle 1 [45].
+4Existing ranking-based semantics [4] are defined for abstract argumentation frame-
+works and cannot be directly adapted to our quantitative setting.
+
+--- Page 4 ---
+
+Principle 2 (Balance).Balance ensures that a ranking remains
+unchanged when the pro and con evidence are balanced. In partic-
+ular, any modification of the evidence that preserves the equality
+between the overall strength of pro and con evidence should not
+affect the relative ranking of hypotheses. This includes, for instance,
+redistributing weights among existing pro and con evidence or in-
+troducing additional evidence, provided that the total pro and total
+con influence remain equal and therefore cancel each other out.
+The previously mentioned semantics also satisfy Principle 2.
+Pair-wise Principles.Pair-wise principles consider the ranking
+comparison of two hypotheses.
+Principle 3 (Equivalence).Equivalence states that two hy-
+potheses must be ranked equally if they share the same set of pro
+and con evidence with the same initial weight. This principle is
+fundamental for ranking fairness, ensuring symmetric treatment
+for evidentially symmetric cases. Beyond fairness, it is also a pre-
+requisite for rational and intuitive ranking method behaviour.
+The previously mentioned semantics also satisfy Principle 3.
+Principle 4 (Dominance).The Dominance principle establishes
+a preference in the ranking under controlled conditions. For exam-
+ple, a hypothesis must be ranked no lower than another if, given
+an equivalent set of con evidence against both, either (1) its set
+of pro evidence is a superset of the other’s, meaning that more
+pro evidence ranking higher; or (2) the aggregated weight of its
+pro evidence is greater. This principle is fundamental because it
+ensures the ranking objectively rewards hypotheses with superior
+pro evidence (either in number or in strengths), providing a clear
+and fair rationale for comparative assessment.
+The previously mentioned semantics also satisfy Principle 4.
+General Principles.While pointwise and pairwise principles
+ensure local rationality, general principles govern the global be-
+haviour of rankings. We envision two key principles at this level.
+Principle 5 (Robustness).Robustness requires that the overall
+ranking exhibits stability when minor perturbations to the under-
+lying evidence or its associated weights occur. Specifically, small
+variations in the evidence should not induce large-scale or counter-
+intuitive reversals in the resulting ranking order. This principle is
+critical for ensuring the reliability and practical dependability of
+the EAI rankings, as users must be able to trust that its evaluations
+are not brittle or overly sensitive to noise.
+It is unclear whether existing evaluation methods for wQBAFs en-
+sure robustness at the ranking level; if not, new robustness-oriented
+ranking semantics may be needed.
+Principle 6 (Explainability).Explainability requires that the
+ranking is generated through a mechanism whose logic is transpar-
+ent and whose outcomes can be clearly explained. This entails
+providing both local explanations (e.g., why one hypothesis is
+ranked above another) and a global rationale for the overall or-
+dering. This principle is fundamental to transforming the ranking
+from an opaque output to an understandable result, thereby foster-
+ing user comprehension and trust.
+As we already argued earlier, a large array of argumentative
+explanations drawn from wQBAFs can support this principle.
+Principle 7 (Contestability).Contestability ensures that the
+EAI ranking can be challenged by users. This includes the ability to
+question not only the veracity of individual evidence, or their initial
+weights assigned, but also the final ranking itself. By explicitly
+supporting such challenges, this principle reaffirms the role of EAI
+as a deliberative partner in a human-AI team, empowering users to
+engage with and refine the system’s reasoning process critically.
+Again, as already argued earlier, wQBAFs show promise to sup-
+port this principle.
+5 MULTI-AGENT EAI VIA ARGUMENTATION
+Real-world evaluative processes rarely stem from a single viewpoint:
+they integrate heterogeneous information sources (from human
+experts to domain tools and even LLM-generated evidence), diverse
+ways of identifying argumentative relations, and different reason-
+ing mechanisms induced by alternative gradual semantics. In the
+illustration, different agents may contribute the parts of the wQBAF
+relative to the different hypotheses in the treatment layer, reflecting
+different medical expertise. A multi-agent perspective therefore not
+only mitigates individual bias but also enables richer, more comple-
+mentary evidence and reasoning styles, opening the door to more
+robust and trustworthy evaluations. Viewing each wQBAF as an au-
+tonomous argumentative agent suggests a broader research vision:
+agents may engage in argumentative communication, exchanging
+arguments or relations to surface new evidence, reconcile inconsis-
+tencies, or converge through principled exchange protocols [39].
+Also, multiple wQBAFs may be fused into a group-level evaluation
+via semantic alignment of arguments, clustering of evidence struc-
+tures [22], or ensemble-style aggregation over hypothesis rankings
+[20]. This multi-agent outlook positions argumentation-based EAI
+as the foundation for a distributed, resilient, and genuinely deliber-
+ative form of EAI, where interacting argumentative agents together
+construct evaluations that have the potential not only of being less
+biased and more robust, but also explainable and contestable.
+6 DISCUSSION
+The primary impact of this position paper lies in transitioning EAI
+from a conceptual proposal to a tractable research agenda by es-
+tablishing a formal, ranking- and argumentation-based foundation.
+Furthermore, it inherently paves the way towards explainability, as
+the argumentative structure makes the entire evaluation process ex-
+plicit and auditable. Finally, this explicit reasoning process empow-
+ers contestability, transforming the AI from a static recommender
+into a dynamic deliberative aider that users can meaningfully chal-
+lenge and refine, thereby fostering a new paradigm of collaborative
+and trustworthy human-in-the-loop decision-making.
+Some potential limitations may shape the scope of our vision.
+First, our framework assumes that wQBAFs, including arguments,
+relations, and associated credibility score, are already correctly
+constructed, whereas in practice the reliable extraction of argu-
+mentative structure remains a core bottleneck; advances in LLM-
+based argument mining may help alleviate this challenge [21, 22].
+Building on this, even when a wQBAF is successfully constructed,
+the openness required for contestability may introduce a second
+limitation: users may strategically or unintentionally provide mis-
+leading or low-quality evidence, creating risks of manipulation;
+mechanisms such as permissioned contribution and trust-aware
+weighting may offer partial safeguards. Finally, beyond individual
+agents, multi-agent EAI systems may naturally exhibit deep and
+
+--- Page 5 ---
+
+sometimes irreducible disagreement [44]. Rather than enforcing
+consensus, this limitation suggests the need for managing such
+pluralism, supporting structured disagreement [30], and helping
+users navigate conflicting evaluations.
+REFERENCES
+[1] Amina Adadi and Mohammed Berrada. 2018. Peeking inside the black-box: a
+survey on explainable artificial intelligence (XAI).IEEE access6 (2018), 52138–
+52160.
+[2] Caren Al Anaissy, Jérôme Delobelle, Srdjan Vesic, and Bruno Yun. 2025. Im-
+pact Measures for Gradual Argumentation Semantics. InProceedings of the 24th
+International Conference on Autonomous Agents and Multiagent Systems. 69–77.
+[3] Kars Alfrink, Ianus Keller, Gerd Kortuem, and Neelke Doorn. 2023. Contestable
+AI by Design: Towards a Framework.Minds Mach.33, 4 (2023), 613–639. https:
+//doi.org/10.1007/S11023-022-09611-Z
+[4] Leila Amgoud and Jonathan Ben-Naim. 2013. Ranking-based semantics for
+argumentation frameworks. InInternational Conference on Scalable Uncertainty
+Management. Springer, 134–147.
+[5] Leila Amgoud and Jonathan Ben-Naim. 2018. Evaluation of arguments in
+weighted bipolar graphs.International Journal of Approximate Reasoning99
+(2018), 39–55.
+[6] Leila Amgoud, Jonathan Ben-Naim, and Srdjan Vesic. 2017. Measuring the
+intensity of attacks in argumentation graphs with shapley value. InInternational
+Joint Conference on Artificial Intelligence (IJCAI). 63–69.
+[7] Hamed Ayoobi, Nico Potyka, and Francesca Toni. 2023. SpArX: Sparse Argumen-
+tative Explanations for Neural Networks. InEuropean Conference on Artificial
+Intelligence (ECAI), Vol. 372. 149–156.
+[8] Pietro Baroni, Antonio Rago, and Francesca Toni. 2018. How many properties
+do we need for gradual argumentation?. In32nd AAAI Conference on Artificial
+Intelligence.
+[9] Zana Buçinca, Maja Barbara Malaya, and Krzysztof Z Gajos. 2021. To trust or to
+think: cognitive forcing functions can reduce overreliance on AI in AI-assisted
+decision-making.Proceedings of the ACM on Human-computer Interaction5,
+CSCW1 (2021), 1–21.
+[10] Chris Burges, Tal Shaked, Erin Renshaw, Ari Lazier, Matt Deeds, Nicole Hamilton,
+and Greg Hullender. 2005. Learning to rank using gradient descent. InProceedings
+of the 22nd international conference on Machine learning. 89–96.
+[11] Claudette Cayrol and Marie-Christine Lagasquie-Schiex. 2011. Weighted Ar-
+gumentation Systems: A Tool for Merging Argumentation Systems. InIEEE
+23rd International Conference on Tools with Artificial Intelligence, ICTAI 2011,
+Boca Raton, FL, USA, November 7-9, 2011. IEEE Computer Society, 629–632.
+https://doi.org/10.1109/ICTAI.2011.99
+[12] Haixiao Chi, Yiwei Lu, Beishui Liao, Liaosa Xu, and Yaqi Liu. 2021. An optimized
+quantitative argumentation debate model for fraud detection in e-commerce
+transactions.IEEE Intelligent Systems36, 2 (2021), 52–63.
+[13] Kristijonas Čyras, Antonio Rago, Emanuele Albini, Pietro Baroni, and Francesca
+Toni. 2021. Argumentative XAI: a survey.arXiv preprint arXiv:2105.11266(2021).
+[14] Louise Dupuis de Tarlé, Elise Bonzon, and Nicolas Maudet. 2022. Multiagent
+Dynamics of Gradual Argumentation Semantics. In21st International Confer-
+ence on Autonomous Agents and Multiagent Systems, AAMAS 2022, Auckland,
+New Zealand, May 9-13, 2022, Piotr Faliszewski, Viviana Mascardi, Cather-
+ine Pelachaud, and Matthew E. Taylor (Eds.). International Foundation for
+Autonomous Agents and Multiagent Systems (IFAAMAS), 363–371. https:
+//doi.org/10.5555/3535850.3535892
+[15] Charles Dickie, Stefan Lauren, Francesco Belardinelli, Antonio Rago, and
+Francesca Toni. 2025. Aggregating bipolar opinions through bipolar assumption-
+based argumentation.Auton. Agents Multi Agent Syst.39, 1 (2025), 4. https:
+//doi.org/10.1007/S10458-024-09684-3
+[16] Virginia Dignum, Loizos Michael, Juan Carlos Nieves, Marija Slavkovik, Julliett
+Suarez, and Andreas Theodorou. 2025. Contesting Black-Box AI Decisions.
+InProceedings of the 24th International Conference on Autonomous Agents and
+Multiagent Systems, AAMAS 2025, Detroit, MI, USA, May 19-23, 2025, Sanmay
+Das, Ann Nowé, and Yevgeniy Vorobeychik (Eds.). International Foundation
+for Autonomous Agents and Multiagent Systems / ACM, 2854–2858. https:
+//doi.org/10.5555/3709347.3744034
+[17] Andrea Ermellino, Lorenzo Malandri, Fabio Mercorio, Navid Nobani, Antonio
+Serino, et al. 2024. An approach to Evaluative AI through Large Language Models.
+InEuropean Conference on Artificial Intelligence, Vol. 3803. 1–15.
+[18] Gabriel Freedman, Adam Dejl, Deniz Gorur, Xiang Yin, Antonio Rago, and
+Francesca Toni. 2025. Argumentative Large Language Models for Explainable and
+Contestable Claim Verification. InAAAI-25, Sponsored by the Association for the
+Advancement of Artificial Intelligence, February 25 - March 4, 2025, Philadelphia,
+PA, USA, Toby Walsh, Julie Shah, and Zico Kolter (Eds.). AAAI Press, 14930–14939.
+https://doi.org/10.1609/AAAI.V39I14.33637
+[19] Krzysztof Z Gajos and Lena Mamykina. 2022. Do people engage cognitively with
+AI? Impact of AI assistance on incidental learning. InProceedings of the 27th
+International Conference on Intelligent User Interfaces. 794–806.
+[20] Mudasir A Ganaie, Minghui Hu, Ashwani Kumar Malik, Muhammad Tanveer, and
+Ponnuthurai N Suganthan. 2022. Ensemble deep learning: A review.Engineering
+Applications of Artificial Intelligence115 (2022), 105151.
+[21] Deniz Gorur, Antonio Rago, and Francesca Toni. 2025. Can large language models
+perform relation-based argument mining?. InProceedings of the 31st International
+Conference on Computational Linguistics. 8518–8534.
+[22] Deniz Gorur, Antoni Rago, and Francesca Toni. 2025. Retrieval and Argumen-
+tation Enhanced Multi-Agent LLMs for Judgmental Forecasting.arXiv preprint
+arXiv:2510.24303(2025).
+[23] Ralf Herbrich, Thore Graepel, and Klaus Obermayer. 2000. Large margin rank
+boundaries for ordinal regression. (2000).
+[24] Timotheus Kampik and Kristijonas Čyras. 2022. Explaining change in quantitative
+bipolar argumentation 1. InComputational Models of Argument. IOS Press, 188–
+199.
+[25] Timotheus Kampik, Kristijonas Čyras, and José Ruiz Alarcón. 2024. Change
+in quantitative bipolar argumentation: sufficient, necessary, and counterfactual
+explanations.International Journal of Approximate Reasoning164 (2024), 109066.
+[26] Timotheus Kampik, Nico Potyka, Xiang Yin, Kristijonas Cyras, and Francesca
+Toni. 2024. Contribution functions for quantitative bipolar argumentation graphs:
+A principle-based analysis.Int. J. Approx. Reason.173 (2024), 109255. https:
+//doi.org/10.1016/J.IJAR.2024.109255
+[27] Maurice G Kendall. 1938. A new measure of rank correlation.Biometrika30, 1-2
+(1938), 81–93.
+[28] Thao Le, Tim Miller, Liz Sonenberg, and Ronal Singh. 2024. Towards the new
+xai: A hypothesis-driven approach to decision support using evidence. InECAI
+2024. IOS Press, 850–857.
+[29] Francesco Leofante, Hamed Ayoobi, Adam Dejl, Gabriel Freedman, Deniz Gorur,
+Junqi Jiang, Guilherme Paulino-Passos, Antonio Rago, Anna Rapberger, Fabrizio
+Russo, et al. 2024. Contestable AI Needs Computational Argumentation. InPro-
+ceedings of the International Conference on Principles of Knowledge Representation
+and Reasoning, Vol. 21. 888–896.
+[30] Tian Liang, Zhiwei He, Wenxiang Jiao, Xing Wang, Yan Wang, Rui Wang, Yujiu
+Yang, Shuming Shi, and Zhaopeng Tu. 2024. Encouraging divergent thinking
+in large language models through multi-agent debate. InProceedings of the 2024
+conference on empirical methods in natural language processing. 17889–17904.
+[31] Scott M. Lundberg and Su-In Lee. 2017. A unified approach to interpreting model
+predictions.Advances in neural information processing systems30 (2017).
+[32] David Alvarez Melis, Harmanpreet Kaur, Hal Daumé III, Hanna Wallach, and
+Jennifer Wortman Vaughan. 2021. From human explanation to model inter-
+pretability: A framework based on weight of evidence. InProceedings of the AAAI
+Conference on Human Computation and Crowdsourcing, Vol. 9. 35–47.
+[33] Tim Miller. 2023. Explainable ai is dead, long live explainable ai! hypothesis-
+driven decision support using evaluative ai. InProceedings of the 2023 ACM
+conference on fairness, accountability, and transparency. 333–342.
+[34] Till Mossakowski and Fabian Neuhaus. 2018. Modular Semantics and Character-
+istics for Bipolar Weighted Argumentation Graphs.CoRRabs/1807.06685 (2018).
+arXiv:1807.06685 http://arxiv.org/abs/1807.06685
+[35] Filip Naudot, Andreas Brännström, Vicenç Torra, and Timotheus Kampik. 2025.
+Set Contribution Functions for Quantitative Bipolar Argumentation and their
+Principles.arXiv preprint arXiv:2509.14963(2025).
+[36] Nico Potyka. 2018. Continuous Dynamical Systems for Weighted Bipolar Argu-
+mentation. In16th International Conference on Principles of Knowledge Represen-
+tation and Reasoning (KR).
+[37] Nico Potyka. 2021. Interpreting neural networks as quantitative argumentation
+frameworks. InAAAI Conference on Artificial Intelligence, Vol. 35. 6463–6470.
+[38] Nico Potyka, Xiang Yin, and Francesca Toni. 2023. Explaining Random Forests
+Using Bipolar Argumentation and Markov Networks. InAAAI Conference on
+Artificial Intelligence, Vol. 37. 9453–9460.
+[39] Antonio Rago, Hengzhi Li, and Francesca Toni. 2023. Interactive Explanations
+by Conflict Resolution via Argumentative Exchanges. InProceedings of the In-
+ternational Conference on Principles of Knowledge Representation and Reasoning,
+Vol. 19. 582–592.
+[40] Marco Tulio Ribeiro, Sameer Singh, and Carlos Guestrin. 2016. " Why should i
+trust you?" Explaining the predictions of any classifier. In22nd ACM SIGKDD
+international conference on knowledge discovery and data mining.
+[41] Venkatesh Sivaraman, Leigh A Bukowski, Joel Levin, Jeremy M Kahn, and Adam
+Perer. 2023. Ignore, trust, or negotiate: understanding clinician acceptance of
+AI-based treatment recommendations in health care. InProceedings of the 2023
+CHI Conference on Human Factors in Computing Systems. 1–18.
+[42] Alexandros Vassiliades, Nick Bassiliades, and Theodore Patkos. 2021. Argumen-
+tation and explainable artificial intelligence: a survey.The Knowledge Engineering
+Review36 (2021), e5.
+[43] Sandra Wachter, Brent Mittelstadt, and Chris Russell. 2017. Counterfactual
+explanations without opening the black box: Automated decisions and the GDPR.
+
+--- Page 6 ---
+
+Harv. JL & Tech.31 (2017), 841.
+[44] Zengqing Wu and Takayuki Ito. 2025. The hidden strength of disagreement:
+Unraveling the consensus-diversity tradeoff in adaptive multi-agent systems.
+arXiv preprint arXiv:2502.16565(2025).
+[45] Xiang Yin, Nico Potyka, Antonio Rago, Timotheus Kampik, and Francesca
+Toni. 2025. Contestability in Quantitative Argumentation.arXiv preprint
+arXiv:2507.11323(2025).
+[46] Xiang Yin, Nico Potyka, and Francesca Toni. 2023. Argument Attribution Ex-
+planations in Quantitative Bipolar Argumentation Frameworks. InEuropean
+Conference on Artificial Intelligence (ECAI), Vol. 372. 2898–2905.
+[47] Xiang Yin, Nico Potyka, and Francesca Toni. 2024. CE-QArg: counterfactual
+explanations for quantitative bipolar argumentation frameworks. InProceedings
+of the 21st International Conference on Principles of Knowledge Representation and
+Reasoning. 697–707.
+[48] Xiang Yin, Nico Potyka, and Francesca Toni. 2024. Explaining Arguments’
+Strength: Unveiling the Role of Attacks and Supports. InInternational Joint
+Conference on Artificial Intelligence (IJCAI).
