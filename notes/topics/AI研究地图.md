@@ -6,7 +6,7 @@ topics:
   - AI
 status: active
 created: 2026-07-22
-updated: 2026-07-31
+updated: 2026-08-13
 cssclasses:
   - paper-note
 ---
@@ -27,6 +27,7 @@ cssclasses:
 - 推理与规划
 - Agent
 - Agent 能力形成与过程验证：[[notes/topics/Agent能力形成与过程验证]]
+- Agent 外部状态维护：[[notes/topics/Agent外部状态的增长、验证与压缩]]
 - 强化学习
 - 后训练与对齐
 - 跨视角监督与辅助信号：[[notes/topics/跨视角监督、辅助信号与模型行为]]

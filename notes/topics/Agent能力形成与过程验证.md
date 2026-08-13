@@ -11,7 +11,7 @@ topics:
   - 安全、鲁棒性与治理
 status: active
 created: 2026-07-31
-updated: 2026-08-06
+updated: 2026-08-13
 cssclasses:
   - paper-note
 ---
@@ -98,6 +98,12 @@ cssclasses:
 | [[notes/papers/2026/08/06/FinPerMA- A Theory-Informed, Event-Grounded Personalized-Memory Benchmark for LLM Agents]] | 个性化金融用户状态 | post-shock、summary / retrieval / full-context 对照 | retrieval 以约 1.4k token 追回大约 88% 差距；summary 记事实但丢偏好；full-context 约 0.47 overall accuracy 饱和 | 合成金融场景；理论约束 persona 是否泛化到真实用户还未知 |
 
 这篇和 `PRO-LONG`、`MemSecBench` 的关系很清楚：`PRO-LONG` 说明结构化外部日志可以承载长程历史，`MemSecBench` 说明 memory 更新本身也可能被攻击，FinPerMA 则补上“对个体偏好的更新到底有没有跟上事件变化”这一层。
+
+## 2026-08-13 增补：能力状态还需要可维护性
+
+[[notes/topics/Agent外部状态的增长、验证与压缩]] 将本主题的生命周期继续延伸：中间状态在被采用和产生结果之后，还要面对 rationale 丢失、重复增长、scope 漂移与安全删除问题。MIRA 提供 validation-gated reflection memory，Catastrophic Remembering 提供规则增长机制和 outcome-bearing comments，SkillZip 提供 typed contract 与 hard coverage 压缩。
+
+因此，原有链条应扩展为：`proposal/write -> exposure -> adoption -> consequence -> rationale/evidence -> validation -> compression/repack -> repair/rollback`。这里最重要的边界是：结构 coverage 不等于行为正确，行为 validation 也不等于安全删除；两者都要做，并让高风险规则保持人工 gate。
 
 ## 证据地图
 

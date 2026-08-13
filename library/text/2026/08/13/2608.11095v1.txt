@@ -1,0 +1,2084 @@
+--- Page 1 ---
+
+Why DoesCLAUDE.mdKeep Growing?
+Catastrophic Remembering in Agentic Coding
+Kushal Chakrabarti
+South Park Commons
+kushalc@obviouslywrong.org
+Abstract
+Agentic coding READMEs like CLAUDE.md
+grow without bound in real repositories, stop-
+ping only when the repository retires or some-
+one rewrites the file wholesale. We trace this to
+imperfect recall: appending an instruction is al-
+ways cheap, but once an instruction’s rationale
+is gone, deleting it without risking a correct-
+ness regression costs O(2|D|) in a prompt of
+|D| instructions. We name the resulting diver-
+gencecatastrophic remembering, the inverse
+of catastrophic forgetting around which con-
+tinual learning is organized. First, we char-
+acterize this phenomenon across 247,694 in-
+struction lifetimes in 1,867 repositories: agen-
+tic prompts grow without bound, more than
+tripling over their lifetime (+226%), gaining
++4.9 net instructions every commit; further,
+the older an instruction gets, the less likely it
+is to be deleted (log-hazard -0.032/commit).
+Then, we show that prompt comments can halt
+the growth: inverting IFEval yields verifiable
+worlds whose optimal prompts are known, and
+therecomments encoding latent reasoning re-
+move 99.3% of excess instructions(+211.3%
+to +1.4%). Finally, applying the same inversion
+to WildIFEval, we show that prompt comments
+canimprove real-world agentic instruction-
+following by up to 23.1%. If English is the
+new code, why don’t we have comments yet?
+1 Introduction
+Overwhelmingly, agentic READMEs never stop
+growing. A copilot-instructions.md,
+AGENTS.md or CLAUDE.md gains instructions
+and rarely shed them (Chatlatanagulchai et al.,
+2025). Deleting the file is not the answer: reposi-
+tories carrying one finish agent tasks faster and in
+fewer tokens (Lulla et al., 2026). Keeping every-
+thing is not free either: instruction-following de-
+grades as constraints accumulate (Jiang et al., 2024;
+Lior et al., 2025), and the median file already car-
+0 10 20 30 40 50
+Step t
+-100%
+0
++100%
++200%
++300%Excess size|D |
+no prompt comments
+comment-shaped noise
+informative comments
+(a)Causal:Prompts without comments (or with comment-
+shaped noise) grow without bound; with informative com-
+ments, they settle near the optimal size at equal correctness.
+Excess size is |Dt|
+|D⋆| −1 for optimal IFEval prompt D⋆; bands
+are 95% bootstrap over 184 worlds.
+0% 20% 40% 60% 80% 100%
+File lifetime
+0
++100%
++200%
++300%Instruction count
+(b)Observational:After creation, the number of prompt
+instructions in an agentic README more than triples (+226%)
+over the file’s lifespan, across 1,867 GitHub repositories and
+247,694 instruction lifetimes. Instruction count relative to
+file’s first version, |Dt|
+|D0| −1; lifetime normalized per file.
+Figure 1: Deleting prompt instructions requires remem-
+bering why they were added; agentic prompts lack com-
+ments, so they only grow over their lifetime.
+ries 39 instructions, the average more than tripling
+over its own lifetime (+226%, Figure 1b).
+Different mechanisms can explain this growth. If
+requirements stop applying (instruction staleness),
+deletion hazard rises with an instruction’s age. If
+brittle instructions die young, leaving robust ones
+behind (content fragility), hazard falls. If maintain-
+ers lose an instruction’s rationale (imperfect recall),
+hazard falls with age and, unlike either rival, also
+arXiv:2608.11095v1  [cs.AI]  11 Aug 2026
+
+--- Page 2 ---
+
+WRITE (t= 0) THE LOOP (t= 1..k) EDIT (t=k)
+fail:× d4
+d1. . . d3
++d4. . . d6
+d1. . . d3
+d4. . . d6
+why?
+latent reasoning
+never written
+× ?
+(a) Why do agentic prompts only grow? The latent reasoning behind di is
+never written and decays over the (possibly agentic) development loop, so
+deletion risks an acute regression while the cost of addition stays diffuse.
+Write a brief post about how Earth is
+different from Venus.
+...
+Write your response as three sentences,
+each ending with a period. # Task 0
+continues to fail on sentence count;
+last instruction was vague; maybe being
+explicit about periods will help?
+(b) The fix: informative comments encode la-
+tent reasoning, which stops unbounded growth in
+agentic READMEs.
+Figure 2: The prompt-comment world. Latent reasoning is free at write-time and exponentially costly to reconstruct
+at read-time, but prompt comments preserve it and stop the unbounded growth of agentic READMEs.
+with the number of maintainers. Nobody has iden-
+tified the root cause because line diffs and file sizes
+cannot resolve individual instructions over time.
+“What’s the point of this code?” is a question
+every engineer has asked. Deleting agentic
+instructions risks a regression, and doing so
+safely requires counterfactuals that maintainers
+cannot feasibly run. Recording an instruction’s
+latent reasoning costs O(1), but reconstructing it
+costs O(2|D|) for a prompt with |D| instructions
+(Section 2). Successive edits by multiple authors
+destroy that latent reasoning, so deletion hazard
+decays with age, additions outrun removals,
+and instructions grow without bound until
+agents become non-functional —catastrophic
+remembering. Under catastrophic forgetting, a
+gradient learner overwrites what it should have
+kept (McCloskey and Cohen, 1989; French, 1999;
+Kirkpatrick et al., 2017); under catastrophic
+remembering, a maintainer keeps what they should
+have overwritten. Both fail and fail for the same
+reason: whatever would license the update is gone.
+How deletions actually occur in agentic prompts
+points to the root cause. 76.8% of instruction
+deaths arrive in one commit that bulldozes the file,
+after which growth resumes at its prior rate (Sec-
+tion 3.3): removing one instruction needs a reason,
+removing all needs none. And the hazard agrees —
+removal becomes less likely the older an instruc-
+tion is, and less likely still the more authors have
+edited the file (Section 3).
+Software engineering solved this decades ago
+with the comment: text addressed to the next main-
+tainer and invisible to the interpreter (Knuth, 1984).
+Recovering why code was written as it was is devel-
+opers’ most serious problem (LaToza et al., 2006),
+so the practice is to record the why, not the how or
+the what (McConnell, 2004). Unsurprisingly, both
+carry over to agentic prompts.
+We show that prompt comments encoding an
+instruction’s latent reasoning can halt unbounded
+prompt growth, removing 99.3% of the excess
+size (+211.3% to +1.4%) over 51 steps, and
+cutting it from +60.4% to −5.8% (66.2pp) over 15
+(Figure 1a). Because irrelevant context distracts
+models (Shi et al., 2023), this improves instruction-
+following on real prompts by as much as 23.1%
+(11.6pp). We ablate the effect across comment
+payloads to show outcome-grounded latent reason-
+ing drives the gain. Finally, we show that prompt
+comments’ advantage only grows as (agentic)
+maintainers grow more capable (Section 4).
+We contribute a new approach to prompt mainte-
+nance, characterized across four dimensions:
+• Theory of prompt maintenance.Decaying recov-
+erability of latent reasoning predicts unbounded
+growth (Section 2).
+• Root cause of unbounded prompt growth.Dele-
+tion hazard decays with age over 247,694 life-
+times, implicating imperfect recall, not instruc-
+tion staleness or content fragility (Section 3.4).
+• New evaluation with known optimum.Inverting
+IFEval yields verifiable worlds whose minimum
+cover is known, so excess size and correctness
+become measurable (Section 4.1, Section 4.3).
+• Practical solution.Prompt comments remove
+99.3% of the excess size (Section 4), and improve
+instruction-following on real prompts by as much
+as 23.1% (Section 4.3).
+2 Forgetting Requires Remembering Why
+We model prompt maintenance as theonline esti-
+mation of an unobservable constraint set from cen-
+sored, noisy feedback, and derive an equilibrium
+prompt size that diverges as write-time provenance
+
+--- Page 3 ---
+
+0 8 16 24 32
+0
+100
+200
+compass
+0 8 16 24 32
+langchain
+0 6 12 18 24 30
+metabase
+0 6 12 18 24 30
+0
+100
+200
+policyengine-us
+0 2 4 6 8 10
+Popup-Maker
+0 4 8 12 16
+windmill
+File age (commits touching the file)
+Instructions Dt
+Figure 3: Maintainers bulldoze rather than prune, and the ratchet survives it. Instruction count Dt for six illustrative
+context files; a red rule marks a commit cutting the file to at most half its instructions. Wholesale rewrites carry
+76.8% of all instruction deaths, and regrowth is immediate: the mean file drops to 59.5% and is back to 91.5%
+within 10 commits (52 files aligned on their first rewrite, Figure 4).
+decays. Without that provenance, the optimal esti-
+mator becomes append-only.
+A task j= (o j, Cj) pairs a stated objective oj
+with its unobservable constraints Cj ⊆C , which
+are drawn from a fixed hidden set C={g c} of ver-
+ifiers. The prompt at time t is a finite set of instruc-
+tions Dt, with instruction d entering the prompt at
+time τd and having age ad =t−τ d. A response to
+j satisfies c∈C j with probability qc(D, j); C is
+unobservable except for draws fromq C.
+At each timestep t, three parties interact in the
+system. A (possibly agentic)maintaineradds and
+deletes instructions, updating the prompt Dt. The
+harnessdraws tasks j, runs them using theexecutor
+under prompt Dt, and then verifies them using Cj,
+generating draws fromq C.
+A maintainer’s target is theminimum cover
+D⋆, the smallest instruction set that maximizes ex-
+pected constraint satisfaction. Formally,
+D⋆ = argmin
+D∈M
+|D|,
+M= argmax
+D
+Ej, c∈Cj[qc(D, j)]
+(1)
+Every experiment in this paper scores Dt against
+D⋆ on two axes:correctness, the expected
+satisfaction E[qc], andexcess size, |Dt|
+|D⋆| −1 . A
+maintenance regime wins only by improving one
+axis without degrading the other.
+Without assuming a particular functional form,
+we assume qC meets the properties listed in Table 1.
+Properties A1–A3 (instructability, interference,
+and redundancy) set the overall regime whereas
+Property Behavior
+A1 instructability somedraisesq c
+A2 interference addingdlowers otherq c′
+A3 redundancy a secondd ′ adds noq c
+A4 censoring outcomes don’t name theird
+A5 stochasticityq c <1even when covered
+Table 1: The five characteristics of the hidden constraint
+set and its feedback (Section 2). Instructability, inter-
+ference and redundancy set the regime axis; censoring
+blocks deletions; stochasticity drives additions.
+properties A4 (censoring) and A5 (stochasticity)
+respectively block deletions and drive additions.
+Deleting instructions without risking a regres-
+sion requires a maintainer to run an infeasible num-
+ber of counterfactuals. Write d’s contribution to
+c as ∆c(d|D) =E j[qc(D, j)−q c(D\ {d}, j)]
+over tasks with c∈C j; d isexcesswhen ∆c ≤0
+for every c. Estimating it means probing D\ {d} ,
+and redundancy defeats one-at-a-time probes: two
+instructions covering one constraint each look free
+alone, though deleting both breaks it. An honest au-
+dit therefore costs O(2|Dt|) subset probes, and D⋆
+is incomputable in general. Knowing why a main-
+tainer added d — itslatent reasoning rd — col-
+lapses that toO(1), butr d rapidly decays witha d.
+Recoverability thus sets equilibrium size. Define
+the decay
+ρ(d, a) = Pr(rd recoverable at agea),(2)
+with marginal ¯ρ(a) =Ed ρ(d, a); thus, ρ(d,0) =
+¯ρ(0) = 1 and both ρ(d, a)→0 and ¯ρ(a)→0
+
+--- Page 4 ---
+
+10
+ 5
+ 0 5 10
+Commits relative to the rewrite
+-50%
+-25%
+0
++25%
++50%Instruction count
+wholesale
+rewrite
+Figure 4: The ratchet: a rewrite resets a prompt’s size
+but not its growth rate. Prompts grow 4.1% per commit
+before their first rewrite, are cut to 59.5%, then regrow
+immediately and faster, at 4.9% per commit. Mean
+instructions relative to thefirstpre-rewrite, each file’s
+rewrite event aligned to t= 0 ; band: 95% bootstrap CI.
+as a→ ∞ . We call that decayimperfect recall:
+the instruction stays and its failures recur, but its
+latent reasoning is increasingly unrecoverable. A
+maintainer rationally deletes an instruction only
+when that reason survives and it verifies as excess,
+so the hazard in its own age factorizes (the event-
+history form used for written organizational rules;
+Schulz, 1998; March et al., 2000; Zhou, 1993),
+h(a)≈¯ρ(a)s(a),(3)
+for s(a) = Pr(excess|a) . Additions net against
+the summed hazard,
+E
+
+|Dt+1| − |Dt|
+
+=A t −
+X
+d
+h(ad),(4)
+for episode additions At. Flow balance then yields
+unbounded growth:
+|D∞|= A
+¯ρ(a)s − − − − →
+a→∞
+∞.(5)
+Equation 5 is catastrophic remembering in
+closed form: excess size diverges as ¯ρ→0, even
+with additions arriving at a constant rate and fixed
+constraints. That is, even if the task does not
+change, the decaying memory of why each instruc-
+tion was written is sufficient to drive the unbounded
+growth of instructions.
+Recoverability is therefore a necessary interven-
+tion and, as we show later, also a sufficient one. If
+you let latent reasoning decay, the only practical
+deletion left available is the wholesale rewrite (Sec-
+tion 3.3); if you restore it, the prompt settles near
+D⋆ (Section 4.2).
+0 2 4 6 8
+Instruction age
+0%
+0.5%
+1%
+1.5%
+2%
+2.5%
+3%
+Deletion hazard
+Figure 5: Deletion hazardfallswith instruction age: the
+imperfect-recall signature, which instruction staleness
+(rising) and age-independent deletion (flat) both miss.
+Nelson–Aalen over 28,426 deletions against age in com-
+mits, 95% repository-stratified bootstrap band; slope
+−0.032/commit ([−0.047,−0.019]).
+3 Prompts Ratchet: Growth, Rewrite,
+Regrowth
+Agentic context files grow until someone rewrites
+them wholesale and then they grow again, charac-
+terizing the unique sawtooth-like growth curve we
+call theratchet(Figure 4). Its deletion hazard and
+covariates identify its root cause for the first time
+— imperfect recall.
+We decompose agentic prompts into individual
+instructions and track their decay over commit his-
+tories (Section 3.1-3.3), then falsify instruction stal-
+eness and content fragility and finally confirm a
+prediction only imperfect recall can make (Sec-
+tion 3.4). Our corpus spans 1,867 GitHub reposi-
+tories, 1,801 multi-version files, 299,440 version-
+to-version transitions, and 247,694 instruction life-
+times; Appendix A details construction, segmenta-
+tion, matching and censoring.
+3.1 Agentic prompts grow unbounded until a
+wholesale rewrite
+Maintainers add and almost never remove, so agen-
+tic prompts grow without bound in instruction
+count, instruction complexity and total size until
+history ends or a file is rewritten wholesale.
+At its last tracked version, the median file holds
+39 instructions (90th percentile: 131), well past
+the threshold at which instruction-following de-
+grades (Jiang et al., 2024; Lior et al., 2025). Among
+1,576 multi-version repositories, 64.3% grow their
+instruction count against 26.6% that shrink it, a
+median net gain of +7 instructions. On average,
+excluding mass rewrites, each commit adds a net
++4.9 instructions across 19,267 commits.
+
+--- Page 5 ---
+
+Every component we measure grows. Over a
+file’s own lifetime the mean trajectory gains up to
++226% in count (Figure 1b) and +10% in mean
+instruction length. Alongside that, the total size of
+agentic prompts grows +140%, so the count is not
+text migrating between the instruction and payload
+classes (Appendix A.5).
+3.2 Most disappearances are not deletions
+When maintainers delete instructions, they gener-
+ally do so wholesale in a mass rewrite. 77.3% of
+instruction deaths arrive in a wholesale rewrite or a
+migration to a sibling file. In such cases, a line diff
+cannot separate deletions from rewordings, which
+partially explains why “deletions are rare” has
+stood unexplained: prompt-change studies report
+additions dominating without settling what became
+of any one instruction (Tafreshipour et al., 2025).
+When a file loses half or more of its instructions
+in a single commit, we call it arewrite; text reap-
+pearing in a sibling file is amigration. We censor
+both as competing risks (96,162 and 682 deaths,
+with exposure bounded in both directions in Ap-
+pendix A.4), since neither involves a maintainer
+judging any given instruction to be worth its place
+(March et al., 2000). Matching validates at 1.000
+precision and 0.933 recall on 50 hand-annotated
+transitions, leaving 247,694 lifetimes and 28,426
+tracked deletions.
+3.3 Growth immediately resumes after
+rewrite
+Although a mass rewrite resets a prompt’s size, it
+does not address the underlying root cause (im-
+perfect recall), so the prompt starts growing again
+immediately after the rewrite.
+Aligning files on their first mass rewrite att= 0 ,
+the mean instruction count rises monotonically
+through t=−1 , drops to 59.5% of its pre-rewrite
+value at t= 0 , and recovers to 91.5% over the 10
+commits after (Figure 4). In fact, agentic prompts
+grow fasteraftera rewrite: a file gains 4.9% in-
+structions per commit after a mass rewrite vs. 4.1%
+before it.
+3.4 Deletion hazard falsifies rival mechanisms
+The deletion hazard h(a) and its interaction with
+author count identify imperfect recall as the mech-
+anism driving instruction growth.
+In particular, instruction staleness and imperfect
+recall predict opposite slopes for deletion hazard:
+the first predicts hazard rising with age, as instruc-
+tions fall out of date (Lehman, 1980; Panthaplackel
+et al., 2021); the second predicts it falling, as the
+reasoning behind them is lost. As we can see in Fig-
+ure 5, the deletion hazardh(a) falls with agea. The
+log-hazard slope from a repository-stratified boot-
+strap is −0.032 per commit, its interval excluding
+zero (95% CI[−0.047,−0.019]; Appendix A.6).
+Content fragility — where fragile instructions,
+files or repositories die young — would bend dele-
+tion hazard downward through compositional ef-
+fects, but composition alone cannot account for
+the slope. We refit it with a gamma frailty model
+(n= 28,255 deaths, censored at 50 commits)
+against a no-frailty baseline (Vaupel et al., 1979).
+Its strongest form, shared instructions with the
+same text, absorbs 30.8% but leaves the slope at
+−0.0355([−0.0414,−0.0296]; Appendix A.7).
+Finally, imperfect recall predicts something that
+neither rival can explain: if latent reasoning is en-
+coded while a maintainer makes the change, dele-
+tion hazard should decay with the number of main-
+tainers touching a file, not just with age. Counting
+human authors and controlling for file activity, it
+does: βmulti-author×age =−0.021 (z=−11.7 ; Ap-
+pendix A.8).
+Across real-world repositories, then, unbounded
+prompt growth is widespread, costly at the sizes
+files reach, and explainable only by imperfect recall.
+However, this setting is observed, not assigned;
+we turn next to one where we control what the
+maintainer inherits.
+4 Comments Halt the Ratchet and Buy
+Back Instruction-Following
+Prompt comments can permanently halt the un-
+bounded growth of instructions in agentic prompts
+and, in doing so, improve instruction-following
+through smaller, more robust prompts.
+To evaluate prompt effectiveness, we first pro-
+pose a new evaluation for agentic prompts in task-
+stationary settings (Section 4.1). We use this evalu-
+ation to demonstrate that prompt comments enable
+prompts to settle near their theoretically optimal
+minimum cover (Section 4.2). Finally, we show
+that prompt comments can buy back instruction-
+following lost to extraneous, noisy instructions in
+real-world prompts (Section 4.3).
+
+--- Page 6 ---
+
+Instruction Count Constraint Satisfaction
+Role ArmT N|D T |Excess Size (%) Rate (%,t=T) Rate (%,t=0)
+CONTROLno prompt comments 15 552 3.5+60.4±18.4 39.0±2.8 23.2±2.4
+PLACEBOcomment-shaped noise 15 552 3.3+53.2±14.6 40.3±2.7 22.0±2.4
+TREATMENTinformative comments 15 552 2.1−5.8±6.638.2±2.6 21.5±2.4
+CONTROLno prompt comments 51 184 6.6+211.3±105.3 44.0±4.9 23.9±3.9
+PLACEBOcomment-shaped noise 51 184 5.3+147.9±79.9 42.6±4.9 22.3±4.2
+TREATMENTinformative comments 51 184 2.2+1.4±22.144.0±4.7 21.7±3.9
+Table 2: Informative comments cut excess size at parity satisfaction, more so at T=51 . Excess is |DT |/|D⋆|−1 at
+|D⋆|=2.2; rate is the share of a round’s scored constraints passed,t=T the last-3-round mean.Bold= best in its
+block, CIs disjoint;±is half a 95% bootstrap CI, asymmetric. 3 seeds atT=15, 1 atT=51.
+4.1 Inverting IFEval makes the minimum
+cover observable
+In practice, maintainers in agentic coding contexts
+must learn an effective prompt to satisfy a set of
+unobservable constraints. In order to maximize
+correctness, this prompt must simultaneously cover
+all constraints while, given well-known issues with
+instruction-following decay (Jiang et al., 2024; Lior
+et al., 2025), being minimal.
+Evaluating a prompt therefore requires measur-
+ing both its excess size and its correctness, but
+calculating excess size requires minimum cover,
+which is incomputable in general (Section 2). Stan-
+dard instruction-following suites offer a path.
+By inverting IFEval (Zhou et al., 2023), we can
+attack the problem. For each benchmark item
+(Dj, Cj) — instructions Dj, verifiers Cj — we
+apply the following transform:
+1. Hide Dj.The item’s stated instructions become
+the reference minimum cover D⋆, so |D⋆| is
+known a priori and excess size is measurable.
+2. Keep Cj.Its verifiers become the world’s hid-
+den constraint set, run by the harness alone and
+never named to the maintainer.
+3. Generate brief oj.A stronger model lossily sum-
+marizes Dj as a general task objective (“draft a
+product announcement”).
+A fresh maintainer then reconstructs Dj from oj
+over T steps, seeing only censored, noisy feedback
+from Cj. Its arm decides whether it may annotate
+an instruction d with a comment rd carrying that
+instruction’s latent reasoning. The next maintainer
+reads Dt and every rd; the executor reads only Dt.
+An instruction tells the executor what to do; a
+comment tells the next maintainer why. Enforc-
+ing that split, the harness strips comments before
+the prompt reaches the executor and rejects any in-
+struction citing a past failure, leaving the comment
+Do not truncate or cut off your response; always
+complete every sentence and thought you begin.
+# r1: response was truncated mid-sentence ("A
+body that you often s") suggesting response
+generation stopped prematurely; may indicate token
+limit, instruction conflict, or assistant aborting
+output; this directive ensures responses are
+complete
+Use the word ’wilderness’ exactly 5 times in your
+response.
+# r3: task 0 failed with ’certain wording is not
+used the right number of times’ -- the response
+uses ’wilderness’ only 2 times but requirement
+expects exactly 5 occurrences; d12 (3 bold
+sections) was passing, so keeping that approach
+Divide the response body into exactly 4 paragraphs:
+(1) introduction to the water cycle, (2)
+evaporation and condensation, (3) precipitation
+and collection, (4) conclusion. Separate each
+paragraph with exactly three blank lines.
+# r3: "response is not split into the right
+number of paragraphs" recurring across r2-r3;
+previous directive d18 specified two blank lines
+between paragraphs but failed; increasing to three
+blank lines while maintaining strict 4-paragraph
+structure
+Figure 6: Each comment names the failure behind its
+instruction, a hypothesis, and its outcome. Comments
+are green (#) and never reach the executor. 3 of 8,541
+additions, one per constraint family.
+as the only surviving channel for latent reasoning
+(Appendix B).
+4.2 Comments encoding latent reasoning
+settle the prompt at its cover
+Prompt comments encoding an instruction’s latent
+reasoning settle the prompt at its minimum cover
+(Figure 1a). Its latent reasoning summarizes the
+failure behind its instruction, a hypothesis, and how
+it has fared (Figure 6).
+Concretely, across 552 maintenance histories,
+maintainers encoding latent reasoning as prompt
+comments learn prompts at −5.8% excess size
+against +60.4% for maintainers without them
+(66.2pp), at parity constraint satisfaction (Table 2).
+Arms differ only in the handoff: the prompt instruc-
+tions along with its comments (or not), containing
+
+--- Page 7 ---
+
+a maintainer’s summarized latent reasoning.
+As (agentic) maintainers scale, they ratchet
+harder and prompt comments help them more.
+Varying the maintainer across 3 tiers at T=15 , the
+uncommented arm’s excess rises from +67.7% to
++571.9%; at the top tier, prompt comments enable
+strictly Pareto gains in both constraint satisfaction
+and excess size relative to control (Table 9).
+Finally, ablations at T=15 show that a comment
+must carry outcomes (Table 10). Comment-shaped
+noise lands within the noise of the no-comment
+arm, and a narrative of attempts without their out-
+comes is our worst arm at +70.0%, handing suc-
+cessors an unvalidated premise to extend. Within
+the schema the two fields recording what happened
+carry the reduction: dropping the recurrence count
+alone costs 37% of it.
+4.3 In real prompts, noisy instructions cost
+correctness and comments buy it back
+Extraneous, noisy instructions degrade compliance
+with the true, correct instructions, and comments
+recover most of that loss.
+Inverting WildIFEval (Lior et al., 2025) the
+same way carries the test to real prompts, and to
+instruction-following rather than count. We con-
+vert every benchmark item (Dj, Cj) to a world as
+in Section 4.1, but instead of making the main-
+tainer learn all |Dj| instructions we seed it with
+|Dj| −K true instructions and G noisy ones drawn
+uniformly from other items’ sets Di̸=j. WildIFE-
+val’s constraints are human-written prose and ship
+with no code verifiers, so we score them with an
+arm-blind LLM judge that sees one constraint and
+one response and nothing else: no prompt, no arm
+label, no history. Across 64 worlds, for K=1
+and G=16, those noisy instructions cost 24.1pp
+of correctness on the true instructions already in
+the prompt, 65.6% at G=0 against 41.5% here
+(95% CI: [ −33.4, −14.9]pp); full details are in
+Appendix D.1.
+Comments lift satisfaction from 50.4% to 62.0%
+over 3 maintenance rounds (11.6pp, 95% CI: [5.1,
+18.3]pp), a 23.1% relative gain, against an un-
+commented maintainer given the identical prompt.
+Ablations show again that the latent reasoning
+encoded in the comment drives the behavior:
+comment-shaped noise lands 2.7pp from the un-
+commented arm (95% CI: [ −4.4, 10.1]pp, cover-
+ing zero). Every contrast in this subsection is a
+rate under one judge, so we re-scored all 6,336 ver-
+dicts under a second: the criteria reproduce, and
+the effect that judge measures differs from the one
+quoted here by 3.8pp (7.8pp against 11.6pp; 95%
+CI: [−1.9, +9.6]pp), which does not exclude zero
+(Appendix D.3).
+Under assignment, then, we see that prompt
+comments encoding latent reasoning both reduce
+instruction count to its optimal minimum cover
+and buy back instruction-following in real-world
+prompts. Next, we contextualize and contrast our
+approach with previous work.
+5 Related Work
+Empirical studies of agentic context files.Prior
+measurement establishes that context files earn
+their keep and only grow. Chatlatanagulchai et al.
+(2025) characterize AGENTS.md-class files, which
+accumulate content and rarely shed it; Tafreshipour
+et al. (2025) track prompt evolution in repositories,
+where additions dominate every other edit type;
+Lulla et al. (2026) show they pay for themselves,
+since repositories carrying one finish agent tasks
+faster and in fewer tokens. We measure that growth
+over the lifetimes of individual instructions, fine
+enough to estimate a deletion hazard and identify
+what drives it (Section 3.4).
+Agent memory and eviction.Agent memory
+systems already implement forgetting, each against
+an observable staleness proxy. MemGPT evicts
+on context overflow (Packer et al., 2023); Mem0
+deletes on detected contradiction, and its graph vari-
+ant and Zep timestamp superseded entries invalid
+(Chhikara et al., 2025; Rasmussen et al., 2025);
+FSFM catalogs mechanisms from passive decay
+to safety-triggered deletion (Gu et al., 2026). Au-
+thored instructions admit no such proxy: an instruc-
+tion does not become outdated merely by being old
+or rarely triggered. Instead, we show that an in-
+struction’s latent reasoning should be the primary
+driver of whether it should be retained or not (Sec-
+tion 2, Section 3.4).
+Organizational behavior.Organizational writ-
+ten rules are artifacts people maintain for decades
+and have been studied extensively. Lehman’s laws
+attribute a program’s growth to a changing en-
+vironment (Lehman, 1980), the demand-side ac-
+count; Zhou (1993) treats rule change as a stochas-
+tic process whose rate depends on a rule’s own
+age; Schulz (1998) shows rule birth rates falling as
+the population densifies; and March et al. (2000)
+assembles both into an account of rule births, re-
+
+--- Page 8 ---
+
+visions, and suspensions. We use their insights to
+characterize the unique dynamics in agentic pro-
+gramming beyond compositional effects and stale-
+ness and further decompose a novel latent reason-
+ing recoverability factor ¯ρ(a)that depends on age
+a(Equation 3, Section 3.4).
+Software engineering best practices.Software
+engineering solved comparable challenges decades
+ago via syntactic structures and engineering con-
+ventions. Literate programming argued that a pro-
+gram is addressed to a human reader (Knuth, 1984);
+McConnell (2004) makes commenting thewhy
+standard practice; LaToza et al. (2006) find recover-
+ing that rationale is developers’ most serious prob-
+lem; architecture decision records institutionalize
+recording it at decision time (Nygard, 2011); and
+commit messages exist to carry it and routinely fail
+(Tian et al., 2022). We directly build on both the
+structural and semantic insights to drive the core
+pillars of our result, showing that comments encod-
+ing an instruction’s latent reasoning cut excess size
+at parity constraint satisfaction (Section 4.2).
+However, code-comment fidelity is notoriously
+weak and entire lines of research are dedicated to
+their divergence. Comments and the code they de-
+scribe co-evolve poorly (Fluri et al., 2007); detect-
+ing and addressing comment–code inconsistency
+are their own ML-for-SWE tasks (Panthaplackel
+et al., 2020, 2021). Our ablations identify that
+low-information, poorly-structured and misleading
+rationale carries the same deleterious effects into
+agentic coding (Section 4.2, Table 10).
+Continual learning.Continual learning is our
+closest cousin but primarily targets tasks with drift-
+ing objectives. Networks trained on a task se-
+quence overwrite what earlier tasks taught them
+(McCloskey and Cohen, 1989; French, 1999); re-
+hearsal and regularization toward parameters that
+mattered before (Kirkpatrick et al., 2017) preserve
+what a shifting objective would destroy; L2P, Dual-
+Prompt, and CODA-Prompt move that burden into
+the input, learningfixed-sizeprompt pools a frozen
+backbone selects from, which bounds growth by
+construction (Wang et al., 2022b,a; Smith et al.,
+2023). Although our task is stationary, we borrow
+their frameworks and find complementary insights
+driven by fixed resource constraints: fixed parame-
+ters driving catastrophic forgetting under shifting
+objectives there, intermittent failures driving catas-
+trophic remembering under (approximately) fixed
+instruction counts here (Equation 5, Section 4.2).
+Instruction following.IFEval scores responses
+against verifiable constraints (Zhou et al., 2023);
+FollowBench grades progressively added constraint
+levels and WildIFEval collects real requests carry-
+ing many at once, both documenting that following
+degrades as the required set grows (Jiang et al.,
+2024; Lior et al., 2025). Those benchmarks price
+the constraints a response must satisfy, the harm
+our motivation rests on. We invert them to price
+extraneous instructions instead (Section 4.3) and
+to make the minimum cover observable, without
+which excess size is unmeasurable (Section 4.1).
+6 Discussion
+If English is the new code, why don’t we have
+comments yet?
+Fundamentally, we show two things: (i) agen-
+tic prompts grow because an instruction’s latent
+reasoning decays faster than the instruction (Sec-
+tion 3.4), and (ii) saving that latent reasoning in
+prompt comments at write time reduces instruction
+count and wins back instruction-following (Sec-
+tion 4.2, Section 4.3).
+Neither half should surprise us. Software en-
+gineering identified and solved the same problem
+decades ago and continual learning is working on
+solving its dual — catastrophic forgetting — right
+now. Although both settings differ in detail, both
+offer lessons in principle; however, LLM agents
+started driving real work before we could adopt
+their lessons. We eagerly borrow from both now.
+Our results open three novel lines of work. Cod-
+ing agent developers can give prompts a comment
+syntax, so an instruction’s latent rationale can reach
+the next maintainer; our prototype, while promis-
+ing, is just a prototype. Maintainers who manage
+agentic coding prompts can identify best practices:
+while they may overlap substantially with software
+engineering best practices, there are almost cer-
+tainly differences. Finally, researchers can look
+for what (i) beats it, since prompt maintenance is
+continual learning over text and nobody has built
+its analogue of rehearsal or regularization, and (ii)
+measures it, at representative constraint counts and
+for constraints that are not mechanically verifiable.
+Every field is borrowing from AI right now. We
+should borrow back just as readily. The answer to
+catastrophic remembering was forty years old and
+one field over, and the next one might be too.
+
+--- Page 9 ---
+
+Limitations
+We fixed three measurement choices and never var-
+ied them: the 50% rewrite threshold, applied in-
+side the tracker, which together with the migration
+rule censors 77.3% of deaths (Appendix A.4); a
+matcher validated once on 50 hand-annotated tran-
+sitions against 299,440 tracked ones, where a strat-
+ified re-annotation at scale would close the gap
+(Appendix A.3); and a per-corpus segmentation
+grammar, the largest untested degree of freedom
+on the corpus side (Appendix A.2). Matcher error
+that survives biases the age slope toward zero, so
+our decline is a lower bound.
+Our controlled experiment demonstrates the
+mechanism where retention is nearly free: covers
+of two or three instructions against a median file’s
+39, a 15-step horizon, one model as both maintainer
+and executor, mechanically verifiable English con-
+straints (Appendix B.3). Section 4.3 runs at 16
+distractors against 4–5 human-written constraints,
+where retention is demonstrably not free, but it
+seedsexcess into benchmark prompts rather than
+growing it in real files: it prices what excess costs
+and what a comment recovers, never whether the
+ratchet persists at that size, for which the repository
+study stands in. WildIFEval’s constraints are prose
+rather than code, so satisfaction there is scored by
+an arm-blind LLM judge and every rate is a rate
+under that judge. The contrasts reproduce under a
+second judge whose effect size is not distinguish-
+able from the first’s, but neither judge is ground
+truth, so we measure reproduction and agreement
+rather than accuracy (Appendix D.3).
+We earn our scope on agent context
+files on public GitHub: 1,867 reposito-
+ries carrying CLAUDE.md, AGENTS.md, or
+copilot-instructions.md. We did not
+measure their language distribution, and no result
+speaks to non-English instructions. Section 3.4’s
+multi-author interaction counts who has edited a
+file, not whether an instruction’s own author has
+left. Whether catastrophic remembering reaches
+system prompts or agent skill files remains open.
+Use of Large Language Models
+We used LLMs liberally as a delegated compiler for
+technical execution, writing execution and research
+support: synthesizing the literature review, structur-
+ing sections, formatting LATEX, co-generating exper-
+imental code, analysis code, and appendix text, and
+so on. All technical content, experimental design,
+theoretical contributions, and scientific claims are
+the author’s original work. A programmatic gener-
+ator emits every number in the abstract, body, and
+appendix from the canonical experimental artifacts;
+no LLM produced a reported value.
+Ethics Statement
+We mine public repository histories, and the only
+personal data we touch is authorship metadata.
+Each commit in a file’s history carries an author
+name and email; we reduce them at extraction to
+a count of distinct editors, the covariate in Sec-
+tion 3.4. No artifact we release carries an iden-
+tity. We redistribute no repository content, only
+derived tables and the code that rebuilds them (Ap-
+pendix E). These files are public, but nobody wrote
+them for this measurement. Every result we report
+is therefore an aggregate over 1,867 repositories
+rather than a judgment about any one maintainer.
+Our own recommendation carries the main risk.
+We tell maintainers to delete instructions whose
+rationale they can recover, and an operator who
+automates that rule will delete instructions whose
+rationale was real. Our protocol empties a non-
+trivial share of prompts, and the uncommented
+arm scores higher on exactly those worlds (Ap-
+pendix C.5). Writing a comment removes nothing
+and is therefore safe. Acting on one is not. An
+operator deploying the protocol should keep a per-
+son in the deletion path and hold safety-relevant
+instructions out of scope until someone tests the
+protocol on them.
+We did not audit the corpus for offensive content,
+and we print only three verbatim strings, all com-
+ments from our own run (Figure 6). We recruited
+no participants, and an author produced the one
+hand-annotation here (Table 3); an independent re-
+annotation would fix that. We train nothing, and
+Appendix E.1 reports the compute.
+References
+Worawalan Chatlatanagulchai, Hao Li, Yutaro Kashiwa,
+Brittany Reid, Kundjanasith Thonglek, Pattara Lee-
+laprute, Arnon Rungsawang, Bundit Manaskasem-
+sak, Bram Adams, Ahmed E. Hassan, and Ha-
+jimu Iida. 2025. Agent READMEs: An empirical
+study of context files for agentic coding.Preprint,
+arXiv:2511.12884. ArXiv:2511.12884.
+Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet
+Singh, and Deshraj Yadav. 2025. Mem0: Building
+production-ready AI agents with scalable long-term
+memory.Preprint, arXiv:2504.19413.
+
+--- Page 10 ---
+
+Beat Fluri, Michael Würsch, and Harald C. Gall. 2007.
+Do code and comments co-evolve? on the relation
+between source code and comment changes. InPro-
+ceedings of the 14th Working Conference on Reverse
+Engineering (WCRE), pages 70–79.
+Robert M. French. 1999. Catastrophic forgetting in con-
+nectionist networks.Trends in Cognitive Sciences,
+3(4):128–135.
+Yingjie Gu, Wenjian Xiong, Liqiang Wang, Pengcheng
+Ren, Chao Li, Xiaojing Zhang, Yijuan Guo, Qi Sun,
+Jingyao Ma, and Shidang Shi. 2026. FSFM: A
+biologically-inspired framework for selective forget-
+ting of agent memory.Preprint, arXiv:2604.20300.
+ArXiv:2604.20300.
+Yuxin Jiang, Yufei Wang, Xiaojun Zeng, Wanjun Zhong,
+Liangyou Li, Fei Mi, Lifeng Shang, Xin Jiang, Qun
+Liu, and Wei Wang. 2024. FollowBench: A multi-
+level fine-grained constraints following benchmark
+for large language models. InProceedings of ACL.
+ArXiv:2310.20410.
+James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz,
+Joel Veness, Guillaume Desjardins, Andrei A. Rusu,
+Kieran Milan, John Quan, Tiago Ramalho, Ag-
+nieszka Grabska-Barwinska, Demis Hassabis, Clau-
+dia Clopath, Dharshan Kumaran, and Raia Hadsell.
+2017. Overcoming catastrophic forgetting in neural
+networks.Proceedings of the National Academy of
+Sciences, 114(13):3521–3526.
+Donald E. Knuth. 1984. Literate programming.The
+Computer Journal, 27(2):97–111.
+Thomas D. LaToza, Gina Venolia, and Robert DeLine.
+2006. Maintaining mental models: A study of devel-
+oper work habits. InProceedings of the 28th Interna-
+tional Conference on Software Engineering (ICSE),
+pages 492–501.
+M. M. Lehman. 1980. Programs, life cycles, and laws
+of software evolution.Proceedings of the IEEE,
+68(9):1060–1076.
+Gili Lior, Asaf Yehudai, Ariel Gera, and Liat Ein-Dor.
+2025. WildIFEval: Instruction following in the wild.
+Preprint, arXiv:2503.06573. ArXiv:2503.06573.
+Jai Lal Lulla, Seyedmoein Mohsenimofidi, Matthias
+Galster, Jie M. Zhang, Sebastian Baltes, and
+Christoph Treude. 2026. On the impact of
+AGENTS.md files on the efficiency of AI
+coding agents.Preprint, arXiv:2601.20404.
+ArXiv:2601.20404.
+James G. March, Martin Schulz, and Xueguang Zhou.
+2000.The Dynamics of Rules: Change in Written
+Organizational Codes. Stanford University Press,
+Stanford, CA.
+Michael McCloskey and Neal J. Cohen. 1989. Catas-
+trophic interference in connectionist networks: The
+sequential learning problem. InPsychology of Learn-
+ing and Motivation, volume 24, pages 109–165. Aca-
+demic Press.
+Steve McConnell. 2004.Code Complete: A Practi-
+cal Handbook of Software Construction, 2 edition.
+Microsoft Press, Redmond, W A.
+Michael Nygard. 2011. Documenting architecture deci-
+sions. Blog post.
+Charles Packer, Vivian Fang, Shishir G. Patil, Kevin
+Lin, Sarah Wooders, and Joseph E. Gonzalez. 2023.
+MemGPT: Towards LLMs as operating systems.
+Preprint, arXiv:2310.08560.
+Sheena Panthaplackel, Junyi Jessy Li, Milos Gligoric,
+and Raymond J. Mooney. 2021. Deep just-in-time in-
+consistency detection between comments and source
+code. InProceedings of AAAI. ArXiv:2010.01625.
+Sheena Panthaplackel, Pengyu Nie, Milos Gligoric,
+Junyi Jessy Li, and Raymond J. Mooney. 2020.
+Learning to update natural language comments
+based on code changes. InProceedings of ACL.
+ArXiv:2004.12169.
+Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais,
+Jack Ryan, and Daniel Chalef. 2025. Zep: A tempo-
+ral knowledge graph architecture for agent memory.
+Preprint, arXiv:2501.13956.
+Martin Schulz. 1998. Limits to bureaucratic growth:
+The density dependence of organizational rule births.
+Administrative Science Quarterly, 43(4):845–876.
+Freda Shi, Xinyun Chen, Kanishka Misra, Nathan
+Scales, David Dohan, Ed H. Chi, Nathanael Schärli,
+and Denny Zhou. 2023. Large language models can
+be easily distracted by irrelevant context. InPro-
+ceedings of the 40th International Conference on Ma-
+chine Learning (ICML), volume 202 ofProceedings
+of Machine Learning Research, pages 31210–31227.
+PMLR.
+James Seale Smith, Leonid Karlinsky, Vyshnavi Gutta,
+Paola Cascante-Bonilla, Donghyun Kim, Assaf Ar-
+belle, Rameswar Panda, Rogerio Feris, and Zsolt
+Kira. 2023. CODA-prompt: Continual decomposed
+attention-based prompting for rehearsal-free contin-
+ual learning. InProceedings of CVPR.
+Mahan Tafreshipour, Aaron Imani, Eric Huang, Ed-
+uardo Almeida, Thomas Zimmermann, and Iftekhar
+Ahmed. 2025. Prompting in the wild: An empir-
+ical study of prompt evolution in software repos-
+itories. InProceedings of the 22nd International
+Conference on Mining Software Repositories (MSR).
+ArXiv:2412.17298.
+Yingchen Tian, Yuxia Zhang, Klaas-Jan Stol, Lin Jiang,
+and Hui Liu. 2022. What makes a good commit
+message? InProceedings of the 44th Interna-
+tional Conference on Software Engineering (ICSE).
+ArXiv:2202.02974.
+James W. Vaupel, Kenneth G. Manton, and Eric Stal-
+lard. 1979. The impact of heterogeneity in individual
+frailty on the dynamics of mortality.Demography,
+16(3):439–454.
+
+--- Page 11 ---
+
+Zifeng Wang, Zizhao Zhang, Sayna Ebrahimi, Ruoxi
+Sun, Han Zhang, Chen-Yu Lee, Xiaoqi Ren, Guolong
+Su, Vincent Perot, Jennifer Dy, and Tomas Pfister.
+2022a. DualPrompt: Complementary prompting for
+rehearsal-free continual learning. InProceedings of
+ECCV.
+Zifeng Wang, Zizhao Zhang, Chen-Yu Lee, Han Zhang,
+Ruoxi Sun, Xiaoqi Ren, Guolong Su, Vincent Perot,
+Jennifer Dy, and Tomas Pfister. 2022b. Learning to
+prompt for continual learning. InProceedings of
+CVPR.
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha
+Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and
+Le Hou. 2023. Instruction-following evaluation for
+large language models.Preprint, arXiv:2311.07911.
+IFEval; arXiv:2311.07911.
+Xueguang Zhou. 1993. The dynamics of organizational
+rules.American Journal of Sociology, 98(5):1134–
+1166.
+A The Field Corpus
+A.1 Corpus construction
+We re-derived every version of every file rather than
+reuse the frame’s text. A snapshot supports claims
+about files; only a history supports claims about
+instructions. The frame is the repository list of
+Chatlatanagulchai et al. (2025), the study that estab-
+lished file-level growth: public GitHub repositories
+carrying at least one CLAUDE.md, AGENTS.md,
+or copilot-instructions.md at their de-
+fault branch. We cloned each bloblessly and
+walked the full commit history of every tracked
+context file. 1,867 repositories yielded 1,801 files
+with at least two versions, 299,440 tracked version-
+to-version transitions, and 247,694 spells.
+Walking forward also keeps the measurement
+symmetric in time. If we had anchored each file’s
+instruction set on its final version and searched
+backwards, we would have conditioned on survival
+to that version. Survival is the quantity under study.
+A.2 Instruction segmentation
+We call one clause-level imperative aninstruction
+and everything else in the filepayload. We segment
+in two steps: we split each file version on mark-
+down structure, taking list items and block bound-
+aries, then split any remaining prose at sentence
+boundaries. We send headings, fenced code, tables,
+whole-line bold labels, and any fragment shorter
+than 2 words to payload, because at that length a
+line is usually a label and not a rule. Payload never
+enters the risk set. We still count it, though, and
+report it beside instruction count in Section 3.1, so
+a reader can check whether the growth we report
+comes from routing more text into the instruction
+class as files age.
+We fixed the grammar per corpus, before reading
+the gates, and it remains our largest untested degree
+of freedom on the corpus side. A different grammar
+would yield a different |Dt|. We report ratios, so a
+constant rescaling of |Dt| leaves them alone, but a
+grammar whose behavior drifts with file age would
+not.
+A.3 Cross-version matching
+We match instructions across consecutive versions
+with a three-stage cascade. We first try exact string
+equality, then equality after normalization with
+case, whitespace and markdown punctuation re-
+moved, then a fuzzy match above a similarity of 70.
+A match at any stage counts assurvival. We take
+the highest-scoring partner still available, and each
+instruction matches at most once. An unmatched
+old instruction is a death; an unmatched new one is
+a birth.
+The cascade tells a deleted instruction from a
+reworded one, and Section 3.2 rests on that sepa-
+ration. A line-level diff scores a rewording as one
+deletion plus one addition, so a line-level count of
+deletions is equally consistent with zero instruction
+deletions and with many. The matcher therefore
+bounds every result we take from the corpus. We
+validated it once, on 50 hand-annotated transitions,
+reaching 1.000 precision and 0.933 recall against a
+floor of 0.85/0.80 that we fixed before pulling any
+data (Table 3). That is a small pool against 299,440
+tracked transitions, and it is the only number on the
+corpus side that the canonical run did not produce.
+Limitations says so. A stratified re-annotation at
+full scale would close it.
+Any error that survives makes our estimate con-
+servative. A missed rewording invents a death at
+the age where the rewording happened, and reword-
+ings fall more often on old, heavily-edited instruc-
+tions than on young ones. Matcher misses therefore
+add hazard to the old-age tail, which biases the es-
+timated slopetowardzero. A decline measured
+under that bias is a lower bound on the true decline.
+A.4 Competing risks: rewrites and migrations
+We want the hazard to run over one kind of event
+only: a maintainer deciding that an instruction is no
+longer worth its place. We censor two other kinds
+of disappearance as competing risks. Arewriteis a
+commit at which at least 50% of a file’s live instruc-
+
+--- Page 12 ---
+
+Gate Criterion Threshold Observed Pass
+0 Median per-repo net∆D >0>0 +7✓
+0 Grow:shrink ratio>1.52.42✓
+A Deletions excluding rewrites≥30028,426✓
+A Tail share at/above median age≥20%57.0%✓
+B Matcher precision / recall≥0.851.000 / 0.933✓
+– Median rel. growth, all multi-version files: count vs. length count>length1.193vs.1.028✓
+Table 3: Every pre-registered criterion passes on the canonical corpus. Rows: the criteria fixed before any pipeline
+code (§A.2–A.4); columns: the threshold each was written against and the value this run produced. Gate B is
+measured on a 50-transition hand-annotation pool rather than on this run, the only inherited number in the corpus
+half.Grow:shrinkis the share of multi-version repositories gaining instructions over the share losing them;tail
+shareis the fraction of deletions at or above the median observed instruction age, which guards identification past
+that age.
+tions die at once, subject to a floor of 5 instructions
+at risk, so that a two-instruction file losing one does
+not qualify. Amigrationis a death whose text turns
+up in a sibling file at the same commit, and we
+match those repository-wide.
+Together the two censor 77.3% of observed in-
+struction deaths. Rewrite deaths on their own out-
+number the deletions we estimate the hazard from
+by 3.4 to one. That is our largest single exposure,
+and it reads two ways. It threatens the estimate,
+because we fit the deletion hazard on a minority
+of deaths and a rewrite threshold that mistook or-
+dinary pruning for a wholesale rewrite would pull
+real deletions out of the risk set. It also reports
+a finding: maintainers replace rather than prune,
+exactly as Equation 5 predicts.
+Table 4 gathers the checks a reader can run with-
+out re-tracking the corpus. Panel (a) shows that the
+event really is a massdeletion. The median event
+kills far more instructions than it births, a quarter of
+events leave the file with none at all, and fewer than
+half replace even half of the dead text. Panel (b)
+re-estimates the event study at every window half-
+width. A balanced panel’s composition depends on
+that width, and without the sweep a reader cannot
+separate our result from our selection. The drop and
+the rebound both survive it. Panel (c) asks whether
+the ratchet is self-limiting, which would show up
+as slower growth after later rewrites. Growth after
+them is faster instead. Cross-file migration does not
+account for the events either: under 3% of rewrite
+commits carry any migration death at all.
+We omit one check from Table 4: a sweep of
+the 50% threshold itself. The tracker applies that
+threshold internally, so varying it means re-running
+the pipeline rather than re-aggregating its output,
+and we have no such run. Limitations names the
+audit.
+A.5 Growth in count versus in elaboration
+Section 3.1 splits growth into three components
+and reports all three. The split falsifies our thesis,
+and the total does not. Suppose files grew mainly
+by elaborating rules they already had. The ratchet
+would then be a story about verbosity, and counting
+instructions would miss the point. They do not: on
+the same normalized-lifetime grid and the same
+estimator as Figure 1b, mean instruction length rel-
+ative to each file’s own first version peaks at +10%
+(over the 1,776 multi-version files with a defined
+ratio) against the instruction count’s +226%. Non-
+instruction payload grows +140% alongside, so
+the count growth is not text migrating between the
+instruction and payload classes.
+We chose both axes for robustness to composi-
+tion. Normalized lifetime keeps every surviving
+file contributing at every point rather than letting
+the population thin with age, and dividing by each
+file’s own first version removes level composition.
+Without that second step, a corpus in which large
+files live longer would show growth that is entirely
+survivorship.
+A.6 The deletion hazard
+Figure 5 plots a smoothed Nelson–Aalen estimator
+of deletion risk against instruction age. At age
+a the risk set holds every spell we observed to
+reach age a. A spell leaves that set in one of three
+ways: by deletion, which is the event; by a censored
+competing risk; or by reaching the end of its file’s
+history. The third exit dominates, and it tells us
+little. An instruction still alive at the last commit
+has a hazard that has not fired yet, which is not the
+same as one that never will.
+We count age in commits touching the file, not
+calendar days. Equation 3 is defined on that clock,
+since h(a) measures risk per review opportunity,
+
+--- Page 13 ---
+
+(a)Anatomy of a rewrite commit
+Rewrite commits 1,353
+Median instructions killed / born 46 / 14
+Events leaving the file empty 24.4%
+Events replacing≥half the dead text 38.3%
+Events carrying any cross-file migration 2.9%
+(b)Event study vs. window half-width
+Windoww n k=−w k=0k=+w
+±2 317−3%−49%−33%
+±3 213−8%−53%−39%
+±4 158−11%−55%−40%
+±5 126−16%−61%−39%
+±10⋆ 52−29%−71%−58%
+(c)Growth within inter-rewrite segments
+SegmentnMedian Growing Net∆D
+0 1,597×1.3378.5%+34.0
+1 543×1.3281.6%+34.3
+2 180×1.3782.2%+39.8
+3+ 178×1.4686.0%+42.3
+Table 4: The rewrite is a mass deletion, its shape does not depend on the window it is measured in, and growth
+after one is no slower than before.(a)What a rewrite commit does, over all such commits in the corpus.(b)The
+event study of Figure 4 re-estimated at each window half-width: Dt relative to the version before the file’s first
+rewrite, median over the balanced panel of files observed at every offset, emptying events excluded. Columns are
+the levelwcommits before the event, at it, andwafter, each relative to the version immediately before it;⋆marks
+the width Figure 4 draws. n falls with width because a balanced panel keeps only files that outlive the event by
+the full window; the drop and the rebound do not.(c)Growth within each inter-rewrite segment ( ≥2 commits);
+segment 0 runs to the first rewrite, segment k starts at the k-th, so its starting size is what that rewrite left behind.
+The rewrite threshold itself is held at0.5throughout and is not swept (§A.4).
+and an instruction sitting in a dormant repository
+is never offered one. We report calendar days as
+corroboration only, because a decline on the calen-
+dar clock alone would also be consistent with files
+simply being edited less as they age.
+We kernel-smooth the rates with a bandwidth
+of 2 commits (30 days on the calendar clock) over
+ages 0 to 50. We drop any grid point backed by less
+than one expected event rather than plot it, so the
+curve never runs past its own support. We take the
+confidence bands and the log-hazard slope from a
+bootstrap stratified by repository, resampling repos-
+itories with replacement rather than spells (200
+draws, seed 0). Instructions inside one repository
+share an author, a segmentation outcome and a
+maintenance culture. A spell-level bootstrap would
+treat them as independent and understate the inter-
+val severalfold. We report the median slope across
+draws, with the 2.5th and 97.5th percentiles as its
+interval.
+A.7 The gamma frailty fit
+A hazard that declines across a population signals
+survival heterogeneity just as readily as duration de-
+pendence. This is the content-fragility mechanism
+of Section 3.4: if some instructions are intrinsically
+fragile, they die early, and the ones still alive at
+old ages are the robust remainder. We test it with a
+gamma frailtymodel, and keep that name for the
+estimator throughout so it is never read as a fourth
+mechanism. We give each cluster a gamma frailty
+z with mean 1 and variance θ, which makes the
+population hazard hpop(a) =h 0(a)/(1 +θH 0(a)).
+Even a perfectly flat individual baseline h0 then
+produces a declining hpop, at a rate θ sets. We
+therefore take the presence of frailty for granted
+and ask only whether it accounts for our slope.
+We fit h0 and θ jointly by piecewise-exponential
+EM on the risk table, one interval per commit of
+age, with administrative censoring at 50 commits.
+That is a different estimator from the bootstrap
+above, and we label it as such wherever both appear.
+The headline slope stays the Nelson–Aalen boot-
+strap. Table 5 carries the EM fit’s own no-frailty
+baseline alongside it, so every absorbed share has a
+stated denominator. Our test suite holds the recov-
+ery tests, among them a check that a flat baseline
+atθ= 1does not read as a decline.
+We cluster at three levels. We identify reposi-
+tory and file frailty on every spell. We can identify
+
+--- Page 14 ---
+
+Rows Frailty Spells Deaths Slope 95% CIθAbsorbed
+all spells no frailty (baseline) 247,694 28,255−0.0506 [−0.0524,−0.0489]– –
+shared within repository 247,694 28,255−0.0481 [−0.0499,−0.0464]1.44 4.9%
+shared within file 247,694 28,255−0.0485 [−0.0502,−0.0467]1.49 4.3%
+recurring text no frailty (baseline) 20,807 2,669−0.0513 [−0.0571,−0.0455]– –
+shared within repository 20,807 2,669−0.0505 [−0.0566,−0.0445]2.85 1.5%
+shared by instruction text 20,807 2,669−0.0355 [−0.0414,−0.0296]3.41 30.8%
+Table 5: Composition shrinks the age slope at every clustering level and never reverses it. Each row is one gamma-
+frailty specification, fit by piecewise-exponential EM (§A.7). The columns give the log-hazard slope per commit
+with its 95% CI, the fitted frailty variance θ, and the share of that block’s no-frailty slope which the clustering
+absorbs.Recurring textrestricts to instructions whose text appears in ≥2 repositories, which are the rows where a
+frailty shared by instruction content can be identified; absorbed shares compare within a block, against the no-frailty
+fit on those same rows. We censor deaths administratively at 50 commits. A slope of 0 would put deletion risk flat
+in instruction age, and a positive slope is what instruction staleness predicts. Content absorbs the most. Repository
+clustering on those same rows absorbs almost nothing, which puts the absorbed variance in the instruction text
+rather than in its author.
+frailty shared by instructioncontentonly where
+the same normalized text recurs across at least two
+repositories, so we fit it on that subsample and re-
+port the subsample’s own no-frailty baseline beside
+it. Content absorbs by far the most, and reposi-
+tory clustering on those same rows absorbs almost
+nothing, which locates the absorbed variance in the
+instruction text rather than in its author. The slope
+survives all three.
+We fit one clustering level at a time, so each θ is
+an upper bound on the variance attributable to that
+level alone. We do not fit a crossed repository ×
+content specification.
+A.8 The authorship-turnover interaction
+Content fragility and imperfect recall make the
+same marginal prediction. They diverge on one con-
+ditional prediction. A fixed per-instruction frailty is
+a constant, so it gives no reason for the age slope to
+differ between files many people edit and files one
+person edits. Imperfect recall does give a reason:
+people hold the rationale it says decays, and people
+leave.
+We fit one piecewise-exponential hazard with a
+file-level gamma frailty on top, which estimates
+the interaction net of the between-file heterogene-
+ity the previous subsection measured. We then
+interact age with an indicator for whether at least
+two distinct human authors have touched the file.
+We exclude bot commits before the count, because
+automated formatters and dependency bots touch
+context files, carry no rationale, and would inflate
+the multi-author stratum with exactly the commits
+the mechanism does not apply to.
+Multi-author files are also busier, and file activity
+could drive an age slope by itself. We therefore en-
+ter log commits both as a level and interacted with
+age, on the same footing as the covariate under test.
+A skeptical reader should check that interaction
+first. We place it in Table 6 rather than in the body
+only because the body has room for the term under
+test alone.
+This analysis is exploratory. We pre-registered
+no criterion for it, it is one specification rather than
+a specification curve, and multi-author status prox-
+ies for turnover rather than measuring it, counting
+how many people have edited a file without es-
+tablishing whether the person who wrote a given
+instruction has left. We report it as evidence weigh-
+ing against a rival account and not as a passed gate.
+B The Inverse-IFEval Testbed
+B.1 Worlds
+We take every IFEval item carrying at least two
+verifiers, giving 184 worlds per seed and 552 main-
+tenance histories per arm across 3 seeds. Covers
+run to two instructions (423 histories) or three
+(129), an order of magnitude below the median
+context file of Section 3.1. We report the two
+strata separately wherever they disagree. We also
+permutation-sample worlds under the seed, so a
+world index means a different item in each seed
+and (seed,world) is the unit of analysis. A stronger
+model generates the objective oj once per world,
+and we freeze it with the world. It cannot drift
+when a maintenance protocol changes.
+B.2 Roles and the maintenance loop
+Three roles run the loop and only the harness mea-
+sures anything. At each of 15 steps the harness
+
+--- Page 15 ---
+
+Term Coef. SEz95% CI
+age−0.04900.0028−17.3 [−0.0546,−0.0435]
+multi-author−0.02370.0178−1.3 [−0.0587,+0.0113]
+multi-author×age−0.02110.0018−11.7 [−0.0246,−0.0175]
+logcommits+0.19200.0071+26.9 [+0.1780,+0.2059]
+logcommits×age+0.00340.0007+4.8 [+0.0021,+0.0048]
+θfile = 1.35; 1,837 files, 589 multi-author; 15,118 risk cells
+Table 6: The age slope steepens where more humans edit the file, which composition cannot produce. Each row is a
+term of one piecewise-exponential hazard, fit with a file-level gamma frailty on top (§A.8). The columns give the
+coefficient, its standard error,z, and the 95% CI.multi-authortakes the value 1 where≥2distinct human authors
+touched the file, with bot commits excluded. The term under test ismulti-author × age: imperfect recall predicts it
+negative, while a fixed per-instruction frailty predicts zero in either direction. log commits controls for file activity,
+since multi-author files are also busier. We ran this fit as exploratory work and pre-registered no criterion for it.
+samples 1 task from the world, restates the ob-
+jective, and draws 2 of the world’s constraints to
+score the answer against; the executor answers un-
+der the current prompt with comments removed;
+the verifiers run. A fresh maintainer instance then
+adds and deletes instructions, tagging each addition
+with a comment as its protocol prescribes, and it
+carries nothing between steps but the prompt and
+what its arm persists. We offer no rewording op-
+eration, so an instruction’s text is fixed when it is
+written and every instruction has an unambiguous
+age, matching the spell definition that Section 3.2
+recovers from commit history. Maintainer and ex-
+ecutor are both claude-haiku-4-5, chosen so
+the maintainer is closer in capability to the authors
+of Section 3’s files than a frontier model would be.
+B.3 Feedback regime
+The harness returns a complaint in plain language,
+naming no constraint, parameter, or taxonomy, and
+it returns nothing beyond a bare verdict when a
+response passes. That is the censoring Section 2 as-
+sumes. Table 7 lists every constraint type the world
+pool instantiates beside the complaint it produces,
+so a reader can judge whether the maintainer’s task
+is well posed: the complaint names a dimension
+and never a parameter, so a maintainer told that
+a word count is off cannot read the target off the
+feedback.
+The arms separate only when five conditions
+hold jointly: vague verdicts, censored passes, con-
+straint identifiers withheld, a maintainer objective
+that does not ask for brevity, and a horizon of at
+least ten steps. No arm separated until all five
+held. Disclose the verifier spec in full, and the un-
+commented arm settles at +3.0% excess size with
+the effect gone entirely. We found this regime by
+search, and the search order licenses it: every con-
+dition removes information that a real maintainer
+also does not have.
+We hit two of the five as design failures rather
+than choosing them as parameters. Stable con-
+straint identifiers leak |C|: given ids that persist
+across rounds, a maintainer infers the cover size
+and prunes to it with no history at all, and every
+arm converges. A maintainer objective mentioning
+brevity makes the ratchet an artifact of the objec-
+tive rather than of the information. Dropping the
+minimality objective entirely left the delete-to-add
+rate essentially unchanged, which rules that reading
+out.
+B.4 Channels
+An instruction is an imperative addressed to the
+executor, stating what the response must do and
+never why. A comment is addressed to the next
+maintainer and carries whatever its arm persists.
+The prompt has one comment syntax, and it at-
+taches a comment to an instruction and to nothing
+else. A maintained prompt is a sequence of lines,
+one per instruction, each written [di]text ,
+whereiis an identifier the harness assigns from
+a counter at addition; a # and the comment follow
+on the same line whenever the arm carries one. The
+identifier is not a position. It never changes and it
+is never reused, so a comment naming di names
+the same instruction ten rounds later, and the ex-
+ecutor’s rendering replaces it with a positional list.
+The maintainer writes a comment once, with the ad-
+dition it annotates, and cannot edit it afterwards any
+more than it can reword an instruction; under every
+protocol whose only channel is the comment, this
+paper’s included, the harness truncates it at 1,024
+characters. Each addition also carries a cause,
+one phrase naming the requirement the maintainer
+believes it targets, which we record and never ren-
+
+--- Page 16 ---
+
+Family Verifier type Worlds Complaint returned on failure
+keywordsexistence69 the response is missing some required content
+forbidden_words81 the response contains wording it must not use
+frequency75 certain wording is not used the right number of times
+letter_frequency57 a certain letter does not appear the right number of times
+lengthnumber_paragraphs48 the response is not split into the right number of
+paragraphs
+number_sentences99 the response has the wrong number of sentences
+number_words108 the response’s word count is off
+contentnumber_placeholders42 the response needs a different number of bracketed
+placeholders
+postscript36 the response is missing a postscript
+formatjson_format27 the response is not valid JSON
+multiple_sections24 the response is not organized into the expected sections
+number_bullet_lists54 the response does not have the right number of bullet
+lists
+number_highlighted_sections87 the response needs a different number of highlighted
+sections
+title36 the response is missing a properly formatted title
+casecapital_word_frequency39 the number of fully-capitalized words is off
+english_capital42 the response’s letter casing is wrong
+english_lowercase75 the response’s letter casing is wrong
+punctuationno_comma87 the response’s punctuation breaks a rule
+start / endend_checker27 the response does not end the required way
+quotation69 the response does not begin and end the required way
+Table 7: The hidden constraint grammar and the only signal the maintainer receives about it. Rows: the verifier types
+instantiated across the canonical run’s worlds, grouped by IFEval family; columns: the number of (seed,world)
+pairs whose hidden constraint set contains that type, and the complaint the harness returns when a response fails it.
+The complaint names a dimension and never a parameter, a threshold, or the verifier’s identity — a maintainer told
+“the response’s word count is off” cannot read the target off the feedback, which is the censoring §2 assumes. Every
+type carries a distinct complaint except the two casing checks, which share one by construction. Counts sum above
+the world count because a world carries two or three constraints.
+der into any prompt.
+The syntax offers nothing above the instruction
+line. There is no file-level comment, no preamble,
+and no comment on a deletion — the delete opera-
+tion takes an identifier and carries no text at all. A
+rationale not attached to a live instruction therefore
+has nowhere to live and dies with the instruction it
+annotates, which is the constraint Equation 5 for-
+malizes rather than an implementation shortcut: a
+maintainer free to annotate the prompt as a whole
+would keep exactly the history this design censors,
+and every arm would converge. The harness strips
+comments before the executor reads the prompt
+and rejects any instruction whose text cites a past
+failure, a verification result, or a step, so no arm
+can route provenance through the instruction body.
+Figure 7 gives the maintainer every word of its own
+instructions, and Figure 8 follows one real prompt
+from the canonical run through both projections.
+We produce the second by calling the two render
+functions on that run’s own stored state rather than
+by describing them, because the strip runs as code
+and not as a request the executor could disregard.
+Section C.6 measures what the strip is worth by
+lifting it.
+C Inverse-IFEval Results
+C.1 Results by cover size
+Table 8 is the full split behind Section 4.2’s pooled
+numbers, and the two strata disagree about the head-
+line. At covers of two, the uncommented arm ends
+far above cover. At covers of three, its interval
+straddles cover, so criterion (i) of Table 11 does not
+hold within the three-constraint slice on its own.
+The pooled ratchet is therefore a two-constraint
+result at this horizon.
+The disagreement shows Section 2’s interference
+regime appearing inside the experiment rather than
+a defect in it. Interference makes deletion pay, and
+it is weak at these constraint counts and strong
+at the counts Section 3.1 measures. Our scope is
+therefore split: the experiment demonstrates the
+
+--- Page 17 ---
+
+ArmNExcess size (%) Sat. (%)
+|D⋆|= 2
+no prompt comments 423+74.2 [+52.2,+98.8]38.7
+comment-shaped noise 423+65.1 [+48.2,+84.4]39.5
+informative comments 423−1.1 [−9.2,+7.7]39.0
+|D⋆|= 3
+no prompt comments 129+15.2 [+0.5,+31.8]40.3
+comment-shaped noise 129+14.2 [−1.8,+32.6]42.9
+informative comments 129−21.2 [−28.7,−13.2]35.7
+pooled
+no prompt comments 552+60.4 [+43.8,+80.7]39.0
+comment-shaped noise 552+53.2 [+39.4,+68.7]40.3
+informative comments 552−5.8 [−12.0,+1.1]38.2
+Table 8: The ratchet holds in both strata, and the protocol reverses it in both. Each row is an arm within one
+|D⋆| stratum, with pooled rows below. The columns give units, final excess size |DT |
+|D⋆| −1 with its 95% per-world
+percentile-bootstrap CI, and last-3-step constraint satisfaction. The uncommented arm’s CI excludes cover in both
+strata, far above it where the cover is two instructions and by a smaller margin where it is three, so the pooled result
+is not carried by one slice. In the three-instruction stratum the protocol arm prunesbelowcover, a cost §C.5 works
+out. Covers here run to at most three instructions, an order of magnitude below the median context file of §3.1.
+mechanism where retention is nearly free, and the
+corpus shows the ratchet running where pruning
+would pay.
+C.2 The ratchet against maintainer capability
+Table 9 moves the maintainer alone, holding the
+executor, task stream, horizon and protocol fixed,
+and answers whether the effect needs a matched
+maintainer/executor pair. It does not: the uncom-
+mented arm’s excess grows with capability, and the
+comment protocol’s advantage grows with it. The
+Sonnet 5 row is reported for completeness but is a
+compliance record rather than a capability reading
+— that maintainer overran the comment budget on
+two of every five additions, so it did not write the
+protocol it was given.
+C.3 What the comment channel needs
+Table 10 separates three objections: whether the
+effect is the comment’s text or its content, whether
+the rationale needs a channel of its own, and which
+field of the schema carries the pruning. Rows are
+each run’s arm against its own uncommented con-
+trol. The clause rows drop one field of theCOMMIT
+schema each, under the names Figure 8(a) gives
+them; each variant is otherwise byte-identical to
+the full protocol, so a row’s contrast is the field it
+drops and not a rewording.
+C.4 Replication across world draws
+All four criteria of record hold on each of the three
+world draws separately (Table 11), not only pooled.
+Each seed is a fresh permutation sample of the eligi-
+ble IFEval pool, so the three columns are indepen-
+dent draws of the world pool rather than repeated
+runs on one. The uncommented arm’s across-seed
+spread of 10.9pp is small against the 66.2pp effect
+the design is powered on.
+C.5 What the arm mean hides
+The protocol reaches cover per world and not
+only on the arm mean (Table 12a), and it over-
+shoots on the short side: it empties one prompt in
+eight, against almost none under either uninformed
+arm. Table 12(b) prices that. We split worlds by
+whether the protocol ended empty and read every
+arm within each split, which pairs the compari-
+son on the same worlds and holds difficulty fixed.
+Satisfaction parity holds where the protocol kept
+instructions and fails where it emptied them. Those
+are the hard worlds, where every arm scores far
+below its average, and the protocol’s own endpoint
+defines the split, so the paired deficit bounds the
+cost of deletion rather than estimating it.
+One condition on the recommendation follows.
+Writing a comment risks nothing, because it re-
+moves nothing. Acting on one to delete is where
+the risk sits, and this experiment imposed no floor
+on how far a maintainer may prune. An operator
+deploying the protocol should impose one.
+C.6 Lifting the comment strip
+Code separates the comment channel from the ex-
+ecutor, and that design choice carries a measurable
+price. We lift it in one run identical to the canonical
+one in every respect except that we render the pro-
+
+--- Page 18 ---
+
+Excess size Satisfaction
+Maintainer Control∆COMMIT(%)zControl (%)∆COMMIT(%)z
+Haiku 4.51.68−42.1−2.45 40.9−4.5−0.72
+Sonnet 53.07−61.7−8.40 38.5 +7.4 0.89
+Opus 56.72−52.3−9.82 45.3 +18.42.12
+Table 9: Stronger maintainers ratchet harder, and the protocol helps them more. Rows share one executor (Haiku
+4.5), task stream, horizon and protocol; only the maintainer moves. Each block gives the uncommented arm’s own
+level — final size |DT |/|D⋆|, last-3-step constraint satisfaction — thenCOMMITagainst that same row’s control,
+since a maintainer swap moves control too. z is the paired per-world statistic;boldis the largest ∆ in its block
+among rows where |z| resolves it. Sonnet 5 overran the 1,024-character comment budget on two of every five
+additions.n=64worlds, one seed.
+Excess size Satisfaction
+Ablation∆(%)z∆(%)z
+comment-shaped noise−3.1−0.33 +3.3 0.77
+narrative without outcomes+8.8 0.86−3.3−0.82
+COMMIT, full schema−48.9−2.78 +4.1 0.50
+– round counter−47.4−2.63−1.9−0.23
+– recurrence count−30.9−1.83−3.2−0.42
+– falsification lineage−34.3−2.14−9.6−1.19
+– verbatim restore quote−43.5−2.43−8.9−1.09
+Table 10: A comment must carry outcomes. Every row is that run’s arm against its own control. Comment-shaped
+noise carries control’s information at the comment arm’s surface form; the clause rows drop each of theCOMMIT
+schema’s four fields in turn.z is the paired per-world statistic on the ∆ beside it. n=64 worlds and one seed for the
+clause rows; the two content rows are full-pool runs.
+tocol arm’s comments into the executor’s prompt
+as well as the maintainer’s, at one seed. Exposure
+is real rather than nominal, since 85.1% of executor
+calls carry a prompt that could show a comment at
+all, the rest being steps at which the prompt was
+still empty.
+We pair per world against the canonical run over
+184 worlds: the prompt ends at +28.5% excess
+size against −0.1% (28.6pp, [5.5, 58.5]pp) at a
+satisfaction difference of −1.7pp ([−5.2, 1.5]pp,
+straddling zero). Writing the rationale into the file
+the model reads costs prompt size and buys no cor-
+rectness. The effect sits entirely in deletions rather
+than additions, and the direction reverses on a sub-
+stantial minority of worlds, so we report a direction
+at one seed rather than a settled magnitude. We
+have not tested why an executor-visible comment
+should make a maintainer delete less.
+Contamination of answer quality does not appear
+to be part of the cost. Maintenance vocabulary
+appears in 0.04% of the exposed arm’s completions
+against 0.00% under the stripped prompt, so the
+executor does not visibly parrot the notes back. The
+strip earns its place in this experiment by leaving
+the comment channel’s information content as the
+only thing that varies across arms, which licenses
+the causal reading in Section 4.2. We do not claim
+it as a defense against leakage that did not occur.
+D The WildIFEval Replication
+D.1 The design grid
+Section 4.3 reports four contrasts, and Table 13
+reports every cell they are computed from, so a
+reader can check the headline against the design
+rather than against one favorable comparison. The
+grid is the same computation the analysis notebook
+renders, restricted to this suite.
+D.2 Scoring
+WildIFEval ships human-written constraint decom-
+positions and no code verifiers, so satisfaction here
+is an LLM judge rather than Table 7’s program-
+matic ones. The judge is claude-haiku-4-5,
+prompted with exactly one constraint and one re-
+sponse and asked for a boolean — no prompt Dt,
+no arm label, no history, no sibling constraints —
+so nothing in its input distinguishes the arms, and
+two arms producing the same response are scored
+identically. Both arms are judged by the same
+model in the same call shape, so judge error is com-
+mon to the contrast rather than differential across
+it. Responses are stored verbatim, so the suite can
+
+--- Page 19 ---
+
+Excess size (%) s0 s1 s2 Pooled sd
+no prompt comments+59.9 +49.8 +71.6 +60.410.9
+comment-shaped noise+54.9 +46.0 +58.8 +53.26.5
+informative comments−0.1−2.1−15.1−5.88.2
+Satisfaction (%) s0 s1 s2 Pooled sd
+no prompt comments38.8 38.3 40.0 39.00.9
+comment-shaped noise40.0 40.0 40.8 40.30.4
+informative comments38.9 36.8 39.0 38.21.3
+Criterion of record s0 s1 s2 Pooled
+(i) uncommented arm ratchets✓ ✓ ✓ ✓
+(iv) noise≈uncommented✓ ✓ ✓ ✓
+Table 11: Every criterion passes on every world draw. The upper block gives final excess size |DT |
+|D⋆| −1 per arm,
+with one column per seed, then the pooled value and the across-seed standard deviation in pp. Each seed is a fresh
+permutation sample of IFEval items, so the seeds are independent draws of the world pool and not repeated runs on
+one pool. The middle block gives last-three-round constraint satisfaction as a level, so the size result is readable
+beside the correctness it was bought at. The lower block gives the criteria of record. We fixed these before the run
+and evaluate each one per seed, since a criterion that passed pooled but failed on one seed of three would be an
+averaging artifact, and a gap here would show it. Across seeds, the uncommented arm varies little against the effect
+this design is powered on, which is why we read the pooled numbers in §4.2.
+be re-judged without re-generating them, which is
+what makes the next subsection cost no generation.
+D.3 Judge robustness
+No contrast in Section 4.3 is a property of the
+model that graded it. We re-scored all 6,336 stored
+verdicts under gpt-5.6-luna, a second judge
+matched to judge 1’s capability tier so that a dis-
+agreement between them is a vendor difference
+rather than a capability one, holding the prompt,
+schema, token cap and temperature=0 fixed so that
+only the model varies. Table 14 is the result: ev-
+ery criterion judge 1 passes keeps its pre-registered
+sign under the second judge, interference and the
+size criteria keep intervals excluding zero under
+both, and the placebo stays null under both. The
+two judges also agree on the effect’ssizeas far as
+this design can tell. Their per-world difference-in-
+differences on the instruction-following criterion
+is 3.8pp (95% CI: [−1.9, +9.6]pp), so the spread
+between their point estimates (11.6pp and 7.8pp)
+has no evidential support as a judge difference. At
+W= 64 that is absence of evidence rather than
+equivalence: the interval admits a judge differ-
+ence as large as 9.6pp, and closing that needs more
+worlds rather than more judges.
+D.4 Judge agreement, and the scope of the
+effect
+Table 15 reports agreement, which we record but do
+not gate on: two judges can disagree about absolute
+difficulty and still rank the arms identically, and
+it is the ranking Section 4.3 quotes. Judge 1 and
+gpt-5.6-luna agree on 82.1% of individual
+verdicts at κ= 0.639 ([0.620,0.657] ), and — the
+load-bearing part — κ does not vary with the arm,
+so judge noise cannot have produced the arm gap.
+What we do not measure is judgeaccuracy: neither
+model is ground truth, so a disagreement never
+says which one is right, and every Section 4.3 rate
+remains a rate under a named judge. Licensing
+an accuracy claim would take a human-annotated
+subsample, which we did not run.
+The effect is a recovery from seeded noise rather
+than a general gain. At D= 0 the arms separate in
+neither direction consistently: the commented arm
+sits above its control at N= 5 and below it at N=
+6. The commented arm holds satisfaction while the
+control falls in both strata only at D= 16 , where
+the prompt carries distractors to prune. A prompt
+carrying no extraneous instructions is outside the
+scope of this experiment.
+E Compute, Artifacts, and
+Reproducibility
+E.1 Compute
+The campaign’s canonical run cost 49,680 model
+calls, 37.9M tokens and 45 model-hours across
+both roles, all 3 seeds and all three arms; wall
+clock comes in lower, because the run fans out
+across workers. Call counts are identical across
+arms, since every arm meets the same worlds, the
+same horizon and the same frozen task stream
+
+--- Page 20 ---
+
+(a)Per-world calibration to the minimum cover
+ArmNMean ratio Mean|ratio−1|Empty Within 1
+4 Above1.5×
+no prompt comments 552 1.604 0.921 2.4% 33.3% 22.3%
+comment-shaped noise 552 1.532 0.822 1.1% 35.0% 21.9%
+informative comments 552 0.942 0.481 12.1% 37.3% 9.8%
+(b)Satisfaction on the worlds the protocol emptied, and on the rest
+ArmNSatisfaction 95% CI Paired∆vs. the protocol arm 95% CI
+worlds the protocol emptied
+no prompt comments 67 0.279[0.209,0.348]−0.020 [−0.065,+0.025]
+comment-shaped noise 67 0.328[0.256,0.400]−0.070 [−0.114,−0.027]
+informative comments 67 0.259[0.199,0.321]—
+worlds it kept instructions on
+no prompt comments 485 0.406[0.377,0.436]−0.007 [−0.031,+0.016]
+comment-shaped noise 485 0.413[0.383,0.443]−0.014 [−0.034,+0.007]
+informative comments 485 0.399[0.368,0.429]—
+Table 12: The commented arm is closest to cover on the mean and on individual prompts alike.(a)gives per-world
+calibration at the final step: mean |DT |/|D⋆|, mean
+|DT |/|D⋆| −1
+ (0 = every world exactly at cover), and the
+shares of worlds ending empty, within a quarter of cover, and above1.5× it.informative commentswins on both
+readings, so its arm mean can be read directly: the two need not agree, and where they disagree the mean is the one
+that misleads. The mean still hides a tail. One prompt in eight ends empty under the protocol against one in forty
+under the uncommented arm.(b)prices that tail. We split worlds by whether the protocol arm ended empty, then
+give last-3-step satisfaction per arm within each split and the paired difference from the protocol arm on the same
+worlds, with its 95% bootstrap CI. Parity holds where the protocol kept instructions and fails where it emptied them.
+Those are the hard worlds, and every arm scores far below its own average on them. The protocol’s own endpoint
+defines the split, so this paired deficit bounds the cost of deletion rather than estimating it.
+— an arm difference there would mean the arms
+were never matched and no contrast in Section 4
+would be licensed, so we assert it rather than de-
+scribe it. The manipulation lives instead in main-
+tainer input tokens, which rise with what each
+arm’s handoff carries (7.0M to 9.9M from the un-
+commented arm to the commented one). Both
+roles run claude-haiku-4-5; each world’s
+one-line objective is generated once at build time
+by claude-sonnet-5 and then frozen with the
+world, identically for every arm.
+We train no model, so our budget is infer-
+ence and parsing rather than gradient steps. Both
+halves run on CPU-only cloud containers (8 vCPU,
+16 GiB, no accelerator). The corpus half is
+network- and parse-bound, cloning 1,867 repos-
+itories bloblessly and segmenting every histori-
+cal version of every context file, and we enforce
+its wall-clock budget in code rather than watch-
+ing it by hand. The controlled experiment is-
+sues those calls against a hosted API, so the
+parameter counts of claude-haiku-4-5 and
+claude-sonnet-5 are not public and we can-
+not report them. We do pin the model versions and
+every decoding setting that varies (max_tokens
+per role, extended thinking disabled for objective
+generation) in the run’s resolved config. We oth-
+erwise decode at API defaults and ran no hyper-
+parameter search over them. The design’s knobs
+are the feedback conditions of Appendix B.3 and
+the comment protocol itself, and we report both
+with their failures rather than only their survivor
+(Table 10).
+E.2 What we consume, and under what
+license
+We consume two artifacts, and we use each for re-
+search, the purpose each was released for. The
+agent-context sampling frame is the repository
+selection of Chatlatanagulchai et al. (2025), dis-
+tributed as a replication package that carries no
+license file. We therefore take from it only the list
+of repository URLs and re-derive every byte of con-
+tent from the public histories of those repositories
+themselves, which is also the measurement this
+study requires (Appendix A.1). We build the con-
+trolled experiment’s worlds from the IFEval input
+set (Zhou et al., 2023), released under Apache 2.0
+as part of google-research. We redistribute
+no repository content. We release only derived per-
+instruction tables and the code that produces them
+from the public sources above.
+E.3 What we reimplement
+We implemented the 20 constraint verifiers of Ta-
+ble 7 ourselves rather than reuse IFEval’s evalua-
+
+--- Page 21 ---
+
+SSR
+N K DArmnprovided withheld all|D t| |D T |trunc.
+5 1 0CONTROL32 0.547 0.531 0.544 5.500 6.594 0.219
+5 1 0PLACEBO32 0.578 0.500 0.562 5.250 5.781 0.188
+5 1 0TREATMENT32 0.633 0.531 0.613 5.750 6.250 0.281
+5 1 16CONTROL32 0.531 0.438 0.512 14.750 14.406 0.312
+5 1 16PLACEBO32 0.523 0.500 0.519 14.406 12.969 0.312
+5 1 16TREATMENT32 0.656 0.500 0.625 6.500 7.031 0.250
+6 1 0CONTROL32 0.688 0.531 0.661 6.656 6.969 0.375
+6 1 0PLACEBO32 0.650 0.500 0.625 6.312 6.906 0.344
+6 1 0TREATMENT32 0.575 0.500 0.562 6.562 6.594 0.438
+6 1 16CONTROL32 0.525 0.344 0.495 14.812 14.844 0.344
+6 1 16PLACEBO32 0.569 0.406 0.542 14.969 13.688 0.344
+6 1 16TREATMENT32 0.631 0.531 0.615 7.125 7.562 0.406
+Table 13: The arm effect lives where the distractors are. Every design cell of §4.3 at the final maintenance round: N
+hidden constraints, K of them withheld from the seeded prompt, D distractors seeded alongside the N−K true
+instructions, one row per arm. TheSSRcolumns give the per-constraint satisfaction rate over the provided N−K
+(interference), the withheld K (recovery), and all N (the headline); |Dt| is the prompt the executor saw, |DT | the
+prompt after the last round, and trunc. the share of responses that hit the executor’s token cap, tabulated beside the
+rates it could otherwise explain. At D=16 TREATMENTholds all- N SSRat its D=0 level whileCONTROLfalls in
+both strata. Size columns are descriptive only: this run’s seeded comment states its own falsification, so pruning a
+distractor needs no inference from the maintainer, and no size claim in this paper cites this run.
+tion code, because our testbed inverts the bench-
+mark: a verifier must run against a maintained
+prompt and return a censored complaint rather than
+score a completion (Appendix B.3). A reimplemen-
+tation can disagree with the original at the margin.
+Every satisfaction rate in this paper is therefore a
+rate against our verifiers, comparable across arms
+rather than against published IFEval numbers.
+E.4 Packages that determine a reported
+number
+We match across versions with rapidfuzz at a
+similarity threshold of 70 (Appendix A.3), and we
+estimate the deletion hazard with the Nelson–Aalen
+estimator from lifelines. We fit the frailty
+and interaction models with our own piecewise-
+exponential EM (Appendix A.7) rather than a li-
+brary routine, so this appendix specifies that esti-
+mator instead of referring to one. We call mod-
+els through the Anthropic Python SDK. A lock-
+file resolves exact versions and freezes them into
+each run’senv.lock, so a reader reproducing a
+number resolves the same dependency set by con-
+struction rather than by matching a printed version
+string.
+E.5 Coverage, and what the corpus is not
+documented for
+The corpus is 1,867 public GitHub reposito-
+ries carrying CLAUDE.md, AGENTS.md, or
+copilot-instructions.md, yielding 1,801
+multi-version files, 299,440 tracked transitions, and
+247,694 instruction spells, of which 28,426 end in
+a deletion (Appendix A.1). We fit nothing to held-
+out data, so we run no train/test split: we estimate
+on the whole corpus, and the controlled experiment
+draws its worlds by seeded permutation of the el-
+igible IFEval pool (Appendix B.1). We did not
+measure the corpus’s natural language distribution,
+its programming language distribution, its domain
+composition, or any demographic property of its
+authors. No result here should be read as covering
+non-English instructions. Limitations states this as
+a bound on our scope rather than a gap to be filled
+by assumption.
+E.6 Authorship metadata
+Commit metadata identifies people, and we reduce
+it at extraction to one bit per file: whether at least
+two distinct non-bot authors have touched it, the
+covariate of Appendix A.8. Nothing downstream
+of that reduction carries a name or an address, and
+no released artifact does.
+
+--- Page 22 ---
+
+Contrast under each judgeDID
+Criterionclaude-haiku-4-5 gpt-5.6-luna
+claude-haiku-4-5
+−gpt-5.6-luna
+(i) interference−0.241[−0.334,−0.149]−0.197[−0.287,−0.108] —
+(ii) comments buy IF+0.116[+0.051,+0.183]+0.078[+0.006,+0.149]+0.038[−0.019,+0.096]
+(v) not just recovery+0.116[+0.048,+0.185]+0.083[+0.005,+0.159]+0.033[−0.031,+0.095]
+(aux) recovery+0.125[+0.016,+0.250]+0.062[−0.062,+0.188]+0.062[−0.062,+0.203]
+(iii) comments buy size−7.328[−8.641,−5.953]−7.328[−8.641,−5.953]+0.000[+0.000,+0.000]
+(iv) placebo null (SSR)+0.027[−0.044,+0.101]+0.033[−0.036,+0.101]−0.006[−0.070,+0.061]
+(iv) placebo null (size)−1.297[−2.656,+0.031]−1.297[−2.656,+0.031]+0.000[+0.000,+0.000]
+Table 14: Every contrast §4.3 reports survives an independent scorer, and the two judges’ effect sizes are not
+distinguishable. Rows are the pre-registered criteria of Appendix D.1; columns 2–3 give the pairedTREAT-
+MENT −CONTROLdifference under each judge (PLACEBO −CONTROLfor the placebo rows, and D=16 vs. D=0
+withinCONTROLfor interference), with its 95% percentile bootstrap interval over W=64 worlds;boldmarks a
+point estimate whose interval excludes zero. gpt-5.6-luna matches claude-haiku-4-5’s capability tier,
+so a disagreement between them is a vendor difference rather than a capability one, and it re-scores thesamestored
+responses through the same prompt, schema, token cap and temperature=0: only the model differs. Column 4 is the
+per-world difference-in-differences (T−C)| a −(T−C)| b, for a and b the judges of columns 2 and 3, over those
+same worlds — the estimate that says whether two judges’ effect sizes differ, which two overlapping per-judge
+intervals do not. It covers zero on every row, so the spread between the two point estimates has no evidential support
+as a judge difference. At W=64 that is absence of evidence and not equivalence: the interval on (ii) reaches 0.096.
+Rates are per-constraint satisfaction; the two size rows are counts of directives, and are the built-in control — no
+judge sees|D T |, so their columns must agree exactly and theirDIDmust be0.
+Pass rate
+SlicenAgreeκ[95% CI]claude-haiku-4-5 gpt-5.6-lunaLenience
+all arms 6,336 0.821 0.639 [0.620, 0.657] 0.545 0.547+0.002
+CONTROL2,112 0.816 0.631 [0.598, 0.664] 0.539 0.534−0.006
+TREATMENT2,112 0.819 0.632 [0.598, 0.665] 0.565 0.563−0.002
+PLACEBO2,112 0.827 0.653 [0.618, 0.684] 0.529 0.543+0.014
+Table 15: Judge agreement is substantial and does not vary with the arm, so judge noise cannot have manufactured
+the arm gap in Table 14. Judge a=claude-haiku-4-5 against judge b=gpt-5.6-luna on all 6,336
+verdicts, pooled and per arm: raw agreement, Cohen’sκ with its 95% bootstrap interval, each judge’s own marginal
+pass rate, and lenience, the signed disagreement (bonly−aonly)/n — positive means b passes what a fails. κ is
+shown beside the marginals throughout because it collapses toward zero whenever one label is rare however well
+two raters agree; here the marginals are near-equal, so κ is not a prevalence artifact. Read the per-arm rows first:
+uniform lenience compresses every arm toward the ceiling and shrinks all gaps mechanically, whereas lenience
+that variedby armwould mean the judge interacts with the treatment. It does not vary — κ spans 0.631–0.653
+across the three arms. The judges disagree on 17.9% of individual verdicts while their marginal pass rates differ by
+0.002, so the disagreements cancel rather than accumulate: same threshold, different items. Judge 1 decoded at the
+vendor default and the re-judge at temperature=0, so these figures absorb judge 1’s sampling variance and bound
+the agreement from below.
+
+--- Page 23 ---
+
+(a) Maintainer system prompt (all arms)
+You maintain a reusable prompt (a numbered list of directives) for an assistant
+that repeatedly performs variations of one task. After each round, some
+responses were scored against hidden requirements; you see this round’s scores
+below.
+Optimize the prompt for LONG-RUN average score. You may add directives and delete
+existing ones.
+Each response is checked against a random sample of the hidden requirements. You
+are NOT told how many requirements exist, which ones were sampled, or which
+directive (if any) satisfied a passing one; a failure may include a description
+of what went wrong.
+Rules for directives:
+- A directive is one imperative sentence addressed to the assistant about what the
+RESPONSE must do. It must NEVER mention scores, failures, rounds, or history.
+- You cannot reword a directive; to change one, delete it and add a new one.
+- With each add, supply ‘comment‘ (a note to the future maintainer: which observed
+failure prompted this, in your own words, e.g. "task 1 was flagged for comma
+use") and ‘cause‘ (one short phrase naming the requirement you believe it
+targets, e.g. "no commas allowed").
+Return only the operations. An empty ops list keeps the prompt unchanged.
+(b) Protocol addendum (informative-comments arm only)
+Your ONLY memory across rounds is the ‘comment‘ attached to each directive (at
+most 1,024 characters, frozen when the directive is added). Write every comment
+as a commit message to all future maintainers, containing:
+- "r<N>:" -- this round’s number, inferred as one more than the highest r<N> in the
+existing comments (r1 if there are none);
+- the failure description that prompted this directive, quoted, and how many
+rounds it has been recurring;
+- the lineage of this failure: which approaches were already tried against it and
+FALSIFIED (copy forward any falsifications recorded in the comments of
+directives you are deleting now -- a deleted directive’s comment vanishes with
+it);
+- if this directive replaces a deleted one that might still have been doing work,
+the deleted directive’s exact text in quotes, so a successor can restore it
+verbatim.
+Before deleting any directive, read its comment: if its failure has not recurred
+since the round it was added, the directive is likely PREVENTING that failure --
+keep it. Delete a directive when its comment’s failure kept recurring anyway
+(falsified), or when it duplicates another directive’s target.
+Figure 7: What the maintainer is told, and the only thing that differs across arms.(a)goes to every arm;(b)goes
+to the informative-comments arm alone, and everything that protocol persists is written into the per-instruction
+comment at write time. No arm differs from another in any other input. Figure 8 shows what the two roles then see.
+Line breaks are set for this page.
+
+--- Page 24 ---
+
+(a) The maintained prompt as one document (objective, instructions, comments)
+Objective: Write a blog post about the sleek new magistrates.
+[d1] End your response with a postscript section labeled ’P.S.’ # r1: task 0
+failed with "the response is missing a postscript"; no prior attempts
+[d10] Ensure your response has between 300 and 400 words. # r6: task 0 failed
+with "the response’s word count is off"; truncated output suggests responses may
+be too short or too long. Adding explicit word count range to target this
+requirement.
+[d12] Include exactly one bullet list in your response, with at least three items.
+# r7: task 0 failed with "the response does not have the right number of bullet
+lists"; this is a new failure not seen before. The response needs a structured
+bullet list to satisfy this requirement.
+[d14] Include exactly three bullet lists in your response, each with at least
+three items. # r9: task 0 failed with "the response does not have the right
+number of bullet lists"; d13 specified two lists but requirement demands three.
+Escalating from two to three lists.
+(b) What the maintainer is handed each round
+## Current prompt directives
+(panel (a)’s commented list, verbatim)
+## This round’s scores
+task 0: a requirement PASSED
+task 0: a requirement (the response does not have the right number of bullet
+lists) FAILED
+(c) What the executor is handed: the same instructions, comments stripped
+Follow ALL of these directives in your response:
+1. End your response with a postscript section labeled ’P.S.’
+2. Ensure your response has between 300 and 400 words.
+3. Include exactly one bullet list in your response, with at least three items.
+4. Include exactly three bullet lists in your response, each with at least three
+items.
+--- user message ---
+(panel (a)’s objective, verbatim)
+(d) Placebo comment pool
+- added after one of the responses was flagged in an earlier round
+- a response failed a requirement around this in a previous round
+- several earlier rounds seemed to have trouble with this
+- this came up in the scores a while back
+- added to address a recurring issue seen earlier
+- an earlier round’s feedback pointed at something like this
+- one of the tasks was marked down for this before
+- kept seeing failures that looked related to this
+Figure 8: One real maintained prompt and the two projections of it the roles receive, from the canonical run’s
+protocol arm at its last round: world 170 of seed 0, ending at 4 instructions against an arm median of 2, the largest
+prompt that fits this page.(a)is the artifact the maintainer edits and the form this paper argues for — objective,
+instructions, and the comment each was written with, in one document that no role receives.(b)pairs that list with
+a censored report naming a dimension and never a parameter.(c)is the executor’s call, produced by the render
+function rather than described: comments gone, identifiers gone, objective moved to the user message. The strip
+between them is code, not a request.(d)is the pool the placebo arm substitutes for real comments. System prompts
+are Figure 7; notation is Appendix B.4’s.
