@@ -275,7 +275,7 @@ def main() -> int:
     text_path = ""
     if extracted_text is not None:
         destination_text = text_directory / f"{destination_pdf.stem}.txt"
-        destination_text.write_text(extracted_text, encoding="utf-8")
+        destination_text.write_text(extracted_text, encoding="utf-8", errors="replace")
         text_path = destination_text.relative_to(vault_root).as_posix()
 
     title = args.title.strip() if args.title else source_pdf.stem

@@ -6,7 +6,7 @@ topics:
   - AI
 status: active
 created: 2026-07-22
-updated: 2026-08-13
+updated: 2026-08-26
 cssclasses:
   - paper-note
 ---
@@ -20,6 +20,7 @@ cssclasses:
 - 大语言模型
 - 多模态模型：[[notes/topics/多模态能力迁移与缩放规律]]
 - 世界模型：[[notes/topics/交互式世界模型与主动感知]]
+- Agent、世界模型与多模态数据：[[notes/topics/Agent、世界模型与多模态数据]]
 - 生成模型
 
 ## 能力与训练
