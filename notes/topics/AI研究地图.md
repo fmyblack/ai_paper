@@ -6,7 +6,7 @@ topics:
   - AI
 status: active
 created: 2026-07-22
-updated: 2026-08-26
+updated: 2026-08-31
 cssclasses:
   - paper-note
 ---
@@ -50,6 +50,7 @@ cssclasses:
 - 模型压缩与量化
 - 分布式计算
 - AI 硬件与基础设施
+- 动态软件组合与可逆运行时：[[notes/topics/动态软件组合与可逆运行时]]
 
 ## 应用
 
