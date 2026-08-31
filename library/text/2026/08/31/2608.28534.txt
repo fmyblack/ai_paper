@@ -1,0 +1,837 @@
+--- Page 1 ---
+
+InstructMesh: Selective Refinement of Generative 3D Models for
+Fabrication
+Faraz Faruqi
+ffaruqi@mit.edu
+MIT CSAIL
+Cambridge, MA, USA
+Ahmed Katary
+atkatary@google.com
+Google
+Sunnyvale, CA, USA
+Demircan Tas
+tasd@mit.edu
+MIT CSAIL
+Cambridge, MA, USA
+Theresa Hradilak
+hradilak@mit.edu
+MIT CSAIL
+Cambridge, MA, USA
+Ning Zhang
+ningrz@mit.edu
+MIT CSAIL
+Cambridge, MA, USA
+Jiaji Li
+jiaji@mit.edu
+MIT CSAIL
+Cambridge, MA, USA
+Fabian Manhardt
+fabianmanhardt@google.com
+Google
+Munich, Germany
+Martin Nisser
+nisser@uw.edu
+University of Washington
+Seattle, WA, USA
+Vrushank Phadnis
+vrushank@google.com
+Google
+Mountain View, CA, USA
+Ruofei Du
+ruofei@google.com
+Google XR
+San Francisco, CA, USA
+Federico Tombari
+tombari@google.com
+Google
+Zurich, Switzerland
+Megan Hofmann
+m.hofmann@northeastern.edu
+Khoury College of Computer
+Sciences, Northeastern University
+Boston, MA, USA
+Stefanie Mueller
+stefmue@mit.edu
+MIT CSAIL
+Cambridge, MA, USA
+Figure 1: InstructMesh enables fabrication-relevant refinement of generative 3D models through selective editing. a) A user
+provides an initial prompt. b) The system generates a 3D model, but may include fabrication-related flaws (e.g., a sealed lid).
+c) The user selects the problematic region and provides a descriptive edit prompt. d) InstructMesh applies an edit operation in
+the latent-space to remove the lid while preserving other regions and regenerates the model. e) The final model is fabricated as
+a functional mug.
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+UIST ’26, November 02–05, 2026, Detroit, MI, USA
+ABSTRACT
+Recent advances in generative AI allow users to create 3D models
+from text or images. However, these models prioritize visual plausi-
+bility over geometric accuracy, often generating results with flaws
+©2026 Association for Computing Machinery.
+ACM ISBN 979-8-4007-2856-3/2026/11. . . $15.00
+https://doi.org/10.1145/3830398.3830647
+arXiv:2608.28534v1  [cs.AI]  28 Aug 2026
+
+--- Page 2 ---
+
+UIST ’26, November 02–05, 2026, Detroit, MI, USA Faruqi et al.
+that compromise their intended use post-fabrication. We present
+InstructMesh, an interactive post-generation refinement tool that
+enables selective repair of generative 3D models through region se-
+lection and targeted operations, such as opening or sealing voids, or
+adjusting local thickness. Users can invoke edit operations via nat-
+ural language prompts or slider controls. By operating directly on
+the intermediate latent representation, InstructMesh allows users
+to apply robust geometric corrections without requiring expert
+modeling skills. To inform our design, we first analyze common
+fabrication-related failure modes in outputs from state-of-the-art
+generative tools. We then conduct two user studies, demonstrating
+that novices can identify and perform fabrication-relevant repairs
+on generative outputs using InstructMesh, and revealing user prefer-
+ence for hybrid interfaces that combine slider controls with natural
+language input.
+CCS CONCEPTS
+•Human-centered computing → Human computer interac-
+tion (HCI).
+KEYWORDS
+Personal Fabrication; Generative AI; 3D modeling.
+ACM Reference Format:
+Faraz Faruqi, Ahmed Katary, Demircan Tas, Theresa Hradilak, Ning Zhang,
+Jiaji Li, Fabian Manhardt, Martin Nisser, Vrushank Phadnis, Ruofei Du, Fed-
+erico Tombari, Megan Hofmann, and Stefanie Mueller. 2026. InstructMesh:
+Selective Refinement of Generative 3D Models for Fabrication. InThe 39th
+Annual ACM Symposium on User Interface Software and Technology (UIST
+’26), November 02–05, 2026, Detroit, MI, USA.ACM, New York, NY, USA,
+13 pages. https://doi.org/10.1145/3830398.3830647
+1 INTRODUCTION
+Generative AI has enabled new forms of creative expression across
+modalities like text [11], images [43], music [33], and 3D geome-
+try [22]. In the 3D domain, these advances now allow users with
+minimal modeling experience to generate novel 3D models from
+text or image prompts, bypassing the steep learning curve of tradi-
+tional 3D modeling tools. However, while generative models pro-
+duce visually plausible outputs, they are typically trained with
+image-based supervision, prioritizing appearance over the geomet-
+ric properties required for real-world fabrication [17]. As a result,
+generated models could exhibit flaws such as sealed openings, in-
+sufficient wall thickness, or missing structural connections, that
+only become apparent when a model is fabricated and used in a
+downstream physical task.
+Bridging the gap between a visually plausible model and a phys-
+ically usable one requires fabrication-relevant repairs that are diffi-
+cult for novices to achieve. Mesh-editing tools such as Blender [13]
+or MeshMixer [46] can address geometric flaws, but require sig-
+nificant domain expertise and effort that novices may not have.
+Recent text-driven 3D editing methods such as DreamEditor [71]
+and TIP-Editor [70] allow localized edits guided by text prompts, but
+operate on neural radiance fields to target visual appearance rather
+than the fabrication-specific geometric corrections needed for real-
+world use. Similarly, tools like Style2Fab [ 17] and TactStyle [19]
+support functionality-aware transformations of existing designs,
+but assume that the relevant functional geometry already exists in
+the base model, focusing on preservation rather than repair. Finally,
+re-prompting the generative model is often unreliable: prior work
+shows that non-experts struggle to craft effective prompts [52, 62],
+often producing vague or overly rigid instructions that fix one issue,
+only to alter other desired details, trapping them in a frustrating
+prompt-refinement loop [32].
+To bridge this gap, we introduce InstructMesh, an interactive
+post-generation refinement tool that supports fabrication-relevant
+repairs of generative 3D models by mapping user-specified edits
+to targeted operations on the model’s intermediate latent repre-
+sentation. Rather than forcing novices to edit the mesh directly,
+InstructMesh modifies the coarse voxel grid produced by the genera-
+tive model’s encoder, then passes the edited representation through
+the decoder to produce a refined mesh. This allows the genera-
+tive model to fill in low-level details such as texture and surface
+topology, while satisfying the user’s intended geometric correction.
+A key challenge in designing such tools for generative 3D models
+is determining how novices should express geometric corrections:
+through natural language, which is expressive but ambiguous, or
+through structured controls, which are precise but require under-
+standing the available operations? To investigate this, InstructMesh
+provides two complementary interaction modes: a natural language
+interface through an LLM, and a slider interface exposing a library
+of parameterized operations. In both modes, users first highlight a
+problematic region on the mesh, then specify the desired change. A
+second design challenge arises from the opacity of latent-space edit-
+ing: because the intermediate representation is non-visual, users
+cannot anticipate how their edit will affect the final mesh. To make
+this process controllable, InstructMesh provides a preview visualiza-
+tion — showing additive edits in green and subtractive edits in red,
+making the latent-space edit tangible before regeneration is trig-
+gered. This introduces WYSIWYG1-style interaction into generative
+3D modeling, allowing users to inspect, revise, and confirm edits on
+the intermediate representation, thereby maintaining direct control
+over the generative process. Together, these design choices enable
+us to investigate two research questions about novice-driven repair
+of generative 3D models for fabrication. First, can novices reliably
+identify and correct visually identifiable fabrication-relevant flaws
+using latent-space editing, a task that has traditionally required
+sophisticated mesh-manipulation skills? Second, how do the choice
+of interaction mode and the availability of visual feedback on the
+intermediate representation shape their editing experience?
+In summary, this work contributes:
+(1) A formative analysis (N = 120 models) identifying common
+fabrication-relevant geometric flaws in outputs from state-
+of-the-art 3D generative models,
+(2) A set of canonical latent-space operations that repair these
+flaws without requiring mesh manipulation expertise, paired
+with an interaction design combining natural language input
+and parameterized slider controls, and a preview visualiza-
+tion for user understanding,
+(3) Two user studies (N=12) demonstrating that novices can
+successfully identify and repair visually identifiable flaws
+1What You See Is What You Get
+
+--- Page 3 ---
+
+InstructMesh UIST ’26, November 02–05, 2026, Detroit, MI, USA
+using InstructMesh, and that hybrid workflows with preview
+visualizations improve usability and transparency.
+2 RELATED WORK
+We situate our work at the intersection of human-computer inter-
+action, generative AI, and computational fabrication. Specifically,
+we draw on prior research in three key areas: (1) support tools in
+digital fabrication workflows, (2) 3D generative AI workflows and
+their integration into design processes, and (3) human-in-the-loop
+customization techniques in 2D and 3D generative systems.
+2.1 Supporting Users in Fabrication Workflows
+3D printing is emerging as makers’ digital fabrication tool of
+choice [30]. Online repositories such as Thingiverse 2 provide a
+low barrier to entry for exploring 3D printing as users can quickly
+download pre-made 3D designs and explore design-specific ques-
+tions [16]. However, numerous studies have explored the practices
+of these novice makers [3, 25, 38, 45] and tend to find that makers
+struggle with modifications to existing designs due to limitations
+of current computer-aided design (CAD) workflows. Oehlberg et
+al. [39] observed that, even when designs are customizable, they
+lack the full range of modifiable features makers seek.
+Researchers have proposed several support tools that enable
+editing of 3D models by users with the goal to fabricate an ob-
+ject. Meshmixer [ 46] follows the approach of ‘Design to Fabri-
+cate’ [45] and allows users to manipulate 3D models with the
+intent to 3D print them afterwards. Several parametric design
+tools [47, 50, 51, 54] allow interactive customization of parametric
+designs by a novice user, while maintaining validity and manufac-
+turability of the design. Tools also support specific retargeting of
+mechanical components [29, 44, 65], allowing users to recombine
+mechanical components between 3D models. Several optimization
+algorithms target post-fabrication physical properties of 3D mod-
+els, such as balance [ 41], moment-of-inertia for spinnable mod-
+els [2], or constrained optimization between center-of-mass and
+balance [40, 67]. Recent work has also demonstrated augmenta-
+tion of generative models with mechanical simulation to ensure
+structural viability [15].
+However, these fabrication support tools typically edit existing
+meshes or models, limiting the ability of novice users to freely
+explore new designs. Recent developments in generative AI work-
+flows offer an alternative approach, enabling users to construct
+bespoke 3D models directly from image and text prompts.
+2.2 3D Generative AI Workflows
+Reconstructing 3D objects from a single image or text description
+is a longstanding challenge in computer vision. Recent machine
+learning methods address this problem by learning priors over large
+collections of 3D shapes to infer the full geometry of an object from
+a single image. Several approaches have been proposed, including
+GANs [8, 22], flow networks [28, 61], VAEs [36, 57], and diffusion
+models [10, 26]. The recent Large-Reconstruction Model (LRM)
+architecture [23] and its variants [ 4, 53, 60] have demonstrated
+generalizable, high-quality 3D reconstruction. Among these, Trel-
+lis [59] introduces a structured latent representation that separates
+2Thingiverse: https://www.thingiverse.com
+geometry encoding from mesh decoding, achieving state-of-the-art
+reconstruction fidelity. Commercial platforms such as Meshy [35],
+Hunyuan3D [68], and CLAY [64] have further broadened access,
+enabling users to produce textured 3D models from text or image
+inputs. These generative methods have enabled support tools for
+creative exploration and rapid prototyping [48]. In addition to gen-
+eration, a parallel line of work has explored text-driven editing of
+3D models (see Lu et al. [34] for a survey). For example, DreamEd-
+itor [71] enables text-guided editing of 3D scenes by optimizing
+neural radiance fields, while TIP-Editor [70] extends this to accept
+both text and image prompts for localized edits.
+However, while these generative methods produce visually plau-
+sible 3D models, they are typically trained using image-based su-
+pervision. As a result, they prioritize appearance over physical
+or functional correctness [21]. This leads to 3D models that may
+look realistic but lack critical geometric features essential for real-
+world functionality. Consequently, models generated through these
+pipelines may exhibit failure modes that only become apparent
+when used in downstream tasks like simulation or 3D printing.
+To characterize the scope and prevalence of these flaws, we con-
+ducted a formative study examining outputs from a state-of-the-art
+generative model, which we describe in Section 3.
+2.3 Human-in-the-Loop Customization with
+Generative Models
+The challenges in generating functional models with generative AI
+stem from a broader limitation shared across generative modali-
+ties. Generative systems must predict complex outputs from under-
+specified inputs, introducing ambiguity that often leads to outputs
+misaligned with user intent. Novices struggle particularly with this
+ambiguity, crafting vague or overly rigid prompts and failing to
+debug faulty outputs [52, 62]. This has driven increasing interest in
+human-in-the-loop approaches that allow users to guide or correct
+the generative process.
+In the image domain, tools such as ControlNet [ 63], Prompt-
+Paint [12], PromptCharm [ 55], and Promptify [ 5] support itera-
+tive refinement through visual conditionings, regional prompt-
+ing, and attention visualization. Similar trends have emerged with
+LLMs: ABScribe [42], AI Chains [56], and EvalLM [27] enable struc-
+tured revision, inspectable intermediate steps, and evaluator-guided
+prompt refinement. In the 3D domain, part-based composition in-
+terfaces similarly give users structural control over generative out-
+puts [18, 20]. Together, these systems illustrate a shift toward mixed-
+initiative workflows where users and models share creative agency
+through localized control, visual feedback, and iteration.
+InstructMesh extends these principles to 3D generative mod-
+eling. Where image-domain tools give users region-level control
+over appearance, InstructMesh gives users region-level control over
+fabrication-relevant geometry, enabling novices to correct struc-
+tural flaws directly on generated models through selection, preview,
+and iterative revision.
+3 FORMATIVE STUDY
+A key challenge in using generative AI for 3D modeling is ensur-
+ing that outputs contain the geometric details needed for physical
+functionality such as appropriate wall thickness, openings, and
+
+--- Page 4 ---
+
+UIST ’26, November 02–05, 2026, Detroit, MI, USA Faruqi et al.
+Missing
+Openings
+Fused
+Joints
+Extraneous
+Artifacts
+Broken
+or Missing
+Bridges
+Fused or
+Duplicated
+Features
+Hollowing
+Errors
+Wall 
+Thickness
+Issues
+Topological
+Errors
+Truncated
+Features
+Generated
+Model
+Flaw
+Highlighted
+Figure 2: Descriptive examples of flaws found in our forma-
+tive study. Models were sourced from Thingiverse, recon-
+structed with 3D generative model Trellis [ 59] using their
+image as input, and evaluated manually for geometric func-
+tionality errors by reviewers.
+manifold integrity. We hypothesize that current generative models
+replicate aesthetic properties but fail to capture these local geo-
+metric details, rendering models non-functional after fabrication.
+To test this, we conducted a formative study assessing geometric
+errors in reconstructions of popular 3D models from Thingiverse3.
+3.1 Dataset Selection and Generative 3D
+Reconstruction
+Thingiverse is a popular online resource for novice and expert
+makers to share designs or things for 3D printing. We selected the
+100 most popular ‘things’ (collections of models) from Thingiverse,
+skipping multi-part components without assembled versions since
+current generative tools produce single meshes. After preprocess-
+ing, the dataset comprised of 120 distinct unique 3D models (100
+unique ‘things’ from Thingiverse). We rendered one image of each
+model and reconstructed it using Trellis [59], chosen for its state-
+of-the-art geometric fidelity. While we scope our analysis on Trellis
+for consistent reconstruction and evaluation, nearly all current 3D
+generative methods employ a similar two-stage encoder-decoder
+pipeline with image-based training objectives.
+3.2 Inductive Taxonomy Development
+We used an iterative qualitative coding method to develop our
+taxonomy of geometric flaws in 3D models - geometric errors in re-
+construction that impact the functionality of the 3D model. For each
+of the 120 3D models, two expert annotators in 3D modeling com-
+pared the generated model and the original model, and described
+the issues in natural language. Their task was to describe each
+individual issue independently, and describe the change required.
+Next, they discussed these annotations and came to an agreement
+on the issues found.
+3.3 Iterative Categorization of Issues
+Next, the two annotators independently grouped similar descrip-
+tions of issues, then collaboratively discussed and refined these
+groupings. We continued this process over multiple rounds of iter-
+ative refinement, merging overlapping categories and sharpening
+definitions through discussion until consensus was reached. The
+3https://www.thingiverse.com
+process concluded when no new categories emerged from addi-
+tional data, at which point the taxonomy had stabilized at nine
+flaw categories. We report these categories in Table 1 and show
+descriptive examples in Figure 2.
+3.4 Deductive Classification
+After developing our taxonomy of fabrication-relevant geometric
+flaws, we performed a deductive classification of the dataset using
+the previously collected annotations. The two expert annotators
+revisited their initial descriptions and mapped each issue to one or
+more of the nine categories found in the taxonomy.
+Across the 120 models analyzed, we found that fabrication-
+relevant flaws were widespread: 94 models (78.3%) exhibited more
+than one distinct type of issue, highlighting the compounding na-
+ture of geometric failures in generative reconstructions. On average,
+each model exhibited 2.4 issues (SD = 1.10), suggesting that these
+flaws commonly co-occur and cannot be addressed through isolated
+fixes. The most frequently encountered issues were Extraneous Ar-
+tifacts (65.8%), Missing Openings (48.6%), and Hollowing Errors
+(36.9%), while more localized structural flaws like Broken / Miss-
+ing Bridges (10.8%) or Truncated Features (9.9%) appeared less
+frequently.
+These findings suggest that while state-of-the-art generative
+models achieve high visual fidelity, they overlook fine-grained geo-
+metric properties critical for fabrication, which can be difficult
+to capture through image-based supervision. The prevalence and
+diversity of these flaws motivate the design of post-generation
+tools that support targeted, user-guided geometric correction. We
+describe our approach in the following section.
+4 SYSTEM OVERVIEW
+InstructMesh enables users to generate 3D models with text or im-
+age prompts and iteratively refine them to fix fabrication-relevant
+issues. Recent 3D generative methods, including TRELLIS [59] and
+SPAR3D [24], employ a two-stage pipeline: anencoderproduces a
+coarse latent structure (e.g., point cloud or voxel grid) and contex-
+tual features about appearance, and adecoderrefines this informa-
+tion into a high-fidelity mesh. One key idea is that this separation
+enables controlled customization by modifying this intermediate
+representation.
+InstructMesh operates directly on this intermediate latent voxel
+representation. We use TRELLIS [59] as the generative backbone,
+which represents each shape as a structured latent over a643 sparse
+voxel grid; we persist the latent structure alongside the decoded
+mesh so that user edits can be applied to this latent structure and
+decoded to produce a new mesh. Figure 3 illustrates the system
+design, which comprises of: (1) a set of latent-space operations de-
+rived from common fabrication flaws, (2) dual interaction modes—a
+natural language interface powered by an LLM and a slider inter-
+face exposing parameterized presets, and (3) a preview visualization
+that highlights additive edits in green and subtractive edits in red
+before they are committed. Together, these components provide
+fine-grained customization with generative 3D models while main-
+taining user’s transparency and control.
+We focus on repairing static functionality in 3D models, as cur-
+rent generative methods do not yet support dynamic mechanisms
+
+--- Page 5 ---
+
+InstructMesh UIST ’26, November 02–05, 2026, Detroit, MI, USA
+Table 1: Taxonomy of Fabrication-Relevant Geometric Flaws in 3D Model Reconstructions. Based on 120 most popular 3D
+models on 3D model website Thingiverse.
+Flaw Category Description Models Affected
+Missing Openings Absence of essential through-holes, ventilation gaps, volumes to contain
+liquids or support airflow.
+48.6%
+Fused Joints Components meant to rotate or articulate (e.g., hinges, pivots, ball joints,
+axles) are fused, preventing intended motion.
+13.5%
+Broken or Missing Bridges Crucial geometric connections between parts are missing, leaving the
+structure fragmented or unsupported.
+10.8%
+Extraneous Artifacts Unintended bumps, extensions, or disconnected mesh elements. 65.8%
+Fused / Duplicated Features Features are erroneously duplicated, stacked, or fused together, often
+due to generative ambiguity.
+27%
+Hollowing Errors Solid elements are mistakenly hollowed or vice versa. 36.9%
+Wall Thickness Issues Non-uniform or insufficient wall thicknesses. 20.7%
+Topological Errors Gaps, tears, or ambiguous topologies in the mesh. 9.9%
+Truncated Features Extrusions or geometric extensions are prematurely cut off, resulting
+in incomplete or malformed shapes.
+9.9%
+“A mug with a dragon 
+wrapped around it as
+the handle”
+Input Prompt a
+Latent 
+Encoder
+Latent 
+Decoder Flaws?
+“Remove this lid”
+LLM
+(In Context Learning)
+Fabricated
+Output
+Yes
+No
+Modi/f_ied Voxel
+Representation
+Identify
+Operation
+b c
+d
+ef g
+Figure 3: InstructMesh System Overview. (a) The user pro-
+vides a text or image prompt. (b) The model is encoded into
+a latent voxel representation and (c) decoded into a textured
+mesh. (d) The user inspects the mesh for flaws; if none, the
+model proceeds to (g) fabrication. Otherwise, the user high-
+lights a region and specifies an edit. (e) The latent operation
+is applied and previewed. (f) Once confirmed, the edited la-
+tents are decoded into a refined model.
+a fc
+b
+ d
+User highlights 
+problematic region
+User speci/f_ies the edit
+either in text prompt 
+or using direct action
+User previews edit
+before generation
+Re/f_ined model is 
+rendered in the UI
+e
+Figure 4: The InstructMesh web interface. (a) Users enter a
+text or image prompt. (b) The generated mesh is inspected
+for flaws. (c) Users paint the problematic region. (d) The edit
+is specified via natural language or direct selection. (e) A
+preview is shown for confirmation. (f) The refined model is
+generated.
+(e.g., hinges or interlocking parts) that require precise geometric and
+mechanical constraints. Our goal is to address the static fabrication-
+related flaws identified in our formative study, with the exception of
+Fused Joints, which involves articulated or mechanical components.
+Additive 
+Operation
+Preview
+Subtractive 
+Operation 
+Preview
+User prompt
+“/gid00076/gid00064/gid00074/gid00068/gid00001/gid00064/gid00001/gid00071/gid00078/gid00075/gid00068”
+User prompt
+“/gid00066/gid00078/gid00077/gid00077/gid00068/gid00066/gid00083/gid00001/gid00083/gid00071/gid00068/gid00082/gid00068
+/gid00001/gid00001/gid00001/gid00079/gid00064/gid00081/gid00083/gid00082”
+Original Model Edit Highlight Preview Re/f_ined Model
+Figure 5: Preview visualizations of canonical operations. Top:
+a subtractive edit (“make a hole”) removes the sealed lid.
+Bottom: an additive edit (“connect these parts”) generates
+a handle. Red regions indicate subtractive changes; green
+indicates additive. Previews let users verify edits on the latent
+representation before triggering regeneration.
+4.1 User Interface and Workflow
+Figure 4 shows the InstructMesh web interface. Users begin by
+providing a text or image prompt to generate a 3D model (Fig. 4a),
+which is rendered for inspection (Fig. 4b). If a flaw is identified, they
+activateHighlight Regionand paint the problematic area (Fig. 4c).
+Users can then specify the desired edit either by entering a natural
+language instruction or by selecting an operation from the slider
+interface (Fig. 4d).
+Before the edit is applied, the system presents apreviewoverlay:
+additive changes are shown in green and subtractive changes in
+red (Fig. 5). This makes latent edits transparent and gives users the
+opportunity to revise or cancel. Once confirmed, the operation is
+executed on the corresponding subset of the latent representation
+and decoded into an updated mesh (Fig. 4f). The edited model
+appears next to the original for side-by-side comparison, and users
+can continue refining, undo an operation, or download the final
+repaired model.
+
+--- Page 6 ---
+
+
+
+--- Page 7 ---
+
+
+
+--- Page 8 ---
+
+
+
+--- Page 9 ---
+
+
+
+--- Page 10 ---
+
+
+
+--- Page 11 ---
+
+
+
+--- Page 12 ---
+
+UIST ’26, November 02–05, 2026, Detroit, MI, USA Faruqi et al.
+ACKNOWLEDGMENTS
+We would like to extend our sincere gratitude to the MIT-Google
+Program for Computing Innovation, the MIT-HPI Collaborative
+Research Program, and the MIT Felicis Program for their generous
+support, which made this research possible.
+REFERENCES
+[1] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Floren-
+cia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal
+Anadkat, et al. 2023. Gpt-4 technical report.arXiv preprint arXiv:2303.08774
+(2023).
+[2] Moritz Bächer, Emily Whiting, Bernd Bickel, and Olga Sorkine-Hornung. 2014.
+Spin-It: Optimizing Moment of Inertia for Spinnable Objects.ACM Trans. Graph.
+33, 4, Article 96 (jul 2014), 10 pages. doi:10.1145/2601097.2601157
+[3] Alexander Berman, Ketan Thakare, Joshua Howell, Francis Quek, and Jeeeun
+Kim. 2021. HowDIY: Towards Meta-Design Tools to Support Anyone to 3D Print
+Anywhere. In26th International Conference on Intelligent User Interfaces(College
+Station, TX, USA)(IUI ’21). Association for Computing Machinery, New York,
+NY, USA, 491–503. doi:10.1145/3397481.3450638
+[4] Mark Boss, Zixuan Huang, Aaryaman Vasishta, and Varun Jampani. 2024. Sf3d:
+Stable fast 3d mesh reconstruction with uv-unwrapping and illumination disen-
+tanglement.arXiv preprint arXiv:2408.00653(2024).
+[5] Stephen Brade, Bryan Wang, Mauricio Sousa, Sageev Oore, and Tovi Gross-
+man. 2023. Promptify: Text-to-image generation through interactive prompt
+exploration with large language models. InProceedings of the 36th Annual ACM
+Symposium on User Interface Software and Technology. 1–14.
+[6] John Brooke et al. 1996. SUS-A quick and dirty usability scale.Usability evaluation
+in industry189, 194 (1996), 4–7.
+[7] Erin Buehler, Stacy Branham, Abdullah Ali, Jeremy J. Chang, Megan Kelly Hof-
+mann, Amy Hurst, and Shaun K. Kane. 2015. Sharing is Caring: Assistive
+Technology Designs on Thingiverse. InProceedings of the 33rd Annual ACM
+Conference on Human Factors in Computing Systems(Seoul, Republic of Korea)
+(CHI ’15). Association for Computing Machinery, New York, NY, USA, 525–534.
+doi:10.1145/2702123.2702525
+[8] Ruojin Cai, Guandao Yang, Hadar Averbuch-Elor, Zekun Hao, Serge Belongie,
+Noah Snavely, and Bharath Hariharan. 2020. Learning gradient fields for shape
+generation. InComputer Vision–ECCV 2020: 16th European Conference, Glasgow,
+UK, August 23–28, 2020, Proceedings, Part III 16. Springer, 364–381.
+[9] Xingyu Chen, Fu-Jen Chu, Pierre Gleize, Kevin J Liang, Alexander Sax, Hao Tang,
+Weiyao Wang, Michelle Guo, Thibaut Hardin, Xiang Li, et al. 2026. Sam 3d: 3dfy
+anything in images. InProceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition. 7220–7232.
+[10] Gene Chou, Yuval Bahat, and Felix Heide. 2023. Diffusion-sdf: Conditional
+generative modeling of signed distance functions. InProceedings of the IEEE/CVF
+international conference on computer vision. 2262–2272.
+[11] Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav
+Mishra, Adam Roberts, Paul Barham, Hyung Won Chung, Charles Sutton, Se-
+bastian Gehrmann, et al. 2023. Palm: Scaling language modeling with pathways.
+Journal of Machine Learning Research24, 240 (2023), 1–113.
+[12] John Joon Young Chung and Eytan Adar. 2023. Promptpaint: Steering text-to-
+image generation through paint medium-like interactions. InProceedings of the
+36th Annual ACM Symposium on User Interface Software and Technology. 1–17.
+[13] Blender Online Community. 2018.Blender - a 3D modelling and rendering package.
+Blender Foundation, Stichting Blender Foundation, Amsterdam. http://www.
+blender.org
+[14] Michael Dawson-Haggerty. 2019. Trimesh. https://github.com/mikedh/trimesh.
+Computer software.
+[15] Faraz Faruqi, Amira Abdel-Rahman, Leandra Tejedor, Martin Nisser, Jiaji Li,
+Vrushank Phadnis, Varun Jampani, Neil Gershenfeld, Megan Hofmann, and
+Stefanie Mueller. 2025. MechStyle: Augmenting Generative AI with Mechanical
+Simulation to Create Stylized and Structurally Viable 3D Models. InProceedings
+of the ACM Symposium on Computational Fabrication. 1–15.
+[16] Faraz Faruqi, Kenneth Friedman, Leon Cheng, Michael Wessely, Sriram Subra-
+manian, and Stefanie Mueller. 2021. SliceHub: Augmenting Shared 3D Model
+Repositories with Slicing Results for 3D Printing.arXiv preprint arXiv:2109.14722
+(2021).
+[17] Faraz Faruqi, Ahmed Katary, Tarik Hasic, Amira Abdel-Rahman, Nayeemur
+Rahman, Leandra Tejedor, Mackenzie Leake, Megan Hofmann, and Stefanie
+Mueller. 2023. Style2Fab: Functionality-Aware Segmentation for Fabricating
+Personalized 3D Models with Generative AI. InProceedings of the 36th Annual
+ACM Symposium on User Interface Software and Technology. 1–13.
+[18] Faraz Faruqi, Sean J Liu, George Fitzmaurice, and Justin Matejka. 2026. Compos3D:
+Interactive Part-Based Composition for Creative Control in Generative 3D Models.
+arXiv preprint arXiv:2607.12193(2026).
+[19] Faraz Faruqi, Maxine Perroni-Scharf, Jaskaran Singh Walia, Yunyi Zhu, Shuyue
+Feng, Donald Degraen, and Stefanie Mueller. 2025. TactStyle: Generating
+Tactile Textures with Generative AI for Digital Fabrication.arXiv preprint
+arXiv:2503.02007(2025).
+[20] Faraz Faruqi, Demircan Tas, Arthur Caetano, Niccolò Meniconi, Oğuz Arslan,
+Misha Sra, Ruofei Du, Stefanie Mueller, and Mustafa Doga Dogan. 2026. MiXR:
+Harvesting and Recomposing Geometry from Real-World Objects for In-Situ 3D
+Design.arXiv preprint arXiv:2605.09620(2026).
+[21] Faraz Faruqi, Yingtao Tian, Vrushank Phadnis, Varun Jampani, and Stefanie
+Mueller. 2024. Shaping realities: Enhancing 3D generative AI with fabrication
+constraints.arXiv preprint arXiv:2404.10142(2024).
+[22] Jun Gao, Tianchang Shen, Zian Wang, Wenzheng Chen, Kangxue Yin, Daiqing
+Li, Or Litany, Zan Gojcic, and Sanja Fidler. 2022. GET3D: A Generative Model of
+High Quality 3D Textured Shapes Learned from Images. InAdvances In Neural
+Information Processing Systems.
+[23] Yicong Hong, Kai Zhang, Jiuxiang Gu, Sai Bi, Yang Zhou, Difan Liu, Feng Liu,
+Kalyan Sunkavalli, Trung Bui, and Hao Tan. 2023. Lrm: Large reconstruction
+model for single image to 3d.arXiv preprint arXiv:2311.04400(2023).
+[24] Zixuan Huang, Mark Boss, Aaryaman Vasishta, James M. Rehg, and Varun Jam-
+pani. 2025. SPAR3D: Stable Point-Aware Reconstruction of 3D Objects from
+Single Images. arXiv:2501.04689 [cs.CV] https://arxiv.org/abs/2501.04689
+[25] Nathaniel Hudson, Celena Alcock, and Parmit K. Chilana. 2016. Understand-
+ing Newcomers to 3D Printing: Motivations, Workflows, and Barriers of Casual
+Makers. InProceedings of the 2016 CHI Conference on Human Factors in Comput-
+ing Systems(San Jose, California, USA)(CHI ’16). Association for Computing
+Machinery, New York, NY, USA, 384–396. doi:10.1145/2858036.2858266
+[26] Heewoo Jun and Alex Nichol. 2023. Shap-e: Generating conditional 3d implicit
+functions.arXiv preprint arXiv:2305.02463(2023).
+[27] Tae Soo Kim, Yoonjoo Lee, Jamin Shin, Young-Ho Kim, and Juho Kim. 2024.
+Evallm: Interactive evaluation of large language model prompts on user-defined
+criteria. InProceedings of the 2024 CHI Conference on Human Factors in Computing
+Systems. 1–21.
+[28] Roman Klokov, Edmond Boyer, and Jakob Verbeek. 2020. Discrete point flow
+networks for efficient point cloud generation. InEuropean Conference on Computer
+Vision. Springer, 694–710.
+[29] Yuki Koyama, Shinjiro Sueda, Emma Steinhardt, Takeo Igarashi, Ariel Shamir, and
+Wojciech Matusik. 2015. AutoConnect: Computational Design of 3D-Printable
+Connectors.ACM Trans. Graph.34, 6, Article 231 (nov 2015), 11 pages. doi:10.
+1145/2816795.2818060
+[30] Stacey Kuznetsov and Eric Paulos. 2010. Rise of the Expert Amateur: DIY Projects,
+Communities, and Cultures. InProceedings of the 6th Nordic Conference on Human-
+Computer Interaction: Extending Boundaries (NordiCHI ’10). ACM, 295–304. doi:10.
+1145/1868914.1868950
+[31] Udaya Lakshmi, Megan Hofmann, Stephanie Valencia, Lauren Wilcox, Jennifer
+Mankoff, and Rosa I. Arriaga. 2019. "Point-of-Care Manufacturing": Maker
+Perspectives on Digital Fabrication in Medical Practice.Proc. ACM Hum.-Comput.
+Interact.3, CSCW, Article 91 (nov 2019), 23 pages. doi:10.1145/3359193
+[32] Vivian Liu, Jo Vermeulen, George Fitzmaurice, and Justin Matejka. 2023. 3DALL-
+E: Integrating text-to-image AI in 3D design workflows. InProceedings of the
+2023 ACM designing interactive systems conference. 1955–1977.
+[33] Ryan Louie, Andy Coenen, Cheng Zhi Huang, Michael Terry, and Carrie J Cai.
+2020. Novice-AI music co-creation via AI-steering tools for deep generative
+models. InProceedings of the 2020 CHI conference on human factors in computing
+systems. 1–13.
+[34] Lihua Lu, Ruyang Li, Xiaohui Zhang, Hui Wei, Guoguang Du, and Binqiang
+Wang. 2024. Advances in text-guided 3D editing: a survey.Artificial Intelligence
+Review57, 12 (2024), 321.
+[35] Meshy AI. 2026. Meshy: 3D AI Toolbox for Generative Mesh and Texture Creation.
+https://www.meshy.ai/ Version 6.0, Accessed: 2026-03-29.
+[36] Paritosh Mittal, Yen-Chi Cheng, Maneesh Singh, and Shubham Tulsiani. 2022.
+Autosdf: Shape priors for 3d completion, reconstruction and generation. InPro-
+ceedings of the IEEE/CVF conference on computer vision and pattern recognition.
+306–315.
+[37] Alessandro Muntoni and Paolo Cignoni. 2021.PyMeshLab. doi:10.5281/zenodo.
+4438750
+[38] Behnaz Norouzi, Marianne Kinnula, and Netta Iivari. 2021. Making Sense of 3D
+Modelling and 3D Printing Activities of Young People: A Nexus Analytic Inquiry.
+InProceedings of the 2021 CHI Conference on Human Factors in Computing Systems
+(Yokohama, Japan)(CHI ’21). Association for Computing Machinery, New York,
+NY, USA, Article 481, 16 pages. doi:10.1145/3411764.3445139
+[39] Lora Oehlberg, Wesley Willett, and Wendy E. Mackay. 2015. Patterns of Physical
+Design Remixing in Online Maker Communities. InProceedings of the 33rd Annual
+ACM Conference on Human Factors in Computing Systems(Seoul, Republic of
+Korea)(CHI ’15). Association for Computing Machinery, New York, NY, USA,
+639–648. doi:10.1145/2702123.2702175
+[40] Romain Prévost, Moritz Bächer, Wojciech Jarosz, and Olga Sorkine-Hornung. 2016.
+Balancing 3D Models with Movable Masses. InProceedings of the Conference on
+Vision, Modeling and Visualization(Bayreuth, Germany)(VMV ’16). Eurographics
+
+--- Page 13 ---
+
+InstructMesh UIST ’26, November 02–05, 2026, Detroit, MI, USA
+Association, Goslar, DEU, 9–16.
+[41] Romain Prévost, Emily Whiting, Sylvain Lefebvre, and Olga Sorkine-Hornung.
+2013. Make It Stand: Balancing Shapes for 3D Fabrication.ACM Trans. Graph.
+32, 4, Article 81 (jul 2013), 10 pages. doi:10.1145/2461912.2461957
+[42] Mohi Reza, Nathan M Laundry, Ilya Musabirov, Peter Dushniku, Zhi
+Yuan “Michael” Yu, Kashish Mittal, Tovi Grossman, Michael Liut, Anastasia
+Kuzminykh, and Joseph Jay Williams. 2024. ABScribe: Rapid Exploration & Or-
+ganization of Multiple Writing Variations in Human-AI Co-Writing Tasks using
+Large Language Models. InProceedings of the 2024 CHI Conference on Human
+Factors in Computing Systems. 1–18.
+[43] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn
+Ommer. 2022. High-resolution image synthesis with latent diffusion models. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition.
+10684–10695.
+[44] Thijs Jan Roumen, Willi Müller, and Patrick Baudisch. 2018. Grafter: Remixing 3D-
+Printed Machines. InProceedings of the 2018 CHI Conference on Human Factors in
+Computing Systems(Montreal QC, Canada)(CHI ’18). Association for Computing
+Machinery, New York, NY, USA, 1–12. doi:10.1145/3173574.3173637
+[45] Ryan Schmidt and Matt Ratto. 2013. Design-to-Fabricate: Maker Hardware
+Requires Maker Software.IEEE Computer Graphics and Applications33, 6 (2013),
+26–34. doi:10.1109/MCG.2013.90
+[46] Ryan Schmidt and Karan Singh. 2010. Meshmixer: An Interface for Rapid Mesh
+Composition. InACM SIGGRAPH 2010 Talks. Association for Computing Ma-
+chinery, New York, NY, USA. doi:10.1145/1837026.1837034
+[47] Adriana Schulz, Ariel Shamir, David I. W. Levin, Pitchaya Sitthi-amorn, and
+Wojciech Matusik. 2014. Design and Fabrication by Example.ACM Trans. Graph.
+33, 4, Article 62 (jul 2014), 11 pages. doi:10.1145/2601097.2601127
+[48] Yulin Shen, Yifei Shen, Jiawen Cheng, Chutian Jiang, Mingming Fan, and Zeyu
+Wang. 2024. Neural canvas: Supporting scenic design prototyping by integrating
+3d sketching and generative AI. InProceedings of the 2024 CHI Conference on
+Human Factors in Computing Systems. 1–18.
+[49] Kristen Shinohara, Cynthia L. Bennett, Wanda Pratt, and Jacob O. Wobbrock.
+2018. Tenets for Social Accessibility: Towards Humanizing Disabled People
+in Design.ACM Trans. Access. Comput.11, 1, Article 6 (mar 2018), 31 pages.
+doi:10.1145/3178855
+[50] Maria Shugrina, Ariel Shamir, and Wojciech Matusik. 2015. Fab Forms: Customiz-
+able Objects for Fabrication with Validity and Geometry Caching.ACM Trans.
+Graph.34, 4, Article 100 (jul 2015), 12 pages. doi:10.1145/2766994
+[51] Evgeny Stemasov, Simon Demharter, Max Rädler, Jan Gugenheimer, and Enrico
+Rukzio. 2024. PARam: leveraging parametric design in extended reality to support
+the personalization of artifacts for personal fabrication. InProceedings of the 2024
+CHI Conference on Human Factors in Computing Systems. 1–22.
+[52] Hariharan Subramonyam, Roy Pea, Christopher Lawrence Pondoc, Maneesh
+Agrawala, and Colleen Seifert. 2023. Bridging the Gulf of envisioning: Cognitive
+design challenges in LLM interfaces.arXiv preprint arXiv:2309.14459(2023).
+[53] Jiaxiang Tang, Zhaoxi Chen, Xiaokang Chen, Tengfei Wang, Gang Zeng, and
+Ziwei Liu. 2024. Lgm: Large multi-view gaussian model for high-resolution 3d
+content creation. InEuropean Conference on Computer Vision. Springer, 1–18.
+[54] Tom Veuskens, Florian Heller, and Raf Ramakers. 2021. CODA: A Design Assistant
+to Facilitate Specifying Constraints and Parametric Behavior in CAD Models. In
+Graphics Interface 2021. https://openreview.net/forum?id=1dLDPJeafRZ
+[55] Zhijie Wang, Yuheng Huang, Da Song, Lei Ma, and Tianyi Zhang. 2024.
+Promptcharm: Text-to-image generation through multi-modal prompting and
+refinement. InProceedings of the 2024 CHI Conference on Human Factors in Com-
+puting Systems. 1–21.
+[56] Tongshuang Wu, Michael Terry, and Carrie Jun Cai. 2022. Ai chains: Transparent
+and controllable human-ai interaction by chaining large language model prompts.
+InProceedings of the 2022 CHI conference on human factors in computing systems.
+1–22.
+[57] Zhijie Wu, Xiang Wang, Di Lin, Dani Lischinski, Daniel Cohen-Or, and Hui
+Huang. 2019. Sagnet: Structure-aware generative network for 3d-shape modeling.
+ACM Transactions on Graphics (TOG)38, 4 (2019), 1–14.
+[58] Jianfeng Xiang, Xiaoxue Chen, Sicheng Xu, Ruicheng Wang, Zelong Lv, Yu Deng,
+Hongyuan Zhu, Yue Dong, Hao Zhao, Nicholas Jing Yuan, et al . 2026. Native
+and compact structured latents for 3d generation. InProceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition. 14419–14429.
+[59] Jianfeng Xiang, Zelong Lv, Sicheng Xu, Yu Deng, Ruicheng Wang, Bowen Zhang,
+Dong Chen, Xin Tong, and Jiaolong Yang. 2024. Structured 3D Latents for Scalable
+and Versatile 3D Generation. arXiv:2412.01506 [cs.CV] https://arxiv.org/abs/
+2412.01506
+[60] Jiale Xu, Weihao Cheng, Yiming Gao, Xintao Wang, Shenghua Gao, and Ying
+Shan. 2024. Instantmesh: Efficient 3d mesh generation from a single image with
+sparse-view large reconstruction models.arXiv preprint arXiv:2404.07191(2024).
+[61] Guandao Yang, Xun Huang, Zekun Hao, Ming-Yu Liu, Serge Belongie, and Bharath
+Hariharan. 2019. Pointflow: 3d point cloud generation with continuous normal-
+izing flows. InProceedings of the IEEE/CVF international conference on computer
+vision. 4541–4550.
+[62] J Diego Zamfirescu-Pereira, Richmond Y Wong, Bjoern Hartmann, and Qian Yang.
+2023. Why Johnny can’t prompt: how non-AI experts try (and fail) to design LLM
+prompts. InProceedings of the 2023 CHI conference on human factors in computing
+systems. 1–21.
+[63] Lvmin Zhang, Anyi Rao, and Maneesh Agrawala. 2023. Adding conditional con-
+trol to text-to-image diffusion models. InProceedings of the IEEE/CVF international
+conference on computer vision. 3836–3847.
+[64] Longwen Zhang, Ziyu Wang, Qixuan Zhang, Qiwei Qiu, Anqi Pang, Haoran Jiang,
+Wei Yang, Lan Xu, and Jingyi Yu. 2024. Clay: A controllable large-scale generative
+model for creating high-quality 3d assets.ACM Transactions on Graphics (TOG)
+43, 4 (2024), 1–20.
+[65] Ran Zhang, Thomas Auzinger, Duygu Ceylan, Wilmot Li, and Bernd Bickel. 2017.
+Functionality-Aware Retargeting of Mechanisms to 3D Shapes.ACM Trans.
+Graph.36, 4, Article 81 (jul 2017), 13 pages. doi:10.1145/3072959.3073710
+[66] Zhuohao Zhang, Haichang Li, Chun Meng Yu, Faraz Faruqi, Junan Xie, Gene SH
+Kim, Mingming Fan, Angus Forbes, Jacob O Wobbrock, Anhong Guo, et al. 2025.
+A11yShape: AI-Assisted 3-D Modeling for Blind and Low-Vision Programmers.
+InProceedings of the 27th International ACM SIGACCESS Conference on Computers
+and Accessibility. 1–20.
+[67] Haiming Zhao, Chengkuan Hong, Juncong Lin, Xiaogang Jin, and Weiwei Xu.
+2016. Make it swing: Fabricating personalized roly-poly toys.Computer Aided
+Geometric Design43 (2016), 226–236. doi:10.1016/j.cagd.2016.02.001 Geometric
+Modeling and Processing 2016.
+[68] Zibo Zhao, Zeqiang Lai, Qingxiang Lin, Yunfei Zhao, Haolin Liu, Shuhui Yang,
+Yifei Feng, Mingxin Yang, Sheng Zhang, Xianghui Yang, et al. 2025. Hunyuan3d
+2.0: Scaling diffusion models for high resolution textured 3d assets generation.
+arXiv preprint arXiv:2501.12202(2025).
+[69] Junyi Zhu, Lotta-Gili Blumberg, Yunyi Zhu, Martin Nisser, Ethan Levi Carlson,
+Xin Wen, Kevin Shum, Jessica Ayeley Quaye, and Stefanie Mueller. 2020. Curve-
+Boards: Integrating breadboards into physical objects to prototype function in
+the context of form. InProceedings of the 2020 CHI Conference on Human Factors
+in Computing Systems. 1–13.
+[70] Jingyu Zhuang, Di Kang, Yan-Pei Cao, Guanbin Li, Liang Lin, and Ying Shan. 2024.
+Tip-editor: An accurate 3d editor following both text-prompts and image-prompts.
+ACM Transactions on Graphics (ToG)43, 4 (2024), 1–12.
+[71] Jingyu Zhuang, Chen Wang, Liang Lin, Lingjie Liu, and Guanbin Li. 2023.
+Dreameditor: Text-driven 3d scene editing with neural fields. InSIGGRAPH
+Asia 2023 conference papers. 1–10.
