@@ -1,0 +1,1330 @@
+--- Page 1 ---
+
+MIRAGE: How Conversation State Shapes Historical Evidence
+Use in Multimodal Personal Agents
+Yu Liu∗
+Institute of Information Engineering,
+Chinese Academy of Sciences
+Beijing, China
+School of Cyber Security, University
+of Chinese Academy of Sciences
+Beijing, China
+liuyu@iie.ac.cn
+Wenxiao Zhang∗
+Department of Computer Science
+and Software Engineering,
+The University of Western Australia
+Perth, Australia
+wenxiao.zhang@research.uwa.edu.au
+Cheng Hu
+Institute of Information Engineering,
+Chinese Academy of Sciences
+Beijing, China
+School of Cyber Security, University
+of Chinese Academy of Sciences
+Beijing, China
+hucheng@iie.ac.cn
+Cong Cao
+Institute of Information Engineering,
+Chinese Academy of Sciences
+Beijing, China
+caocong@iie.ac.cn
+Fangfang Yuan✉
+Institute of Information Engineering,
+Chinese Academy of Sciences
+Beijing, China
+yuanfangfang@iie.ac.cn
+Xinyu Wang
+Department of Computer Science
+and Software Engineering,
+The University of Western Australia
+Perth, Australia
+xinyu.wang@research.uwa.edu.au
+Jin B. Hong✉
+Department of Computer Science
+and Software Engineering,
+The University of Western Australia
+Perth, Australia
+jin.hong@uwa.edu.au
+Yanbing Liu✉
+Institute of Information Engineering,
+Chinese Academy of Sciences
+Beijing, China
+School of Cyber Security, University
+of Chinese Academy of Sciences
+Beijing, China
+liuyanbing@iie.ac.cn
+Abstract
+Multimodal large language model (MLLM) agents are increasingly
+used as personal assistants for long-running tasks. Their utility
+depends on continuity: agents must retrieve and use earlier evi-
+dence across dialogue, files, and workspace state. However, agents
+can generate plausible answers even when access to that history
+has degraded, causing outcome-only evaluation to overestimate
+true evidence use. We presentMIRAGE(MultimodalInteraction
+Retrieval,Attribution, andGroundingEvaluation), a controlled
+study of historical evidence use under conversation-state variation
+in multimodal personal agents. MIRAGE holds evidence objects,
+questions, and scoring fixed while varying only conversation
+state, and evaluates whether an agent can determine answer-
+ability, recover the correct source, and answer from it. Across
+seven frontier and open-weight multimodal backbones, we find
+that:1)pre-compaction depth and post-compaction continuation
+∗Equal contribution.
+This work is licensed under a Creative Commons Attribution 4.0 International Li-
+cense.
+MM ’26, Rio de Janeiro, Brazil
+©2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2213-4/2026/11
+https://doi.org/10.1145/3767308.3835540
+form distinct, non-monotonic failure regimes rather than a sin-
+gle degradation curve;2)open-weight models rely heavily on
+context continuity and are reluctant to spontaneously switch to
+tool-mediated retrieval when provenance fails; and3)retrieval
+pressure improves source attribution in deep pre-compaction
+states for tool-compliant models, but consistently regresses after
+compaction, where stored evidence has already degraded. These
+findings show that historical evidence use should be evaluated
+under state variation, rather than inferred from outcome-only
+correctness.
+CCS Concepts
+•Information systems→Evaluation of retrieval results;
+Multimedia and multimodal retrieval;•Computing method-
+ologies→Intelligent agents.
+Keywords
+multimodal personal agents, conversation-state variation, long-
+context evaluation, tool-mediated retrieval
+ACM Reference Format:
+Yu Liu, Wenxiao Zhang, Cheng Hu, Cong Cao, Fangfang Yuan, Xinyu Wang,
+Jin B. Hong, and Yanbing Liu. 2026. MIRAGE: How Conversation State
+Shapes Historical Evidence Use in Multimodal Personal Agents. InPro-
+ceedings of the 34th ACM International Conference on Multimedia (MM ’26),
+arXiv:2609.19059v1  [cs.CL]  25 Aug 2026
+
+--- Page 2 ---
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil Liu et al.
+Figure 1: Same query, same answer, different grounding. Af-
+ter context compaction (4), one reasoning path retrieves the
+source document via a memory tool (7a); the other guesses
+from residual context (7b). Both produce the same final an-
+swer (8), making the grounding failure invisible to outcome-
+only evaluation.
+November 10–14, 2026, Rio de Janeiro, Brazil.ACM, New York, NY, USA,
+12 pages. https://doi.org/10.1145/3767308.3835540
+1 Introduction
+Multimodal large language model (MLLM) agents increasingly
+serve as long-lived personal assistants that manage ongoing tasks,
+revisit prior materials, and maintain continuity across dialogue,
+documents, images, and workspace files. Their practical value de-
+pends on recovering and using user-specific evidence encountered
+earlier. As conversations grow or cross compaction boundaries,
+that evidence may no longer be directly visible, causing the agent
+to rely on residual context, summaries, or generic priors and pro-
+duce plausible but weakly grounded answers. Because existing
+evaluations largely score final answers or task completion, an
+agent can appear to remember without grounding its response
+in the correct historical evidence. Figure 1 illustrates this blind
+spot: the same query about a historical document can yield the
+same plausible answer through either tool-mediated evidence
+retrieval or residual-context guessing after compaction, which
+outcome-only evaluation scores identically.1
+Prior work illuminates parts of this problem, but not the full
+setting we study. Recent memory benchmarks study long-horizon
+conversational recall and multi-session memory use [4, 21, 23, 25,
+36]. In parallel, work on retrieval faithfulness shows that tool use
+does not guarantee genuine evidence reliance [16, 22]. However,
+because existing work rarely isolates conversation state as the ex-
+perimental variable, it remains unclear how evidence use changes
+when the same evidence and questions are tested at different con-
+text depths before and after compaction.
+To address this gap, we introduceMIRAGE(Multimodal
+InteractionRetrieval,Attribution, andGroundingEvaluation),
+an empirical study of historical evidence use under conversation-
+state variation. We focus on multimodal materials encountered
+1Code: https://github.com/prisma-research/MIRAGE
+during prior interaction, including user interface views, statistical
+graphics, and profile views, along with their derived workspace
+representations. This type of evidence is especially vulnerable to
+state-conditioned failure because it passes through lossy repre-
+sentation shifts across states (e.g., chart image→extracted table
+→compacted summary), making the grounding chain longer and
+more fragile than for plain text. When asked about this material
+later, the agent must determine answerability, recover the correct
+source, and answer from that source rather than from a plausible
+guess. Instead of proposing a large-scale leaderboard benchmark,
+MIRAGE deliberately keeps the planted evidence set, trunk con-
+versation, question bank, and scoring protocol fixed so that con-
+versation state is the only experimental variable, analogous to a
+factorial experiment with a fixed stimulus set. The current instan-
+tiation evaluates the same evidence-grounded questions across
+four states spanning shallow pre-compaction context, deeper
+same-session context, and post-compaction continuation, using
+seven frontier and open-weight multimodal backbones under two
+query conditions. Our experiments follow awhat–why–howpro-
+gression: (RQ1) what failure patterns emerge as conversation state
+changes, (RQ2) what retrieval mechanisms produce these patterns,
+and (RQ3) when retrieval pressure can mitigate provenance fail-
+ure across different conversation states. Our contributions are as
+follows:
+(1) We introduce MIRAGE, a state-conditioned evaluation protocol
+that holds evidence, questions, and scoring fixed while varying
+conversation state, decomposing each response into answer-
+ability, source attribution, and evidence-grounded answering.
+(2) We show that pre-compaction depth and post-compaction
+continuation are distinct failure regimes with non-monotonic
+degradation, and that open-weight models rely heavily on
+context continuity and are reluctant to spontaneously adopt
+tool-mediated retrieval even when provenance has failed.
+(3) We demonstrate that a retrieval-pressure extension recovers
+source attribution at deep pre-compaction states for tool-
+compliant models, but consistently regresses after compaction,
+establishing that compaction-induced evidence degradation
+cannot be addressed by retrieval alone.
+2 Related Work
+2.1 Historical Evidence in Long-Horizon Agent
+Systems
+A growing literature studies long-term memory and historical
+evidence use in agents, with multimodal evidence only recently
+entering the picture, building on broader advances in multimodal
+model architectures and efficiency [20, 41], and with system-level
+reliability and security concerns emerging in adjacent agent do-
+mains [15, 35, 38]. Architectures including Generative Agents [29],
+Reflexion [32], MemGPT [28], and CogMem [40] use retrieval,
+reflection, virtual context, or layered persistent memory for
+long-horizon reasoning. More recent multimodal benchmarks
+extend this direction: M3-Agent [21] studies entity-level memory
+from continuous video in a single-session robotic/video setting,
+alongside progress on multimodal introspective reasoning over
+long-form video [14]; ATM-Bench [25] introduces personalized
+multimodal memory QA over long user histories but does not
+
+--- Page 3 ---
+
+MIRAGE: How Conversation State Shapes Historical Evidence Use in Multimodal Personal Agents MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+control artifact access scenario; and Mem-Gallery [4] combines
+multimodal content with multi-session dialogue evaluation. By
+contrast, major memory benchmarks including LoCoMo [23],
+LongMemEval [36], MemBench [33], and MemoryArena [11]
+remain primarily text-only. MIRAGE focuses on a narrower prob-
+lem: whether an agent can re-access and use historical evidence
+objects under conversation-state variation; Appendix A.5 provides
+detailed benchmark and depth-normalized comparisons.
+2.2 Retrieval Faithfulness and Memory
+Hallucination
+A separate line of work examines whether agents that invoke
+retrieval tools actually use the retrieved content, and when they
+decide to invoke tools at all [18], including adaptive multimodal
+search [37] and multi-agent QA for open-domain multi-hop
+reasoning [19]. Despite RAG becoming a standard grounding
+approach [9], models can be distracted by irrelevant retrieved
+context [31], and Self-RAG [2] shows that self-reflection on re-
+trieval relevance helps but remains single-turn and text-only. Ma
+et al. [22] identifytool-call hackingin multi-source RAG agents,
+the closest precedent to our notion of hallucinated grounding,
+though targeting general pipelines rather than multimodal per-
+sonal agents. HaluMem [5] benchmarks hallucination in agent
+memory operations but covers text-only settings without strat-
+ifying by access scenario, and broader surveys [13, 16] propose
+taxonomies without operationalizing them under conversation-
+state variation. We extend these findings to the cross-session
+multimodal setting.
+2.3 Access Under Long Context
+Even when the target artifact remains within the active context,
+the agent may fail to use it. Needle-in-a-Haystack [30] and Lost
+in the Middle [17] show systematic mid-context retrieval degrada-
+tion; RULER [12] and∞Bench [39] confirm that effective context
+size is often far smaller than the advertised window. In agentic
+settings, web-agent evaluations [7] report success rates collaps-
+ing from 40–50% to under 10% in long-context conditions. Levy
+et al. [8] further show that extending context damages reasoning
+even when the model can still locate evidence. These findings mo-
+tivate our S1 baseline: in-window availability does not guarantee
+in-context utilization.
+3 Methodology
+The agent system is organized as a recurring interaction loop
+around a multimodal backbone: it receives user messages and
+multimodal observations, prepares active context with memory
+and tool affordances, invokes the backbone, and executes any tool
+requests before returning the response. Continuity depends on
+the backbone and how the surrounding system maintains state,
+exposes memory, and mediates retrieval across time.
+We distinguish two memory surfaces: the active context𝑐 𝑡
+(model-visible same-session content at turn𝑡) and the persistent
+workspaceW(durable files, notes, and extracted records not
+continuously visible). When a query depends on past evidence,
+the agent may reach it through𝑅 context (same-session context
+continuity) or𝑅 tool (explicit tool-mediated retrieval).
+3.1 Problem Statement
+We study historical evidence use under conversation-state varia-
+tion: given a reference query𝑞about a prior evidence object𝑎 ★,
+the agent must determine whether the question is answerable from
+its history, recover the correct supporting evidence if it exists, and
+answer from that evidence rather than from a plausible guess. Let
+the persistent memory surface beW={𝑎 1, 𝑎2, . . . , 𝑎𝐾 }and let the
+agent act under policy
+𝜋:(𝑐 𝑡, 𝑞,W) ↦→ (u, 𝑦),(1)
+whereuis the action/tool trace and𝑦is the final response. The core
+question is whether𝑦isauthentically groundedin𝑎 ★ rather than
+merely plausible. We define grounding faithfulness using correct
+source identification and a correct normalized value:
+Grounded(𝑦;𝑎 ★, 𝑞)=1⇐ ⇒ (SC=1) ∧ (VC=1).(2)
+SCdenotes source correctness, andVCdenotes value correctness
+after normalization.
+3.2 Historical Artifact Planting
+Figure 2 summarizes the pipeline: a trunk conversation plants mul-
+timodal evidence, filler turns deepen context through four check-
+points, and the same probe questions are evaluated at each state
+on a three-stage grounding chain. The central experimental con-
+straint is that evidence objects and questions are held fixed; only
+thestatechanges. This is a deliberate design choice: if both the
+evidence set and the conversation state varied simultaneously, ob-
+served performance differences could reflect evidence-level diffi-
+culty rather than state-conditioned access failure. By fixing a small,
+controlled evidence set and reusing it across all states and models,
+MIRAGE isolates conversation state as the sole experimental vari-
+able, prioritizing internal validity and causal interpretability over
+evidence-set breadth.
+Evidence objects, conversations, and filler turns.The bench-
+mark begins by planting a fixed set of evidence objectsA=
+{𝑎1, . . . , 𝑎𝐾 }into the agent’s interaction history, each carrying a
+stable identifier and modality-aware content. These objects are in-
+troduced during an initial conversation𝐶consisting of alternating
+user–agent turns. After evidence planting, MIRAGE appends filler
+turns to increase input depth and induce native compaction.
+3.3 State Construction
+Trunk conversation and checkpoints.The shared trunk con-
+versation is the composition
+𝑇=𝐶 plant ⊕𝐹,(3)
+where𝐶 plant contains the evidence-introduction turns and𝐹is the
+subsequent filler suffix. At selected prefixes of𝑇, the runner mate-
+rializes checkpoints
+K={𝜅 1, 𝜅2, . . . , 𝜅𝐽 },(4)
+where each𝜅 𝑗 is captured from𝑇 ≤𝜏 𝑗 and stores the runtime state
+needed for later resumption.
+Depth, states, and probes.We define checkpoint depth by the
+effective-input-token function
+𝑑(𝜅 𝑗 )=EIT(𝜅 𝑗 ),(5)
+
+--- Page 4 ---
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil Liu et al.
+Figure 2: MIRAGE evaluation pipeline. Left: a trunk conversation plants multimodal evidence objects, then filler turns deepen
+context through four checkpoints (S1-d0, S1-d50k, S1-d80k, S2). Center: the same probe question is issued at each state to
+a personal agent with tool access. Right: responses are evaluated on a three-stage grounding chain (answerability, source
+attribution, answer correctness), producing state-conditioned diagnostic profiles.
+whereEIT(𝜅 𝑗 )is the provider-reported effective input tokens at
+capture time. Increasing depth is induced by extending the filler
+suffix𝐹. Astateis the evaluation condition associated with a re-
+sumed execution from a checkpoint. A state map𝜓:S → Kas-
+signs each named state to one checkpoint. The current study uses
+four named states:
+S={S1-d0,S1-d50k,S1-d80k,S2}.(6)
+The first three form the pre-compaction same-session regime,S1
+={S1-d0,S1-d50k,S1-d80k}, whileS2is the post-compaction
+same-session state. These four points sample three qualitatively
+distinct regions of the context lifecycle: near the planted evidence
+(S1-d0), at mid-range and near the context-window boundary
+(S1-d50k,S1-d80k), and after the first native compaction event
+(S2). A finer-grained depth sweep would increase cost linearly
+but is unlikely to reveal regime transitions beyond the pre-/post-
+compaction boundary that the current design already captures.
+These coordinates are runtime-grounded proxies, not backbone-
+normalized difficulty bins: models with different context-use
+strategies, tool policies, and compaction behaviors may expe-
+rience the same EIT milestone differently. Multiple models are
+evaluated to test whether state-conditioned patterns generalize
+across architecturally diverse backbones; shared state coordinates
+enable both within-model state comparisons and cross-model
+pattern validation under the same runtime conditions.
+A probe is the tuple
+𝑝𝑖,𝑠 =(𝜓(𝑠), 𝑞 𝑖 ), 𝑠∈ S,(7)
+where𝑞 𝑖 is one base question and𝜓(𝑠)is the checkpoint associ-
+ated with state𝑠. If the bank contains𝑁base questions, the full
+Algorithm 1MIRAGE Conversation-State Evaluation Pipeline
+Require:planted evidence setA, planting conversation𝐶 plant,
+filler turns𝐹, state setS, question bankQ
+1:Build trunk conversation𝑇←𝐶 plant ⊕𝐹
+2:Materialize checkpointsKfrom𝑇at selected depth or post-
+compaction boundaries
+3:foreach state𝑠∈ Sdo
+4:foreach base question𝑞 𝑖 ∈ Qdo
+5:Fresh-restore checkpoint𝜅←𝜓(𝑠){independent per
+probe}
+6:Issue probe𝑝 𝑖,𝑠 =(𝜓(𝑠), 𝑞 𝑖 )
+7:Record structured response ˆ𝑔𝑖,𝑠 and runtime trace
+8:Compute deterministic outcome metrics and retrieval-
+path diagnostics
+9:end for
+10:end for
+11:returnconversation-state score table and diagnostic traces
+evaluation contains𝑁× |S|probes. Algorithm 1 summarizes the
+full pipeline.
+3.4 Unified Probe Protocol
+Critically, each probe is issued on a freshly restored copy of the
+checkpoint, so that no probe observes the question or answer of
+any other probe. This guarantees per-probe independence and
+eliminates cross-probe contamination from accumulated conver-
+sation history. Rather than splitting the study into separate task
+families, MIRAGE uses a single structured-response protocol that
+captures the full grounding chain in one turn. Each probe requires
+the model to return:
+
+--- Page 5 ---
+
+MIRAGE: How Conversation State Shapes Historical Evidence Use in Multimodal Personal Agents MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+ANSWERABLE=YES | NO
+SOURCE=<artifact_id or NONE>
+ANSWER=<short value or NONE>
+This design lets one response reveal whether the model judges the
+question answerable, whether it identifies the correct source, and
+whether it extracts the right content, without requiring separate
+probing stages. UnderCm, the same protocol also exposes whether
+the model can express retrieval through the executable tool inter-
+face used by the current runtime.
+3.5 Grounding-Oriented Evaluation
+Deterministic Scoring.For each probe, the model returns a struc-
+tured response
+ˆ𝑔𝑖,𝑠 =( ˆ𝑧𝑖,𝑠,csrc𝑖,𝑠, ˆ𝑦𝑖,𝑠 ),(8)
+consisting of a predicted answerability judgment, source identifier,
+and answer value. We compare these against the gold annotation
+and compute six per-probe indicators over the answerable subset
+Q+ or the unanswerable subsetQ − as appropriate. The first-letter
+abbreviations below serve as column headers throughout the ex-
+periment tables:
+AC(𝑖, 𝑠)=1[ ˆ𝑧𝑖,𝑠 =𝑧 ★
+𝑖 ],(9)
+SC(𝑖, 𝑠)=1[canon(csrc𝑖,𝑠 )=src ★
+𝑖 ],(10)
+VC(𝑖, 𝑠)=1[norm( ˆ𝑦𝑖,𝑠 )=𝑦 ★
+𝑖 ],(11)
+GC(𝑖, 𝑠)=SC(𝑖, 𝑠) ·VC(𝑖, 𝑠),(12)
+HR(𝑖, 𝑠)=1[ ˆ𝑧𝑖,𝑠 =YES∨ ˆ𝑦𝑖,𝑠 ≠NONE],(13)
+WS(𝑖, 𝑠)=1[canon(csrc𝑖,𝑠 )≠src ★
+𝑖 ],(14)
+AC,GC,HR, andWSdenote answerability correctness, grounded
+correctness, hallucination rate, and wrong-or-missing source rate,
+respectively. AC is computed over all probes; SC, VC, GC, and WS
+over the answerable subsetQ +; and HR over the unanswerable
+subsetQ −. Consistent with the released scorer, WS counts every
+canonicalized source mismatch, includingNONE; WS is the comple-
+ment of SC on the same scored subset. We report state-level aver-
+ages by averaging each indicator over its relevant subset per state.
+All matching is deterministic. Enum fields are matched after
+case normalization; source identifiers are canonicalized to collapse
+artifact paths, derived files, screenshot summaries, and dated mem-
+ory notes onto the underlying evidence identifier; numeric and
+short string answers are normalized with fixed rules.PFdenotes
+parse failure and is tracked separately for outputs that do not sat-
+isfy the full structured protocol. UnderCm, pseudo-tool outputs and
+malformed tool syntax are therefore part of the measured behavior
+rather than scorer noise.
+Amirageis an answerable probe for which the model predicts
+YESwithout achieving grounded correctness. Its state-level rate is
+MI𝑠 = 1
+|Q +
+𝑠,obs |
+∑︁
+𝑖∈ Q +
+𝑠,obs
+1[ ˆ𝑧𝑖,𝑠 =YES∧GC(𝑖, 𝑠)=0],(15)
+whereQ +
+𝑠,obs contains all recorded answerable calls and parse fail-
+ures contribute zero. MI comprises outcome-preserving claimed-
+answerability failures ( ˆ𝑧=YES, VC=1, GC=0) and answer-failure
+mirages ( ˆ𝑧=YES, VC=0). We separately reportOG 𝑠 =VC 𝑠 −GC 𝑠
+over valid parsed answerable probes; it measures correct-but-
+ungrounded outputs irrespective of ˆ𝑧.
+Retrieval-Path Diagnostics.Beyond outcome scores, MIRAGE
+records the observed retrieval path for every recorded probe call:
+whether the agent accesses evidence through same-session context
+continuity (𝑅context) or through an explicit tool call (𝑅 tool), follow-
+ing the definitions in Section 3. These labels serve a mechanistic
+role rather than a headline one: they reveal whether state change
+altershowevidence is accessed, even when top-line accuracy does
+not shift dramatically.
+4 Experiments
+4.1 Setup
+Datasets.The corpus contains six planted multimodal evidence
+objects drawn from ChartQA [24] and ScreenSpot [6], together
+with their derived workspace representations. The 200-question
+bank pairs 100 answerable items with 100 domain- and format-
+matched unanswerable counterparts; gold labels record answer-
+ability, canonical source, and normalized answer, while artifact
+metadata records difficulty, query type, and shortcut risk (Ap-
+pendix A.3). Across four states, this yields 800 scored probes per
+model–condition pair. Appendix A.1 reports a 109-probe exten-
+sion across six additional evidence types. Each cell is averaged
+over three independent runs; Appendix A.6 reports representative
+confidence intervals and routing counts.
+Models.We evaluate two frontier API references underC0, GPT-
+5 [26] and Claude-4.5-Haiku [1], and five open-weight VLMs:
+Qwen3-VL-4B/8B/30B [3], InternVL3.5-20B (MoE) [34], and
+Gemma-3-27B [10].C0permits default evidence-access behav-
+ior, whereasCmrequiresartifact_recallbefore answering and
+is applied to the locally deployable open-model group whoseC0
+degradation motivates the mitigation study.Cmis a system-level
+condition under the deployed runtime contract; oracle or forced
+execution would test a different, component-level question.
+Metrics and diagnostics.We report the deterministic indicators
+defined in Section 3.5:AC,SC,VC,GC,HR,WS, andPF, and
+record retrieval paths (𝑅 context vs𝑅 tool) as mechanistic labels. For
+state analysis,DS=100(GC 𝑑0 −GC 𝑑80𝑘 )/GC𝑑0 is the relative GC
+reduction fromS1-d0toS1-d80k;Δ comp=GC𝑆2 −GC 𝑑80𝑘 is the
+net GC change; andRetis the fraction ofS1-d0-correct probes re-
+maining correct atS1-d80k. MI and OG follow Section 3.5. Table 2
+reportsMI 𝑑80𝑘 in percent (theS1-d80kvalues in Figure 3 multi-
+plied by 100).
+Implementation details.All models share the same OpenClaw-
+based [27] runtime, checkpoint family, and probe pipeline. We use
+effective input tokens (EIT) reported by backbone providers as the
+depth signal and nativecompactionCountto detect compaction
+events, instantiating the four abstract states asS1-d0(EIT 23,184,
+0 compactions),S1-d50k(50,217, 0),S1-d80k(80,436, 0), andS2
+(100,081, 1 compaction). Fixed-seed, topic-disjoint filler turns only
+increase input depth and trigger native compaction, whose run-
+time policy remains unmodified; Appendix A.3 details the seman-
+tic controls. Appendix A.2 reports the controlledS2ablation over
+GPT-5 summary formats.
+Scope and generalizability.MIRAGE evaluates context depth,
+native compaction, and tool-mediated retrieval in a controlled
+planted-evidence setting; its results characterize state-conditioned
+behavior rather than provide a coverage-complete estimate of
+
+--- Page 6 ---
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil Liu et al.
+Table 1: Baseline (C0) metrics across all seven backbones and
+four conversation states. Metric columns are percentages;
+PF is a count. The gap VC−GC reveals overestimation by
+outcome-only evaluation.
+Model State AC SC VC GC HR WS PF
+Frontier API (C0 only)
+GPT-5 [26]
+S1-d085.1 93.9 85.785.722.7 6.1 5
+S1-d50k84.2 93.9 83.7 83.7 24.5 6.1 4
+S1-d80k83.9 93.9 83.8 82.8 25.0 6.1 1
+S288.4 97.0 85.9 84.8 19.2 3.0 2
+Claude-4.5-Haiku [1]
+S1-d080.7 94.9 46.546.530.6 5.1 3
+S1-d50k73.2 83.7 43.9 43.9 42.0 16.3 2
+S1-d80k71.4 75.0 42.0 41.0 39.4 25.0 1
+S273.0 73.0 40.0 36.0 39.0 27.0 0
+Open VLM (C0 only)
+Qwen3-VL-4B [3]
+S1-d077.4 71.0 61.054.027.3 29.0 1
+S1-d50k61.0 31.6 31.6 18.4 52.6 68.4 3
+S1-d80k55.0 3.0 5.0 1.0 72.0 97.0 0
+S264.9 52.1 44.8 34.4 53.1 47.9 5
+Qwen3-VL-8B [3]
+S1-d070.5 89.5 72.169.857.5 10.5 0
+S1-d50k54.5 78.0 60.0 54.0 89.0 22.0 0
+S1-d80k57.0 27.0 47.0 18.0 82.0 73.0 0
+S257.5 79.0 46.0 44.0 78.0 21.0 0
+Qwen3-VL-30B [3]
+S1-d071.5 82.0 74.072.042.0 18.0 0
+S1-d50k70.5 72.0 62.0 61.0 33.0 28.0 0
+S1-d80k65.5 47.0 44.0 41.0 20.0 53.0 0
+S263.5 53.1 39.8 37.8 28.3 46.9 3
+InternVL3.5-20B [34]
+S1-d052.9 75.3 24.720.098.9 24.7 26
+S1-d50k52.3 1.1 3.4 1.1 80.0 98.9 28
+S1-d80k54.1 0.0 0.0 0.0 81.5 100.0 78
+S256.6 60.6 18.1 13.8 88.6 39.4 18
+Gemma-3-27B [10]
+S1-d055.5 96.0 57.057.084.0 4.0 0
+S1-d50k56.0 71.0 45.0 34.0 86.0 29.0 0
+S1-d80k57.3 70.7 38.4 29.3 82.0 29.3 1
+S254.0 65.0 43.0 29.0 88.0 35.0 0
+multimodal personal-agent workloads. Because the state coordi-
+nates are runtime-defined rather than backbone-normalized, the
+post-compaction results apply to the model–runtime stack and
+do not isolate the contributions of memory-surface design, tool
+orchestration, provider EIT definitions, or compaction summary
+quality (Appendix A.5).
+4.2 Main Results
+4.2.1 RQ1: What Failure Patterns Emerge Under Conversation-
+State Variation?Frontier models are stable but internally di-
+vergent.Table 2 shows that GPT-5 has minimal DS at 3.4% and re-
+tains 94.0% of itsS1-d0-correct answers atS1-d80k;Δ comp=+0.02
+indicates slightS2recovery. Claude-4.5-Haiku degrades more
+clearly: DS=11.8%, retention drops to 73.9%, andΔ comp=−0.05
+shows continuedS2decline. In Table 1, WS rises from 5.1 to 27.0,
+indicating that Claude-4.5-Haiku’s failures increasingly manifest
+as provenance confusions rather than refusals.
+Open models show larger and more heterogeneous degrada-
+tion.Table 2 shows more heterogeneous degradation in the open-
+model group: Qwen3-VL-30B (43.1%)<Gemma-3-27B (48.6%)<
+Qwen3-VL-8B (74.2%)<Qwen3-VL-4B (98.1%)<InternVL3.5-20B
+S1-d0 S1-d50k S1-d80k S2
+Conversation State
+GPT-5
+Haiku
+Qwen3-4B
+Qwen3-8B
+Qwen3-30B
+InternVL-20B
+Gemma-27B
+0.07 0.09 0.10 0.11
+0.37 0.41 0.39 0.41
+0.24 0.49 0.26 0.42
+0.29 0.44 0.78 0.49
+0.12 0.12 0.09 0.17
+0.66 0.60 0.39 0.70
+0.38 0.64 0.67 0.67
+ 0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Mirage Index (MI)
+Figure 3: Mirage Index (MI; Section 3.5) across models and
+states. Higher values indicate a larger fraction of recorded
+answerable calls for which the model claims answerability
+without achieving grounded correctness.
+(100%). The most extreme retention failures occur at the low end:
+Qwen3-VL-4B retains 1 of 54S1-d0-correct answers atS1-d80k
+(Ret=1.9%), and InternVL3.5-20B retains none (Ret=0%).
+The mirage phenomenon.Figure 3 highlights states in which
+models claim answerability without achieving grounded cor-
+rectness. The strongest case is Qwen3-VL-8B atS1-d80k: 78%
+of recorded answerable calls jointly satisfy ˆ𝑧=YESand GC=0
+(MI=0.78); the marginal YES and GC rates are 96% and 18%, respec-
+tively. As defined in Section 3.5, MI covers outcome-preserving
+and answer-failure mirages. OG is reported separately because it
+ignores the answerability prediction: here OG=0.29 means that
+answer correctness overestimates grounded correctness by 29
+percentage points. InternVL3.5-20B atS2(MI=0.70) and Gemma-
+3-27B atS1-d80k/S2(MI=0.67) exhibit high mirage rates. By
+contrast, GPT-5 maintains MI≤0.11 and OG≤0.01 across all states.
+S2 is not simply a harder version of S1-d80k.Figure 4 shows
+that post-compaction behavior is qualitatively distinct from deep
+pre-compaction failure. GPT-5 shows near-complete stability
+(76/100✓→✓→✓). Qwen3-VL-8B exhibits a prominent recovery
+flow: 26 questions that fail atS1-d80krecover atS2(✓→ × →✓),
+consistent with the post-compaction representation in the current
+runtime re-surfacing some evidence. InternVL3.5-20B shows lim-
+ited recovery, with only 13 of 98 probes grounded atS2.Δ comp
+quantifies this divergence: Qwen3-VL-4B recovers substantially at
++0.33, while Claude-4.5-Haiku continues to degrade at−0.05. This
+separatesS1-d80kandS2as distinct failure regimes.
+Degradation is model- and state-dependent.Table 1 shows
+that Qwen3-VL-4B and 8B deteriorate sharply byS1-d80kbut
+partially recover atS2, whereas Qwen3-VL-30B degrades more
+gradually and continues to decline after compaction. These con-
+trasting trajectories reinforce that deep pre-compaction and post-
+compaction states constitute distinct failure regimes rather than
+points on a single monotonic degradation curve. The extension set
+shows the same deep-state reduction in source correctness across
+all three Qwen sizes (Appendix A.1).
+
+--- Page 7 ---
+
+MIRAGE: How Conversation State Shapes Historical Evidence Use in Multimodal Personal Agents MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+S1-d0 S1-d80k S2
+GPT-5
+84
+16
+82
+18
+84
+16
+S1-d0 S1-d80k S2
+Haiku
+46
+54
+41
+59
+36
+64
+S1-d0 S1-d80k S2
+Qwen3-VL-4B
+54
+46
+99
+33
+67
+S1-d0 S1-d80k S2
+Qwen3-VL-8B
+60
+26
+16
+70
+42
+44
+S1-d0 S1-d80k S2
+Qwen3-VL-30B
+72
+28
+41
+59
+37
+63
+S1-d0 S1-d80k S2
+InternVL3.5-20B
+17
+81
+98
+13
+85
+S1-d0 S1-d80k S2
+Gemma-3-27B
+57
+43
+29
+71
+29
+71
+Evidence Grounding Flow across Conversation States (S1-d0  S1-d80k  S2)
+Grounded (GC=1) Ungrounded (GC=0) or unparseable
+Figure 4: Evidence-grounding transitions across states for all seven models. Numbers show counts over answerable probes
+shared across the three states; blue denotes grounded outputs, and pink denotes ungrounded or unparseable outputs.
+GPT-5 Haiku Qwen3
+4B
+Qwen3
+8B
+Qwen3
+30B
+InternVL
+20B
+Gemma
+27B
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0Proportion
+S1-d0
+GPT-5 Haiku Qwen3
+4B
+Qwen3
+8B
+Qwen3
+30B
+InternVL
+20B
+Gemma
+27B
+S1-d50k
+GPT-5 Haiku Qwen3
+4B
+Qwen3
+8B
+Qwen3
+30B
+InternVL
+20B
+Gemma
+27B
+S1-d80k
+GPT-5 Haiku Qwen3
+4B
+Qwen3
+8B
+Qwen3
+30B
+InternVL
+20B
+Gemma
+27B
+S2
+Retrieval Path Composition: C0 vs Cm across States
+C0: Rctx C0: Rtool Cm: Rctx Cm: Rtool
+Figure 5: Retrieval-path composition underC0andCm. Percentages use all recorded probe calls in each model–condition–state
+cell; blue/pink encodeC0/Cm, and solid/hatched encode𝑅 context/𝑅tool. Frontier models haveC0only.
+Table 2: Cross-state diagnostic indicators underC0. DS, Ret,
+andMI 𝑑80𝑘 are percentages;Δ comp and OG are proportions.
+OG (per state)
+Model DSΔ comp RetMI 𝑑80𝑘 S1-d0 S1-d50k S1-d80k S2
+GPT-5 [26] 3.4+0.02 94.0 10.0 0.00 0.00 0.01 0.01
+Claude-4.5-Haiku [1] 11.8−0.05 73.9 39.0 0.00 0.00 0.01 0.04
+Qwen3-VL-4B [3] 98.1+0.33 1.9 26.0 0.07 0.13 0.04 0.10
+Qwen3-VL-8B [3] 74.2+0.26 21.7 78.0 0.02 0.06 0.29 0.02
+Qwen3-VL-30B [3] 43.1−0.03 51.4 9.0 0.02 0.01 0.03 0.02
+InternVL3.5-20B [34] 100.0+0.14 0.0 39.0 0.04 0.02 0.00 0.04
+Gemma-3-27B [10] 48.6−0.003 42.1 67.0 0.00 0.11 0.09 0.14
+4.2.2 RQ2: Why Do These Patterns Arise?Frontier vs. open: a
+fundamental retrieval-mechanism divide.Figure 5 reveals a
+stark asymmetry underC0in the current runtime. The frontier
+models actively employ tool-mediated retrieval: GPT-5 routes 25%
+of recordedS2calls through𝑅 tool, and Claude-4.5-Haiku uses tools
+for 33–37% of recorded calls even at shallow depth. Open mod-
+els are predominantly𝑅 context-driven; Qwen3-VL-30B is the only
+partial exception, with𝑅 tool at 17% inS1-d0and 14% inS2. Even
+whenS1-d80kWS reaches 97.0% for Qwen3-VL-4B and 100.0% for
+InternVL3.5-20B, neither shifts into𝑅 tool, suggesting that models
+in this setting do not recognize failed in-context access and switch
+retrieval routes. UnderCm, Qwen3-VL-8B and 30B reach𝑅 tool=95–
+100%across states; 4B does so only atS1-d0andS2. InternVL3.5-
+20B and Gemma-3-27B remain at𝑅 tool=0%, indicating noncompli-
+ance under the current orchestration contract.
+Source drift: even correct answers change evidence paths.
+Among probes where GC=1 at bothS1-d0andS1-d80k, 30–59%
+use a differentpred_sourceacross the two states (Qwen3-VL-30B:
+59%, Gemma-3-27B: 58%, Qwen3-VL-8B: 54%, Claude-4.5-Haiku:
+44%, GPT-5: 30%). State change therefore alters not onlywhether
+the agent answers correctly, but alsohowit reaches the correct
+evidence, a shift invisible to outcome-only evaluation. This means
+that even when GC remains stable, the underlying evidence-access
+mechanism has silently shifted, an instability that could compound
+across longer interaction histories.
+Compaction ablation.Per fact citations raise Qwen3-VL-8B SC
+from 79 to 95 while GC remains near 45, whereas 4B and 30B gain
+no GC; summary format can improve attribution without reliably
+improving grounding (Appendix A.2).
+4.2.3 RQ3: Can Retrieval Pressure Mitigate State-Dependent Prove-
+nance Failure?Stage 1: Tool-compliance triage.UnderCm, all
+three Qwen models execute tool calls, although 4B remains pre-
+dominantly𝑅 context-driven atS1-d50kandS1-d80k. The other
+models fail to produce executable calls: InternVL3.5-20B emits
+pseudo-tool text (e.g.,<|im_start|>tool ... artifact_recall),
+leaving𝑅 tool=0%under both conditions, while Gemma-3-27B’s PF
+rises from 0.1% to≥87%and makesS2unevaluable. We treat both
+as mitigation-execution failures under the current orchestration
+contract, exclude theirCmdeltas, and report a controlled parser-
+adapter check in Appendix A.4.Stage 2: Grounding efficacy
+among compliant models.Restricting to the three compliant
+
+--- Page 8 ---
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil Liu et al.
+S1-d0
+S1-d50k
+S1-d80k
+S2
+GC (solid) / SC (dotted)
++2
++27
++19
++39
++18
++78
+-25
+-14
+Qwen3-VL-4B
+S1-d0
+S1-d50k
+S1-d80k
+S2
+-6
++10
++9
++14
++21
++56
+-26
+-37
+Qwen3-VL-8B
+S1-d0
+S1-d50k
+S1-d80k
+S2
++2
++11
++13
++20
++14
++33
+-8
+-12
+Qwen3-VL-30B
+S1-d0
+S1-d50k
+S1-d80k
+S2
++13
+-8
++1
++7
++0
++0
+-1
+-25
+InternVL3.5-20B
+(unreliable)
+S1-d0
+S1-d50k
+S1-d80k
+S2
++0
+-17
++16
++12
++10
++3
+Gemma-3-27B
+(unreliable)
+50
+ 0 50
+S1-d0
+S1-d50k
+S1-d80k
+S2
+AC (solid) / HR (dotted)
+-9
++43
++12
++47
++16
++28
+-11
++42
+50
+ 0 50
+S1-d0
+S1-d50k
+S1-d80k
+S2
+-18
++43
+-5
++11
+-5
++18
+-7
++11
+50
+ 0 50
+ (Cm  C0), percentage points
+S1-d0
+S1-d50k
+S1-d80k
+S2
+-15
++39
+-15
++53
+-15
++76
+-9
++54
+50
+ 0 50
+S1-d0
+S1-d50k
+S1-d80k
+S2
++9
+-17
++6
++0
+-7
++11
++2
+-7
+50
+ 0 50
+S1-d0
+S1-d50k
+S1-d80k
+S2
++15
+-44
++12
+-24
++3
+-6
+Effect of Retrieval Pressure (Cm) on Four Metrics by State
+Top: GC / SC (provenance)    Bottom: AC / HR (answerability)
+Solid: GC / AC Dotted: SC / HR Positive
+ Negative
+ Unreliable (grey)
+Figure 6: Effect of retrieval pressure, shown asΔ(Cm−C0)in percentage points. Top: GC/SC; bottom: AC/HR. Grey marks tool
+non-compliance or parse failure; “—” denotes unevaluable cells.
+Qwen models, Figure 6 shows thatCmsubstantially improves
+pre-compaction provenance. AtS1-d80k, Qwen3-VL-30B gains
+ΔSC=+33andΔGC=+14. Qwen3-VL-8B gainsΔSC=+56and
+ΔGC=+21, while Qwen3-VL-4B gainsΔSC=+78andΔGC=+18.
+These improvements confirm that, among models that successfully
+execute retrieval, explicit tool use reduces provenance confusion
+when the original evidence still exists in the workspace.
+S2 is not reliably repaired by retrieval pressure.AtS2, all three
+regress in SC (−12,−37,−14) and GC (−8,−26,−24). This con-
+trast shows that retrieval pressure helps while evidence is intact
+but does not reliably repair the post-compaction state produced
+by the current runtime. We hypothesize that retrieved workspace
+content becomes lossier or differently organized after compaction,
+anchoring models to incomplete evidence.
+HR reveals a provenance–conservatism tradeoff.Cmincreases
+HR even where it improves grounding: on Qwen3-VL-30B,ΔHR
+reaches+76atS1-d80k(Figure 6, bottom row). The model be-
+comes better at grounding answerable questions, but worse at re-
+fusing unsupported ones.
+4.3 Case Study
+We illustrate two core findings with probe-level examples drawn
+from the evaluation traces (Table 3).
+Case 1: Mirage phenomenon.Qwen3-VL-8B answersleelinat
+bothS1-d0andS1-d80k, but the source field degrades from the
+correct artifact to NONE. AtS1-d80k, VC therefore remains 1
+while SC and GC fall to 0, making this an outcome-preserving mi-
+rage counted by MI and reflected in OG. Outcome-only evaluation
+scores both states identically; only source-aware evaluation de-
+tects the grounding failure. AtS2, the model recovers the correct
+source, consistent with the partial S2 recovery in Figure 4.
+Case 2: Cm repair boundary.UnderC0atS1-d80k, Qwen3-VL-
+30B fails to locate any source via𝑅 context. UnderCm, the retrieval-
+pressure instruction triggersartifact_recall(𝑅 tool), which re-
+turns the correct artifact and restores GC to 1. With the model,
+query, and gold evidence fixed, this contrast isolates the benefit
+Table 3: Two probe-level case studies: Case 1 is an outcome-
+preserving mirage; Case 2 shows thatCmrepairsS1-d80kbut
+notS2.
+Case Cond. State Ans. Source Answer GC
+Case 1: Mirage (Qwen3-VL-8B, “What is the username in the fitness profile?”)
+C0S1-d0YESprofile. . . jsonleelin 1
+C0S1-d80kYESNONEleelin 0
+C0S2YESprofile. . . jsonleelin 1
+Case 2: Cm boundary (Qwen3-VL-30B, GDP query, gold:cqa_9f9df328)
+C0S1-d80kYESNONENONE 0
+CmS1-d80kYEScqa_9f9df328.png516.40 1
+CmS2YESNONENONE 0
+of successful tool-mediated retrieval. AtS2, the same tool call exe-
+cutes but returns empty content, separating tool compliance from
+evidence recoverability: compaction has degraded the stored evi-
+dence, and GC falls back to 0. This encapsulates the RQ3 finding:
+retrieval pressure repairs pre-compaction provenance failure but
+cannot recover evidence that compaction has already destroyed.
+5 Conclusion
+We presented MIRAGE, an empirical protocol for historical ev-
+idence use in multimodal personal agents under conversation-
+state variation. Across seven backbones, we find that (RQ1) pre-
+compaction depth and post-compaction continuation are distinct
+failure regimes; (RQ2) open models are reluctant to spontaneously
+adopt tool-mediated retrieval even when context-based access has
+failed; and (RQ3) among tool-compliant models, explicit retrieval
+pressure recovers provenance fidelity where original evidence
+remains intact, but does not reliably repair the post-compaction
+state produced by the current runtime. These findings suggest
+that historical evidence use should be evaluated directly under
+state variation, with explicit attention to retrieval mechanism
+and provenance fidelity, rather than inferred from outcome-only
+correctness.
+
+--- Page 9 ---
+
+MIRAGE: How Conversation State Shapes Historical Evidence Use in Multimodal Personal Agents MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Acknowledgments
+This research is supported by the National Key R&D Program of
+China (No. 2023YFC3303800).
+References
+[1] Anthropic. 2025. Introducing Claude Haiku 4.5. https://www.anthropic.com/
+news/claude-haiku-4-5.
+[2] Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and Hannaneh Hajishirzi. 2024.
+Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection.
+InThe Twelfth International Conference on Learning Representations.
+[3] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng,
+Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. 2025. Qwen3-VL
+Technical Report.
+[4] Yuanchen Bei, Tianxin Wei, Xuying Ning, Yanjun Zhao, Zhining Liu, Xiao Lin,
+Yada Zhu, Hendrik Hamann, Jingrui He, and Hanghang Tong. 2026. Mem-
+Gallery: Benchmarking Multimodal Long-Term Conversational Memory for
+MLLM Agents. InProceedings of the 64th Annual Meeting of the Association for
+Computational Linguistics (Volume 1: Long Papers).
+[5] Ding Chen, Simin Niu, Kehang Li, Peng Liu, Xiangping Zheng, Bo Tang, Xinchi
+Li, Feiyu Xiong, and Zhiyu Li. 2025. Halumem: Evaluating Hallucinations in
+Memory Systems of Agents.arXiv preprint arXiv:2511.03506(2025).
+[6] Kanzhi Cheng, Qiushi Sun, Yougang Chu, Fangzhi Xu, Li YanTao, Jianbing
+Zhang, and Zhiyong Wu. 2024. SeeClick: Harnessing GUI Grounding for Ad-
+vanced Visual GUI Agents. InProceedings of the 62nd Annual Meeting of the As-
+sociation for Computational Linguistics (Volume 1: Long Papers). 9313–9332.
+[7] Andy Chung, Yichi Zhang, Kaixiang Lin, Aditya Rawal, Qiaozi Gao, and Joyce
+Chai. 2025. Evaluating Long-Context Reasoning in LLM-Based WebAgents.
+arXiv preprint arXiv:2512.04307(2025).
+[8] Yufeng Du, Minyang Tian, Srikanth Ronanki, Subendhu Rongali, Sravan Babu
+Bodapati, Aram Galstyan, Azton Wells, Roy Schwartz, Eliu A Huerta, and Hao
+Peng. 2025. Context Length Alone Hurts LLM Performance Despite Perfect Re-
+trieval. InFindings of the Association for Computational Linguistics: EMNLP 2025.
+[9] Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai,
+Jiawei Sun, Meng Wang, and Haofen Wang. 2023. Retrieval-Augmented Gen-
+eration for Large Language Models: A Survey.arXiv preprint arXiv:2312.10997
+(2023). arXiv:2312.10997 [cs.CL] https://arxiv.org/abs/2312.10997
+[10] Gemma Team, Google DeepMind. 2025. Gemma 3 Technical Report.arXiv
+preprint arXiv:2503.19786(2025). arXiv:2503.19786 [cs.CL] https://arxiv.org/abs/
+2503.19786
+[11] Zexue He, Yu Wang, Churan Zhi, Yuanzhe Hu, Tzu-Ping Chen, Lang Yin, Ze
+Chen, Tong Arthur Wu, Siru Ouyang, Zihan Wang, et al. 2026. MemoryArena:
+Benchmarking Agent Memory in Interdependent Multi-Session Agentic Tasks.
+[12] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima
+Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. 2024. RULER: What’s the
+Real Context Size of Your Long-Context Language Models?arXiv preprint
+arXiv:2404.06654(2024).
+[13] Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian
+Wang, Qianglong Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, et al. 2025.
+A Survey on Hallucination in Large Language Models: Principles, Taxonomy,
+Challenges, and Open Questions.ACM Transactions on Information Systems43,
+2 (2025), 1–55.
+[14] Jiaze Li, Hao Yin, Wenhui Tan, Jingyang Chen, Boshen Xu, Yuxun Qu, Yijing
+Chen, Jianzhong Ju, Zhenbo Luo, and Jian Luan. 2026. Revisor: Beyond Textual
+Reflection, towards Multimodal Introspective Reasoning in Long-Form Video
+Understanding. InProceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition. 5059–5069.
+[15] Xixun Lin, Yang Liu, Yancheng Chen, Yongxuan Wu, Yucheng Ning, Yilong Liu,
+Nan Sun, Shun Zhang, Bin Chong, Chuan Zhou, and Yanan Cao. 2026. Safe-
+Harness: Lifecycle-Integrated Security Architecture for LLM-based Agent De-
+ployment.arXiv preprint arXiv:2604.13630(2026). arXiv:2604.13630 [cs.CR]
+https://arxiv.org/abs/2604.13630
+[16] Xixun Lin, Yucheng Ning, Jingwen Zhang, Yan Dong, Yilong Liu, Yongxuan Wu,
+Xiaohua Qi, Nan Sun, Yanmin Shang, Kun Wang, et al. 2025. LLM-based Agents
+Suffer from Hallucinations: A Survey of Taxonomy, Methods, and Directions.
+arXiv preprint arXiv:2509.18970(2025). arXiv:2509.18970 [cs.AI] https://arxiv.
+org/abs/2509.18970
+[17] Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua,
+Fabio Petroni, and Percy Liang. 2024. Lost in the Middle: How Language Models
+Use Long Contexts.Transactions of the Association for Computational Linguistics
+12 (2024), 157–173.
+[18] Yilong Liu, Xixun Lin, Pengfei Cao, Ge Zhang, Fang Fang, and Yanan Cao. 2026.
+Do LLMs Know Tool Irrelevance? Demystifying Structural Alignment Bias in
+Tool Invocations. InProceedings of the 64th Annual Meeting of the Association for
+Computational Linguistics (Volume 1: Long Papers). 31934–31958.
+[19] Yu Liu, Wenxiao Zhang, Cong Cao, Wenxuan Lu, Fangfang Yuan, Diandian Guo,
+Kun Peng, Qiang Sun, Kaiyan Zhang, Yanbing Liu, et al. 2026. PRISMA: Rein-
+forcement Learning Guided Two-Stage Policy Optimization in Multi-Agent Ar-
+chitecture for Open-Domain Multi-Hop Question Answering.arXiv preprint
+arXiv:2601.05465(2026). arXiv:2601.05465 [cs.AI] https://arxiv.org/abs/2601.
+05465
+[20] Kaifang Long, Guoyang Xie, Lianbo Ma, Jiaqi Liu, and Zhichao Lu. 2025. Re-
+visiting multimodal fusion for 3D anomaly detection from an architectural per-
+spective. InProceedings of the AAAI Conference on Artificial Intelligence, Vol. 39.
+12273–12281.
+[21] Lin Long, Yichen He, Wentao Ye, Yiyuan Pan, Yuan Lin, Hang Li, Junbo Zhao,
+and Wei Li. 2025. Seeing, Listening, Remembering, and Reasoning: A Multimodal
+Agent with Long-Term Memory.arXiv preprint arXiv:2508.09736(2025).
+[22] Shengjie Ma, Chenlong Deng, Jiaxin Mao, Jiadeng Huang, Teng Wang, Junjie
+Wu, Changwang Zhang, and Jun Wang. 2025. Proof-of-Use: Mitigating Tool-
+Call Hacking in Deep Research Agents.arXiv preprint arXiv:2510.10931(2025).
+arXiv:2510.10931 [cs.AI] https://arxiv.org/abs/2510.10931
+[23] Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco
+Barbieri, and Yuwei Fang. 2024. Evaluating Very Long-Term Conversational
+Memory of LLM Agents. InProceedings of the 62nd Annual Meeting of the Asso-
+ciation for Computational Linguistics (Volume 1: Long Papers). 13851–13870.
+[24] Ahmed Masry, Do Xuan Long, Jia Qing Tan, Shafiq Joty, and Enamul Hoque.
+2022. ChartQA: A Benchmark for Question Answering about Charts with Vi-
+sual and Logical Reasoning. InFindings of the Association for Computational Lin-
+guistics: ACL 2022. Association for Computational Linguistics, Dublin, Ireland,
+2263–2279. doi:10.18653/v1/2022.findings-acl.177
+[25] Jingbiao Mei, Jinghong Chen, Guangyu Yang, Xinyu Hou, Margaret Li, and Bill
+Byrne. 2026. According to Me: Long-Term Personalized Referential Memory QA.
+arXiv preprint arXiv:2603.01990(2026).
+[26] OpenAI. 2025. Introducing GPT-5 for developers. https://openai.com/index/
+introducing-gpt-5-for-developers.
+[27] OpenClaw Contributors. 2026. OpenClaw: Personal AI Assistant. https://github.
+com/openclaw/openclaw.
+[28] Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G Patil, Ion Sto-
+ica, and Joseph E Gonzalez. 2023. MemGPT: Towards LLMs as Operating Sys-
+tems.arXiv preprint arXiv:2310.08560(2023).
+[29] Joon Sung Park, Joseph C. O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy
+Liang, and Michael S. Bernstein. 2023. Generative Agents: Interactive Simulacra
+of Human Behavior. InProceedings of the 36th Annual ACM Symposium on User
+Interface Software and Technology. Association for Computing Machinery, New
+York, NY, USA, Article 2, 22 pages. doi:10.1145/3586183.3606763
+[30] Thomas Schuster, Marian Lambert, Nico Döring, and Julius Trögele. 2025.
+Needle-in-the-Haystack Testing LLMs with a Complex Reasoning Task. InIn-
+ternational Conference on Engineering Applications of Neural Networks. Springer,
+254–266.
+[31] Freda Shi, Xinyun Chen, Kanishka Misra, Nathan Scales, David Dohan, Ed H.
+Chi, Nathanael Schärli, and Denny Zhou. 2023. Large Language Models Can Be
+Easily Distracted by Irrelevant Context. InProceedings of the 40th International
+Conference on Machine Learning (Proceedings of Machine Learning Research,
+Vol. 202). PMLR, Honolulu, Hawaii, USA, 31210–31227. https://proceedings.mlr.
+press/v202/shi23a.html
+[32] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and
+Shunyu Yao. 2023. Reflexion: Language Agents with Verbal Reinforcement
+Learning.Advances in neural information processing systems36 (2023), 8634–
+8652.
+[33] Haoran Tan, Zeyu Zhang, Chen Ma, Xu Chen, Quanyu Dai, and Zhenhua Dong.
+2025. Membench: Towards more comprehensive evaluation on the memory of
+llm-based agents. InFindings of the Association for Computational Linguistics:
+ACL 2025. 19336–19352.
+[34] Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei,
+Zhaoyang Liu, Linglin Jing, Shenglong Ye, Jie Shao, et al. 2025. InternVL3.5:
+Advancing Open-Source Multimodal Models in Versatility, Reasoning, and Effi-
+ciency.arXiv preprint arXiv:2508.18265(2025). arXiv:2508.18265 [cs.CV] https:
+//arxiv.org/abs/2508.18265
+[35] Yuhui Wang, Tanqiu Jiang, Jiacheng Liang, Charles Fleming, and Ting Wang.
+2026. MAGE: Safeguarding LLM Agents against Long-Horizon Threats via
+Shadow Memory. arXiv:2605.03228 [cs.CR] https://arxiv.org/abs/2605.03228
+[36] Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu.
+2024. LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive
+Memory.arXiv preprint arXiv:2410.10813(2024).
+[37] ZhengXian Wu, Hangrui Xu, Kai Shi, Zhuohong Chen, Yunyao Yu, Chuanrui
+Zhang, Zirui Liao, Jun Yang, Zhenyu Yang, Haonan Lu, and Haoqian Wang. 2026.
+ProMSA: Progressive Multimodal Search Agents for Knowledge-Based Visual
+Question Answering. arXiv:2606.27974 [cs.CV] https://arxiv.org/abs/2606.27974
+[38] Wenxiao Zhang, Xiangrui Kong, Conan Dewitt, Thomas Bräunl, and Jin B. Hong.
+2026. Enhancing reliability in LLM-integrated robotic systems: A unified ap-
+proach to security and safety.Journal of Systems and Software(2026).
+
+--- Page 10 ---
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil Liu et al.
+[39] Xinrong Zhang, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen,
+Moo Khai Hao, Xu Han, Zhen Leng Thai, Shuo Wang, Zhiyuan Liu, and Maosong
+Sun. 2024.∞Bench: Extending Long Context Evaluation Beyond 100K Tokens.
+InProceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers). Association for Computational Linguistics,
+Bangkok, Thailand, 15262–15277. doi:10.18653/v1/2024.acl-long.814
+[40] Yiran Zhang, Jincheng Hu, Mark Dras, and Usman Naseem. 2025. Cog-
+Mem: A Cognitive Memory Architecture for Sustained Multi-Turn Reason-
+ing in Large Language Models.arXiv preprint arXiv:2512.14118(2025).
+arXiv:2512.14118 [cs.CL] https://arxiv.org/abs/2512.14118
+[41] Qicheng Zhao, Qi Sun, and Zheyu Yan. 2026. Seeing the End at Step
+Zero: Accelerating Diffusion MLLMs via MLP Sparsity-Aware Truncation.
+arXiv:2607.14557 [cs.AI] https://arxiv.org/abs/2607.14557
+
+--- Page 11 ---
+
+MIRAGE: How Conversation State Shapes Historical Evidence Use in Multimodal Personal Agents MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+A Appendices
+A.1 Evidence-Type Extension
+We apply the same protocol and deterministic scoring to 109
+additional probes (55 answerable and 54 unanswerable) over six
+evidence types: a natural photo, infographic, code file, email, in-
+voice PDF, and report-with-table PDF. Table 4 compares source
+correctness (SC) on this extension with the original chart/UI ev-
+idence set underC0. The extension is harder in absolute terms
+for the open VLMs, but all three Qwen sizes again show sub-
+stantially lower SC atS1-d80kandS2than atS1-d0. Thus, the
+state-conditioned source-recovery decline is not confined to charts
+and user-interface artifacts.
+Table 4: SC across the original chart/UI evidence and six ad-
+ditional evidence types underC0. The original set has 100
+answerable probes and the extension has 55; values are per-
+centages.
+Model Evidence setS1-d0 S1-d50k S1-d80k S2
+Qwen3-VL-4B Original 71 32 3 52
+Extension 46 14 16 23
+Qwen3-VL-8B Original 90 78 27 79
+Extension 51 33 15 35
+Qwen3-VL-30B Original 82 72 47 53
+Extension 39 23 12 25
+A.2 Compaction-Strategy Ablation
+AtS2, we hold the evidence, questions, Qwen answerer, and scorer
+fixed while varying only how GPT-5 writes the compaction sum-
+mary. The verbatim condition preserves the paper’s default sum-
+mary, the free-form condition rewrites the same paths and values,
+and the per fact citations condition attaches a source path to each
+value. Table 5 reports SC/GC for all three Qwen sizes. Per fact cita-
+tions substantially raise SC for Qwen3-VL-8B (79 to 95) while GC
+remains near 45; GC decreases for Qwen3-VL-4B and Qwen3-VL-
+30B. Summary format can therefore improve attribution without
+reliably improving grounding in this stack.
+Table 5: SC/GC atS2underC0for three GPT-5 summary for-
+mats. Verbatim is the paper default; each cell reports per-
+centages over 100 answerable probes.
+Answerer Verbatim Free form Per fact citations
+Qwen3-VL-4B 52 / 34 63 / 22 64 / 24
+Qwen3-VL-8B 79 / 44 94 / 44 95 / 47
+Qwen3-VL-30B 53 / 38 48 / 31 52 / 34
+A.3 Question Construction and Filler Controls
+The question bank contains 200 manually constructed probes over
+six planted evidence objects: 100 answerable questions and 100
+matched unanswerable counterparts, organized into 12 object–
+answerability families. Answerable probes target concrete values
+rendered in each chart or UI artifact; their unanswerable coun-
+terparts preserve the topic, local cues, and response format while
+removing supporting evidence. Each annotation records the gold
+answerability judgment, canonical source path, normalized value,
+difficulty (lookup, comparison/normalization, or layout-sensitive
+extraction), query type, and shortcut risk from priors, filenames,
+templates, or lexical cues.
+Filler turns are sampled with a fixed seed from an independently
+authored library of 20 persona-consistent software-engineering
+and machine-learning tasks. They are deliberately topic-disjoint
+from planted evidence and contain no target answers, artifact
+identifiers, or topic-matched distractors. Their sole purpose is to
+increase input depth and trigger native compaction while leaving
+the planted evidence unchanged.
+A.4 Tool-Call Compliance Check
+Tool-call parseability is determined jointly by a backbone’s emit-
+ted format and the corresponding standard per-model parser in-
+tegrated by the runtime. Qwen3-VL emits Hermes-style tool-call
+blocks accepted by its matching parser, whereas InternVL3.5-20B
+and Gemma-3-27B emit inconsistent formats under the current
+orchestration contract. As a controlled check, a minimal 30-line
+adapter maps one VLM’s native tool tokens into the expected
+parser format without changing its output content. For the four
+inspected cases, the adapter changes the recorded access path
+fromR_contexttoR_toolin all 4/4 cases, confirming that the
+diagnostic distinguishes model-side formatting compliance from
+the content of the returned answer.
+A.5 Benchmark and Depth Context
+Table 6 contrasts shared-backbone scores from ATM-Bench [25]
+with MIRAGE’s state-conditioned diagnostics. Table 7 summa-
+rizes the conceptual distinction from ATM-Bench and Memor-
+yArena [11]: MIRAGE manipulates conversation state while hold-
+ing planted evidence, questions, and scoring fixed, and separates
+source attribution from grounded correctness.
+Table 6: Existing-benchmark scores versus MIRAGE’s state-
+conditioned diagnostic gap for shared backbones.
+Backbone ATM-Bench oracle MIRAGE under state variation
+Qwen3-VL-8B QS 77.8 (Hard 47.3)S1-d80k: joint-event MI 0.78; separate
+OG 0.29
+GPT-5 QS 85.3 (Hard 74.7) MI≤0.11and OG≤0.01across
+states
+Table 7: Conceptual comparison with the closest memory
+benchmarks.
+Axis
+Memory
+Arena ATM-
+Bench
+MIRAGE
+Conversation state as sole
+controlled variable
+no noyes
+Per-claim source attribution (SC) no partialyes
+Pre/post-compaction regime
+separation
+no noyes
+Planted multimodal evidence no partialyes
+Diagnoses mechanism vs.
+outcome only
+partial partialyes
+
+--- Page 12 ---
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil Liu et al.
+The fixed 50k/80k checkpoints are lifecycle probes rather than
+tuned thresholds. Table 8 reports the fraction of each advertised
+context window represented byd80kand the associated depth sen-
+sitivity and retention. The same absolute coordinate spans 20% of
+GPT-5’s window but 63% of Gemma-3’s, so open models are not ad-
+vantaged by the fixed checkpoints. Within Qwen3-VL, where the
+context window and architecture family are controlled, larger mod-
+els show lower depth sensitivity and higher retention.
+Table 8: Depth normalization and within-family size trend.
+Backbone/family Windowd80kDS Ret
+GPT-5 400K 20% 3.4 94.0
+Claude-4.5-Haiku 200K 40% 11.8 73.9
+Gemma-3-27B 128K 63% 48.6 42.1
+Qwen3-VL-4B 256K 31% 98.1 1.9
+Qwen3-VL-8B 256K 31% 74.2 21.7
+Qwen3-VL-30B 256K 31% 43.1 51.4
+A.6 Statistical Uncertainty and Routing
+Stability
+Table 9 reports Wilson 95% confidence intervals using the observed
+valid-probe denominator for each representative single-run cell.
+These intervals quantify within-run binomial uncertainty rather
+than variability across the three runs; the reported main-table met-
+rics remain averages over three independent runs. The intervals
+preserve the main contrasts, including the separation between
+Qwen3-VL-4B’s GC collapse and Qwen3-VL-30B’s retained GC at
+S1-d80k.
+Table 9: Representative single-run Wilson 95% confidence in-
+tervals.
+Cell Count Rate 95% CI
+Qwen3-VL-30B GC,S1-d80k41/100 41.0% [31.9, 50.8]
+Qwen3-VL-4B GC,S1-d80k1/100 1.0% [0.2, 5.4]
+Gemma-3-27B SC,S1-d80k70/99 70.7% [61.1, 78.8]
+GPT-5 GC,S284/99 84.8% [76.5, 90.6]
+Routing is also stable at the scale relevant to the paper’s mech-
+anism claims. GPT-5 uses the tool route for 50/200S2calls (25%)
+while maintaining GC=84.8%. Qwen3-VL-4B and Qwen3-VL-8B re-
+main at 0/199–200 tool calls across all states, whereas Qwen3-VL-
+30B uses tools only atS1-d0(34/200) andS2(28/200). Thus, GPT-
+5’s stability reflects a different route mixture rather than context
+continuity alone.

@@ -1,0 +1,819 @@
+--- Page 1 ---
+
+ERPBENCH: A STATE-GROUNDED EV ALUATION PARADIGM FOR COMPUTER-USE
+AGENTS IN ENTERPRISE SOFTW ARE
+Kratika Bhagtani∗, Kusha Sridhar∗, Maziyar Baran Pouyan,
+Yuying Zhao, Eugene Siow
+Center for Advanced AI, Accenture
+{kratika.bhagtani, k.sridhara.murthy, maziyar.baran.pouyan,
+yuying.d.zhao, eugene.siow}@accenture.com
+ABSTRACT
+Computer-use agents that operate through screenshots and
+simulated actions are advancing rapidly, yet their evaluation
+remains anchored to general desktop and web tasks. En-
+terprise Resource Planning (ERP) systems run the finance,
+procurement, inventory, and customer operations of organiza-
+tions worldwide, and pose distinct challenges for computer-
+use agents: dense interfaces, coordinated multi-step interac-
+tions, and errors that alter persistent business records rather
+than surfacing on screen. Existing enterprise benchmarks rely
+on proprietary platforms or on simulated approximations of
+such software. We introduce ERPBench, a benchmark that
+evaluates screenshot-only agents on a live and reproducible
+ERP system and scores each task against ground-truth val-
+ues in its database. Beyond the benchmark, we present a
+production-grade harness that gates agent actions behind hu-
+man approval for safe deployment, which ERPBench runs
+autonomously. Evaluating six closed and open-source agents,
+we demonstrate that strong general GUI performance does
+not transfer to enterprise reliability. Even when an agent
+reaches the right form and saves it, the stored record is often
+wrong: some agents save in up to 85% of runs but write the
+correct value in as few as 3%. We further characterize failure
+modes specific to enterprise workflows.
+Index Terms—Computer-use agents, agent safety, enter-
+prise software, human-in-the-loop, ERP
+1. INTRODUCTION
+Advances in multimodal large language models (LLMs) have
+enabledcomputer-use agents(CUAs) that operate graphi-
+cal user interfaces (GUIs) directly, through screenshots and
+simulated mouse and keyboard actions [1, 2, 3, 4]. On gen-
+eral desktop and web benchmarks such as OSWorld [5],
+WindowsAgentArena [6], and WebArena [7], CUAs now
+approach or exceed human performance, suggesting that gen-
+eral GUI interaction is becoming tractable. This progress
+© 2026 Accenture. All rights reserved.
+∗These authors contributed equally.
+does not necessarily translate to enterprise software. Busi-
+ness systems such as Enterprise Resource Planning (ERP)
+and Customer Relationship Management (CRM), spanning
+finance, procurement, and inventory, differ fundamentally
+from consumer applications in both workflow structure and
+failure cost. Here a visually plausible interaction is not
+enough: an agent may navigate to the correct screen, click
+the expected controls, and observe a genuine success confir-
+mation, yet leave the business record unchanged or wrong.
+The confirmation reflects that the interface accepted an ac-
+tion, not that the intended value reached the database: the
+value entered on screen may never have been bound to the
+field it appears to fill, so what persists is stale, empty, or
+wrong. Such failures can be invisible from screenshots alone,
+yet they propagate into downstream operational and financial
+processes. Existing GUI benchmarks primarily target gen-
+eral desktop and web environments [5, 6, 7], while recent
+enterprise benchmarks use proprietary platforms or simulated
+enterprise environments [8, 9, 10]. These limitations moti-
+vate an evaluation paradigm that measures persistent business
+state and localizes failures within a workflow.
+We call this paradigmstate-grounded evaluation, and in-
+stantiate it inERPBench. ERPBench is built on a live, self-
+hosted instance of ERPNext [11], an open-source ERP span-
+ning finance, procurement, inventory, and customer manage-
+ment. Agents operate from screenshots alone, while each
+task is graded against ground-truth database fields, extending
+execution-based state verification [7, 5] to persistent business
+records. This exposes enterprise-specific failure modes that
+task-level metrics can conflate, including agents trapped in
+unrecoverable interaction loops.
+ERPBench runs on a production-grade harness that we
+present. In deployment, it gates every agent action behind
+human approval for safe enterprise use [2]. For benchmark-
+ing, the same harness runs autonomously, with an auto-
+approver in place of the human reviewer. We evaluate six
+closed and open-source CUAs [2, 1, 4, 12, 13] on tasks
+spanning single-field edits, multi-field record creation, and
+multi-screen chained workflows. We demonstrate that high
+arXiv:2609.17885v1  [cs.AI]  15 Sep 2026
+
+--- Page 2 ---
+
+Table 1. Comparison with existing CUA benchmarks. ITSM = IT service management; CRM = customer relationship man-
+agement; ERP = enterprise resource planning; A11y = accessibility tree; DOM = Document Object Model; API = application
+programming interface.∼= partial (SCUBA: difficulty labels, milestone rewards; not structural tiers or fixed-stage grading).
+Open / reproducible= the environment is self-hostable without a proprietary account or license. A✓underNeeds structured
+accessis a limitation, not a feature: such inputs ease grounding but assume A11y/DOM/API hooks that legacy, pixel-only
+systems do not expose. No prior benchmark satisfies every row; ERPBench is the only one to combine all of them.
+Property OSWorld WinArena WorkArena SCUBA CRMArena-
+Pro
+UI-CUBE ERPBench
+(ours)
+Domain General General Enterprise Enterprise Enterprise Enterprise Enterprise
+Subdomain OS OS ITSM CRM CRM Mixed ERP
+Platform Ubuntu Windows ServiceNow Salesforce Salesforce Web mocks ERPNext
+Distinct tasks 369 154 33 60 19 226 30 (150 runs)
+Pixel-only input× × ×✓× ×✓
+Needs structured access✓(A11y)✓(A11y)✓(A11y+DOM)×✓(Text/API)✓(DOM)×
+Live, non-simulated app✓ ✓ ✓ ✓ ✓×✓
+Open / reproducible✓× × × ×✓ ✓
+Database-verified ground truth× ×✓ ✓ ✓×✓
+Human baseline✓ ✓× × ×✓ ✓
+Task complexity tiers× × × ∼ ×✓ ✓
+Stage-wise grading× × × ∼ × ×✓
+Formal failure taxonomy× × × × × ×✓
+apparent GUI competence does not imply enterprise reli-
+ability: agents that navigate successfully often fail at the
+interaction or commit stage, and even the strongest propri-
+etary model exhibits enterprise-specific failures that existing
+methodologies do not capture. Our contributions are three-
+fold: (1)ERPBench, the first benchmark to operationalize
+pixel-only, state-grounded evaluation for enterprise CUAs
+on a live, openly reproducible enterprise system, grading
+screenshot-only agents at the database-field level on an open-
+source ERP [11]. (2)A production-grade harnesswith
+human-in-the-loop safety gating, run autonomously to bench-
+mark the same system deployed in production. (3)The first
+systematic analysis of enterprise-specific CUA failures,
+showing that interaction-level evaluation overstates enter-
+prise reliability and localizing where agents break down.
+2. RELATED WORK
+Computer-use agent evaluation has developed along four
+threads: general GUI benchmarks, enterprise computer-use
+evaluation, agent safety, and computer-use agent systems.
+General GUI benchmarks:Recent benchmarks have estab-
+lished standardized environments for evaluating CUAs across
+desktop and web applications. OSWorld [5] evaluates mul-
+timodal agents on open-ended tasks in real desktop environ-
+ments, while WindowsAgentArena [6] extends evaluation to
+Windows. WebArena [7] provides realistic web environments
+and evaluates task completion against the underlying envi-
+ronment state rather than the rendered page. Collectively,
+these benchmarks establish interaction and execution success
+as the dominant evaluation paradigm for general-purpose GUI
+agents, but do not model the persistent, domain-specific busi-
+ness state characteristic of enterprise applications. ERPBench
+builds on the execution-based verification principle of We-
+bArena [7] but extends it to persistent, relational business
+records verified at the database-field level.
+Enterprise Computer-Use Evaluation:Several recent
+benchmarks extend computer-use evaluation to enterprise
+workflows. WorkArena [14] evaluates web agents on knowl-
+edge work tasks in ServiceNow, while SCUBA [8] eval-
+uates computer-use agents on Salesforce CRM workflows
+using application APIs for binary and milestone-based grad-
+ing. CRMArena-Pro [9] evaluates LLM agents on diverse
+CRM workflows, but uses text-based interaction rather than
+screenshot-driven GUI control. EntWorld [15] evaluates en-
+terprise GUI agents across six dockerized open-source busi-
+ness applications with SQL-based deterministic verification
+and schema-driven task generation. However, EntWorld ex-
+poses an accessibility tree alongside screenshots and does not
+decompose runs into fixed stages or define a named failure
+taxonomy. UI-CUBE [10] is particularly close to our work,
+arguing that task accuracy alone is insufficient to assess
+enterprise readiness and introducing operational-reliability
+evaluation across enterprise workflows. However, UI-CUBE
+evaluates agents on simulated web applications, exposes
+DOM information alongside screenshots, and verifies out-
+comes against application-state snapshots. ERPBench instead
+evaluates screenshot-only agents on a live, self-hosted ERP
+deployment and grounds correctness in persistent database
+fields. Moreover, ERPBench decomposes execution into
+fixed stages and introduces a named failure taxonomy to
+localize where enterprise agents fail.
+Agent Safety and Human Oversight:Deploying CUAs in
+enterprise systems also raises safety concerns because GUI
+
+--- Page 3 ---
+
+actions may modify or irreversibly commit business state.
+Prior work has studiedhuman-in-the-loop(HITL) approval,
+automated intent verification, and agent safety awareness as
+mechanisms for controlling risky actions [16, 17, 18, 19].
+These works primarily evaluate safety mechanisms or agent-
+side risk awareness. ERPBench instead incorporates a risk-
+tiered approval gate into a production-oriented execution har-
+ness and runs the same infrastructure autonomously during
+benchmarking, enabling enterprise reliability to be evaluated
+under the controls intended for deployment.
+Computer-Use Agent Systems:Recent systems including
+Claude and OpenAI’s computer-use capability, OpenCUA,
+UI-TARS, Holo3-35B-A3B, and Qwen3-VL paired with
+OmniParser demonstrate different approaches to screenshot-
+based computer interaction, ranging from native computer-
+use capabilities and GUI-specialized training to explicit vi-
+sual element parsing [2, 3, 4, 1, 12, 20, 13]. ERPBench
+evaluates representative systems from these approaches as
+benchmark subjects; its contribution is complementary to
+these model-development efforts, focusing on how reliably
+such agents perform persistent enterprise operations rather
+than on improving GUI grounding itself.
+Table 1 positions ERPBench against these benchmarks
+along observation modality, deployment, grounding, and
+grading. Of the four threads above, the benchmarks com-
+pared here fall into two: the general GUI thread (OSWorld,
+WindowsAgentArena) and the enterprise computer-use eval-
+uation thread (WorkArena, SCUBA, CRMArena-Pro, UI-
+CUBE); the agent safety and computer-use agent systems
+threads comprise safety studies and agent models rather than
+benchmarks. ERPBench advances the enterprise computer-
+use evaluation thread. ERPBench is the only benchmark
+that combines pixel-only observation (no accessibility tree,
+DOM, or API required), a live and self-hostable applica-
+tion, database-verified ground truth, a human baseline, task-
+complexity tiers, stage-wise grading, and a formal failure
+taxonomy; each prior benchmark satisfies only a subset.
+3. ERPBENCH
+ERPBench evaluates CUAs on ERPNext, an open-source
+ERP deployed locally in Docker (Fig. 1). The agent drives
+ERPNext through a browser as a person would: Chromium
+renders the application on a virtual display (Xvfb), streamed
+over noVNC. At each step the agent observes only a1280×
+720screenshot of this display and acts through simulated
+mouse and keyboard input at pixel coordinates. No DOM
+or accessibility tree is exposed for perception or for control.
+This pixel-in, coordinate-out channel mirrors how an agent
+must operate enterprise software behind remote-desktop or
+VDI deployments, where no API or accessibility hooks are
+available, the setting ERPBench is built to evaluate. The rest
+of this section describes ERPBench’s four components: the
+task suite (Sec. 3.1), the harness that runs agents against ERP-
+(A) Production CUA Harness (B) ERPBench Evaluation Mode
+ERPNext (Docker)
+MariaDB · Redis · noVNC 
+Screenshot
+CUA Brain
+Claude · Qwen · OpenCUA · UI-TARS 
+Action Proposal
+Flask Observer (phase FSM)
+idle →  task active →  proposed →  executing 
+Risk Classiﬁer 
+safe / commit / irreversible 
+Human Reviewer
+approve /
+reject /escalate
+Irreversible
+Approved Action
+(browser execution)
+Task YAML
+prompt ﬁxtureexpected
+Fixture ERPNext (Docker)
+MariaDB · Redis · noVNC 
+Screenshot
+CUA Brain
+Claude · Qwen · OpenCUA · UI-TARS 
+Action Proposal
+Flask Observer (phase FSM)
+idle →  task active →  proposed →  executing 
+Auto Approver
+(200 ms poll)
+deﬂectsWAITING_HUMAN
+Approved Action
+DB Grader
+(Frappe API)
+Partial Grader
+(4-stage)
+Log Grader 
+Fig. 1. ERPBench system overview that compares the
+two harness configurations:(A) Production CUA harness.
+Demonstrates how proposed agent actions from different
+CUA brains transition through a Flask Finite State Machine
+(FSM) observer into a Risk Classifier. Risky or irreversible
+actions (such as deleting records) require explicit human ap-
+proval before browser execution.(B) Evaluation mode. Re-
+places the human reviewer with an Auto Approver polling at
+200 ms intervals. Post-execution state is processed by the DB
+Grader, Partial (Stage) Grader, and Log Grader.
+Next (Sec. 3.2), the graders that score each run (Sec. 3.3), and
+a human baseline (Sec. 3.4).
+3.1. Task Design
+ERPBench organizes tasks into three complexity tiers (T1–
+T3). T1 covers 20 single-record tasks in three types:text-edit
+(typing into a text or long-text field, e.g., a customer’s tax ID),
+select/toggle(choosing via dropdown, autocomplete, check-
+box, or date picker, e.g., a disabled flag), andcreate(adding
+a simple record with a few fields, e.g., a new customer). T2
+introduces multi-field coordination and relational field selec-
+tion, with 6-9 fields per record (e.g., creating a new Customer
+or Supplier from its full field set). T3 introduces multi-screen
+chained workflows: the agent creates and links 2–4 depen-
+dent ERPNext documents in sequence (e.g., Lead→Oppor-
+tunity→status advance, or Project→Task→Timesheet),
+and one variant additionallysubmitsa document, ERPNext’s
+stronger and often irreversible commit, rather than only sav-
+ing it. Three T3 tasks are OSWorld-analog variants that start
+from a blank page, requiring the agent to navigate to ERP-
+Next itself before any form work. Together, the tiers progres-
+sively increase interaction complexity, from a single field (T1)
+to a full multi-field record (T2) to a chain of linked records
+across screens (T3), while preserving a common correctness
+criterion: the final persistent database state. Each task is a
+Y AML file specifying the prompt, a start URL, a fixture of
+pre-seeded fields, the expected field values, and grader con-
+
+--- Page 4 ---
+
+Fig. 2. ERPBench harness User Interface: Shows the live
+operator (human) interface divided into four functional pan-
+els: 1⃝Live ERPNext App: The streaming screenshot-only
+workspace. 2⃝Planned Workflow Action Log: Displays
+planned step sequences. 3⃝Risk-Gated Approval Panel:
+Pauses execution on sensitive actions (e.g., irreversible dele-
+tion) pending operator review. 4⃝Chat Panel: Provides a di-
+rect communication for operator intervention.
+figuration. Before each run, the fixture is seeded through the
+Frappe REST API under a UUID-suffixed record name (e.g.,
+Acme-Corp-RUN-edba5c7f). This isolates runs without
+a full database reset.
+3.2. Harness
+At each turn, the agent sees the current screenshot and pro-
+poses one action: move, scroll, click (field, button, link, or
+dropdown), type, select, set date, clear, press a key, or nav-
+igate. Each action carries target coordinates, a short reason,
+and a risk category (safe,commit, orirreversible). If it is ap-
+proved, the harness runs it as a real mouse or keyboard action
+and takes a new screenshot. The agent then proposes the next
+action. The same harness runs in two modes. A Flask server
+tracks the task’s state (idle→active→proposed→execut-
+ing). In deployment, every action is surfaced for human ap-
+proval before execution, with commit and irreversible actions
+(e.g., the save/submit bar) always requiring explicit confir-
+mation; an optional fast-path auto-approves actions tagged
+safe (Fig. 2). In evaluation, an auto-approver approves ev-
+ery action across all risk tiers, so a full task runs without a
+human. Before each run, the browser is initialized at a task-
+specific start URL to remove URL-level navigation as a con-
+found. Navigation within the ERP interface, from the start
+state to the target record or field, remains part of the agent’s
+task and is scored as the first grading stage. Each run has a
+turn limit; a run that hits the limit is recorded as a recovery
+failure (Sec. 4.3).
+3.3. Grading
+Each run is scored by three graders. The database grader
+reads the target field values from ERPNext through the Frappe
+REST API after the run. For a task with target fieldsF, let
+y∗
+i andˆyi denote the expected and observed post-execution
+values of fieldi∈F. A per-field predicateg(ˆy i, y∗
+i )∈ {0,1}
+marks fieldicorrect under type-specific equivalence: numeric
+values agree within a toleranceτ(default0.01); Boolean-
+equivalent values agree (e.g.,1andTrue, or “Yes” and
+True); and strings are compared after HTML stripping and
+whitespace normalization. A task succeeds iff every target
+field is correct, i.e., Q
+i∈F g(ˆyi, y∗
+i ) = 1.
+For multi-field T2 records, credit is field-weighted across
+the target fields rather than all-or-nothing. For multi-document
+T3 tasks, the grader is applied per document in the chain, and
+partial credit is thechain-depth: the fraction of chain docu-
+ments left correct in the database. The stage grader awards
+partial credit over ordered stages, agent actions followed by a
+verification of persistent state:Navigation(the target record
+or field is reached),Interaction(the required GUI manipula-
+tion is completed),Commit(a save or submit is invoked), and
+Database(the target fields match ground truth). Navigation,
+Commit, and Database apply to every tier; Interaction is spe-
+cific to single-field edits, and chained workflows substitute
+chain-depth.
+Each stage is evaluated independently from observable
+evidence, while the final database state remains the definitive
+criterion for task success. This localizes where a run failed,
+not just whether it failed. The log grader reads the action
+and turn logs for action count, agent/API turns, latency, and,
+where available, token cost. Together they give each run a
+pass/fail result, a per-stage breakdown, and its cost.
+3.4. Human Baseline
+As a human reference, three annotators independently com-
+pleted all ERPBench tasks on the same ERPNext instance
+and were scored by the same database grader as the agents.
+Because humans operate the browser directly rather than
+through the screenshot-only agent interface, we report their
+task success and completion time and omit agent-specific
+metrics such as token usage (Table 2). The reference delib-
+erately spans different levels of platform familiarity: human
+annotators #1 and #2 are experienced ERPNext users and
+serve as an expert ceiling, while human annotator #3 provides
+first-time-user reference, having never used ERPNext before.
+4. EXPERIMENTS AND RESULTS
+We first describe the experimental setup, then report task suc-
+cess and efficiency, and finally analyze how the agents fail.
+4.1. Experimental Setup
+We evaluate six representative CUAs spanning proprietary
+and open-weight systems: Claude Sonnet 4.6, Qwen3-
+VL-32B, OpenCUA-32B, UI-TARS-7B, OpenCUA-7B, and
+Holo3-35B-A3B. Claude is accessed through the Anthropic
+
+--- Page 5 ---
+
+API, while the open-weight models are self-hosted; Qwen3-
+VL-32B is paired with OmniParser for GUI grounding. Each
+task is executed for five independent runs under the same
+configuration and grader, yielding100T1,20T2, and30T3
+runs per model. Three human annotators complete the same
+tasks through the same database grader as a human reference.
+Table 2 reports task success and efficiency across the three
+tiers; Table 3 decomposes each run into ordered stages and
+illustrates where agents fail during execution. Success is the
+share of runs in which every target field matches the database;
+Actions, Duration, and Input tokens are per-run means. Ac-
+tions counts executed GUI operations, while Turns (Table 4)
+counts agent-model calls and exceeds Actions when a turn
+yields no executed operation (e.g., a rejected or terminal step).
+The stage columns report the share of runs reaching each
+stage: Navigation (the target record or field is reached), In-
+teraction (the correct value is entered; T1 only), Commit (a
+save or submit is invoked), Database (the target fields match
+ground truth), and, for T3, Chain-depth (the mean fraction of
+the document chain left correct). Human rows are a human
+reference ceiling and omit token metrics, which are agent-
+specific.
+4.2. Results
+Strong general GUI performance does not translate into re-
+liable enterprise execution. Claude reaches 94%, 100%, and
+100% success across the three tiers, approaching the human
+reference; however, its token requirements scale heavily,
+from 231K tokens per run on T1 to roughly 2.0M on T3.
+By contrast, the strongest open models, Holo3-35B-A3B and
+Qwen3-VL-32B, reach only 34% and 32% on T1 and fall
+to 0–3% on T2 and T3, while OpenCUA-7B fails every task
+(Table 2). The gap is starkest for models with strong general
+scores: UI-TARS and OpenCUA-32B report 42.5 and 34.8
+on OSWorld-Verified, yet reach only 9% and 23% on T1.
+Table 3 localizes where this competence leaks away.
+Open models successfully navigate to target records in 90–
+95% of T1 runs, but fail at interaction and database per-
+sistence. Their interaction rate falls to 0–53% and their
+database-correct rate to 0–34%: they arrive at the right screen
+yet cannot reliably enter and persist the intended value. UI-
+TARS is the clearest case: it reaches the target in 95% of runs
+and fires a save in 68%, yet only 9% leave the correct value
+in the database, so nearly every save it commits is wrong.
+The pattern sharpens with tier depth: on T2 the open mod-
+els reach the record in every run yet are database-correct in
+at most 5%, with UI-TARS committing in 85% of runs but
+database-correct in 3%, and on T3 the open models complete
+no chain end to end. Claude, by contrast, stays near ceiling
+across every stage (T1 navigate 99%, interact 97%, commit
+98%, database 94%). The open models’ collapse with tier
+depth mirrors the capability cliff UI-CUBE [10] reports as
+enterprise tasks grow more complex, and the broader enter-
+prise gap EntWorld [15] observes. ERPBench’s stage-wise,
+database-level grading provides a finer resolution on this gap
+by isolating runs where an agent navigates and even commits
+yet leaves the wrong value in the record, a silent failure that
+screenshot-level or interaction-level grading would misclas-
+sify as success.
+Table 2 also shows the cost of the longer horizon. Claude
+completes all six T3 chained workflows (30/30), matching the
+human annotator, but at 36 actions and 323 s per run versus 12
+actions and 89 s on T1. The open models stay cheap only be-
+cause they stop early: OpenCUA-7B averages 1.6 actions on
+T1 and Qwen3-VL 4.9, reflecting premature loop termination
+rather than task efficiency.
+Table 4 reports the remaining per-run metrics; they track
+the same pattern, Claude’s turn counts and output tokens grow
+with tier depth (13.8 turns in T1 to 38.2 turns in T3, 2.3K
+output tokens in T1 to 6.5K output tokens in T3) while its
+per-turn thinking time grows more modestly, from about 4 s
+on T1–T2 to 6 s on T3. Open models exhibit low average
+turns and low output token counts primarily because they hit
+loop-breaks or terminate early. Table 5 shows partial credit
+for all tiers and analyzes performance across specific sub-
+task types. With the exception of Holo3, open models per-
+form worse on exact free-text field entry (22–47%) than on
+select/toggle choices (31–54%), i.e., typing an exact value is
+harder than picking a known option. In T3, removing the nav-
+igation crutch (starting URL prompts) causes chain comple-
+tion depth to drop significantly. For example, OpenCUA-32B
+drops from 22% warm-start depth to 9% blank-start depth.
+For human annotators, familiarity has only a modest ef-
+fect: the experts reach 99–100% on T1, 95% on T2, and 97–
+100% on T3, and the first-time user still reaches 96%, 90%,
+and 87% respectively. Even this first-time user far exceeds ev-
+ery open model (which top out at 34% on T1 and 3% on T3),
+leaving Claude as the only agent that performs in the human
+range; ERPBench’s difficulty for agents is therefore not only
+a matter of ERP-specific expertise. Across the 24 T1 and T2
+tasks, the three annotators reached identical outcomes on 16
+(67%) and agreed to within a single run on 23 (96%), with the
+first-time user accounting for most of the small differences.
+4.3. Failure Analysis
+Figure 3 indicates the failure taxonomy over failed T1 runs.
+It categorizes non-successful T1 runs into five hierarchi-
+cal modes.Planningfailures never reach the target record.
+Groundingfailures reach the record but act on the wrong el-
+ement, so the value is never entered.Save-stepfailures enter
+the target value correctly but fail to trigger save.Perception
+failures save successfully, but an incorrect value is written
+to the persistent database (silent failure).Recoveryfailures
+get trapped in interaction loops or exhaust the turn budget
+without making progress.
+Open-weight models fail predominantly post-navigation
+rather than in planning. For instance, Qwen3-VL-32B fail-
+ures are 59% Grounding, 15% Planning, 15% Perception, and
+
+--- Page 6 ---
+
+Table 2. ERPBench Benchmark results: Task Success and Efficiency Across Tiers. Demonstrates success rate (%), mean GUI
+actions per run, mean duration per run (seconds), and mean input token usage per run across models. Human rows are a human
+reference ceiling.
+T1 T2 T3
+ModelSuccess Actions Duration (s) Input tokens (K) Success Actions Duration (s) Input tokens (K) Success Actions Duration (s) Input tokens (K)
+Proprietary
+Claude Sonnet 4.6 94 11.7 89.2 231 100 25.6 170.1 784 100 36.2 322.7 2009
+Open-weight
+Holo3-35B-A3B 34 6.5 37.1 34 0 14.2 58.6 93 3 6.8 56.0 40
+Qwen3-VL-32B 32 4.9 29.1 76 0 7.7 39.4 107 3 10.5 61.9 149
+OpenCUA-32B 23 5.5 52.8 105 0 6.7 57.8 101 0 7.3 64.9 108
+UI-TARS-7B 9 13.1 59.2 51 0 26.2 99.0 103 0 25.3 111.4 107
+OpenCUA-7B 0 1.6 26.5 60 0 1.4 28.3 75 0 11.8 84.2 145
+Human reference
+Human #1 100 7.5 41.4 N/A 95 25.1 85.7 N/A 100 27.1 99.9 N/A
+Human #2 99 14.8 89.1 N/A 95 26.8 150.5 N/A 97 40.6 395.5 N/A
+Human #3 96 8.9 42.3 N/A 90 24.6 93.2 N/A 87 28.7 100.7 N/A
+Table 3. Stage-wise localization within ERPBench illustrates
+where agents fail during execution. Demonstrates percent of
+runs reaching each stage (Chain-depth as mean percent of the
+document chain completed). Interaction is a T1-only stage
+(right value entered); Chain-depth is T3-only. Agents reach
+the page but fail to persist correct database state.
+T1 T2 T3
+Model
+Navigation
+Interaction
+Commit
+Database
+Navigation
+Commit
+Database
+Navigation
+Commit
+Chain-depth
+Database
+Proprietary
+Claude Sonnet 4.6 99 97 98 94 100 100 100 100 100 100 100
+Open-weight
+Holo3-35B-A3B 90 53 47 34 100 5 0 33 17 4 3
+Qwen3-VL-32B 90 30 42 32 100 15 5 67 23 6 3
+OpenCUA-32B 92 23 34 23 100 0 0 67 47 16 0
+UI-TARS-7B 95 30 68 9 100 85 3 60 80 3 0
+OpenCUA-7B 90 0 3 0 100 10 0 33 3 0 0
+Human reference
+Human #1 100 100 100 100 100 100 95 100 100 100 100
+Human #2 100 97 100 99 100 100 99 100 100 98 97
+Human #3 100 93 98 96 100 100 94 100 100 94 87
+12% Save-step. UI-TARS-7B failures are concentrated in Per-
+ception (59%) and Grounding (27%).
+Each failed run is assigned to a single mode using the
+priority order Recovery, Planning, Perception, Save-step,
+then Grounding. Recovery is checked first because a run that
+loops or times out can do so at any stage. Planning is next
+(never reaching the record), followed by the two silent-failure
+checks, Perception (a wrong value was saved) and Save-step
+(a correct value was never saved), leaving Grounding as the
+residual category for runs that reach the record but act on the
+wrong element.
+Two of these modes are exactly why enterprise evaluation
+needs database-level grading. High visual competence on
+screen does not correlate directly with persistent database
+accuracy. In Save-step and Perception failures the agent acts,
+Table 4. Additional efficiency metrics across tiers. Demon-
+strates agent/API turn counts, generated output tokens, and
+per-turn median thinking times (seconds).
+T1 T2 T3
+Model
+Turns
+Output tokens
+Thinking (s)
+Turns
+Output tokens
+Thinking (s)
+Turns
+Output tokens
+Thinking (s)
+Proprietary
+Claude Sonnet 4.6 13.8 2,255 4.320 27.6 4,455 4.400 38.2 6,468 6.217
+Open-weight
+Holo3-35B-A3B 8.5 1,634 2.095 15.2 2,866 2.000 9.7 2,054 2.067
+Qwen3-VL-32B 8.4 543 1.212 10.9 687 1.536 14.5 1,068 1.554
+OpenCUA-32B 11.9 751 2.660 11.1 684 3.009 11.4 775 2.527
+UI-TARS-7B 15.8 1,503 1.875 30.0 2,871 1.850 29.4 2,825 1.817
+OpenCUA-7B 6.9 495 1.471 8.3 548 1.492 14.8 1,072 1.623
+the screen shows a successful save, yet the persistent record is
+wrong or unchanged. Evaluating computer-use agents solely
+through screenshot comparisons or execution traces hides
+silent enterprise commit failures, underscoring the necessity
+of database-grounded verification. These silent failures do
+not surface on screen but propagate into the business records
+that downstream processes depend on, which is precisely
+what state-grounded evaluation is designed to catch.
+Stage-wise grading and the failure taxonomy are comple-
+mentary lenses: the stages identifywherein the execution
+pipeline a run breaks, while the taxonomy characterizeshow
+it breaks.
+5. CONCLUSION
+We introduced ERPBench, a benchmark for screenshot-only
+computer-use agents on a real, open, self-hosted ERP. Tasks
+are graded against the persistent database state the agents
+leave behind, and stage-wise evaluation identifies where
+failures occur across navigation, interaction, commit, and
+database correctness. We also contribute the production-
+
+--- Page 7 ---
+
+Table 5. Partial credit across tiers by sub-task type (%).
+Text-edit and Select/Toggle (T1) and Multi-field (T2) report
+the mean partial score, the fraction of that tier’s grading
+stages passed, averaged over tasks and runs. Create (T1) re-
+ports the pass rate for simple single-record creates (graded
+pass/fail). T3 reports the mean chain-depth (fraction of the
+document chain completed), split into warm-start and blank-
+start (OSWorld-analog) variants.
+T1 T2 T3
+Model
+Text-
+edit
+Select/
+Toggle Create
+Multi-
+field
+Warm-
+start
+Blank-
+start
+Claude Sonnet 4.6 96 97 100 100 100 100
+Holo3-35B-A3B 61 58 15 35 9 0
+Qwen3-VL-32B 43 49 70 40 11 2
+OpenCUA-32B 37 49 30 33 22 9
+UI-TARS-7B 47 54 35 63 7 0
+OpenCUA-7B 22 31 0 37 0 0
+grade harness used to run the agents, which gates actions
+behind human approval in deployment, and runs the same
+harness autonomously for evaluation.
+Across six agents, strong general GUI performance did
+not carry over to enterprise work. Models that navigate
+well still fail at interaction and commit, and some appear
+to succeed on screen while leaving the database wrong or
+unchanged. Interaction-level evaluation can therefore over-
+estimate enterprise reliability; database-grounded evaluation
+reveals failures that remain invisible at the GUI level. ERP-
+Bench currently covers single-field edits, multi-field record
+creation and multi-screen chained workflows. We intend to
+release the benchmark and harness to enable reproducible,
+state-grounded evaluation of enterprise CUAs.
+Because these failures localize to interaction, commit, and
+persistence, they point targeted improvement, such as fine-
+tuning on state-grounded trajectories, at those stages, while
+the human-in-the-loop harness makes pixel-only agents de-
+ployable in the meantime.
+6. ACKNOWLEDGMENTS
+The authors are grateful to Eduardo Salamanca de Diego and
+Jordan Ackerman for their guidance and continued support
+of this work, and to Christopher Clarke, Shafiuddin Rehan
+Ahmed, and Teja Kanchinadam for their generous assistance
+with model deployment and debugging. The authors also
+thank Shanka Subhra Mondal and Dhaval Potdar for their
+helpful review of the manuscript.
+The authors used Claude (Anthropic) for language refine-
+ment and structural organization of this paper. Generative AI
+tools were not used to generate experiments, perform data
+analysis, or produce scientific claims. All methodologies, re-
+sults, and conclusions were developed independently by the
+authors.
+6 failed / 100
+Claude
+Sonnet 4.6
+67%
+33%
+3%
+66 failed / 100
+Holo3-35B-
+A3B
+61%
+26%
+11%
+68 failed / 100
+Qwen3-VL-
+32B
+59%
+15%
+15%
+12%
+6%
+77 failed / 100
+OpenCUA-
+32B
+57%
+14%12%
+10% 5%
+5%
+2%
+91 failed / 100
+UI-TARS-
+7B
+59%
+27%
+7%
+3%
+2%
+100 failed / 100
+OpenCUA-
+7B
+78%
+10%
+Grounding Planning Perception Save-step Recovery
+Fig. 3. Failure taxonomy over failed T1 runs, by model.
+Most failures occur after successful navigation, clustering in
+grounding, save-step, and perception rather than planning:
+reaching the right screen does not imply completing the task
+correctly.
+7. COMPLIANCE WITH ETHICAL STANDARDS
+The human reference was produced by the authors them-
+selves; no external participants and no sensitive personal data
+were involved, and no institutional review board approval
+was required.
+
+--- Page 8 ---
+
+8. REFERENCES
+[1] Yujia Qin et al., “UI-TARS: Pioneering Automated GUI
+Interaction with Native Agents,”arXiv:2501.12326,
+January 2025.
+[2] Claude Platform Docs, Anthropic, “Computer
+use tool,”https://platform.claude.com/
+docs/en/agents-and-tools/tool-use/
+computer-use-tool, November 2024.
+[3] OpenAI Developers, OpenAI, “Computer use,”
+https://developers.openai.com/api/
+docs/guides/tools-computer-use, 2025.
+[4] Xinyuan Wang et al., “Opencua: Open foundations
+for computer-use agents,”arXiv:2508.09123, October
+2025.
+[5] Tianbao Xie et al., “OSWorld: Benchmarking Multi-
+modal Agents for Open-Ended Tasks in Real Computer
+Environments,”Proceedings of the Advances in Neu-
+ral Information Processing Systems, vol. 37, pp. 52040–
+52094, December 2024, Vancouver, Canada.
+[6] Rogerio Bonatti, Dan Zhao, Francesco Bonacci, Dillon
+Dupont, Sara Abdali, Yinheng Li, Yadong Lu, Justin
+Wagle, Kazuhito Koishida, Arthur Bucker, Lawrence
+Jang, and Zheng Hui, “Windows Agent Arena: Eval-
+uating Multi-Modal OS Agents at Scale,”Proceedings
+of the International Conference on Machine Learning,
+pp. 4874–4910, July 2025, Vancouver, Canada.
+[7] Shuyan Zhou, Frank F. Xu, Hao Zhu, Xuhui Zhou,
+Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue
+Ou, Yonatan Bisk, Daniel Fried, Uri Alon, and Gra-
+ham Neubig, “WebArena: A Realistic Web Environ-
+ment for Building Autonomous Agents,”Proceedings
+of the International Conference on Learning Represen-
+tations, pp. 15585–15606, May 2024, Vienna, Austria.
+[8] Yutong Dai, Krithika Ramakrishnan, Jing Gu, Matthew
+Fernandez, Yanqi Luo, Viraj Prabhu, Zhenyu Hu, Silvio
+Savarese, Caiming Xiong, Zeyuan Chen, and Ran Xu,
+“SCUBA: Salesforce Computer Use Benchmark,”Pro-
+ceedings of the International Conference on Learning
+Representations, pp. 24363–24386, April 2026, Rio de
+Janeiro, Brazil.
+[9] Kung-Hsiang Huang, Akshara Prabhakar, Onkar Tho-
+rat, Divyansh Agarwal, Prafulla Kumar Choubey, Yixin
+Mao, Silvio Savarese, Caiming Xiong, and Chien-Sheng
+Wu, “CRMArena-Pro: Holistic Assessment of LLM
+Agents Across Diverse Business Scenarios and Inter-
+actions,”Transactions on Machine Learning Research,
+p. 35, January 2026.
+[10] Horia Cristescu, Charles Park, Trong Canh Nguyen,
+Sergiu Talmacel, Alexandru-Gabriel Ilie, and Stefan
+Adam, “UI-CUBE: Enterprise-Grade Computer Use
+Agent Benchmarking Beyond Task Accuracy to Opera-
+tional Reliability,”arXiv:2511.17131, November 2025.
+[11] Frappe, “ERPNext: Free and Open Source Enter-
+prise Resource Planning,”https://github.com/
+frappe/erpnext, 2026.
+[12] Shuai Bai, Yuxuan Cai, Ruizhe Chen, et al., “Qwen3-
+VL technical report,”arXiv:2511.21631, November
+2025.
+[13] H Company, “Holo3 - Open Foundation Mod-
+els for Navigation and Computer Use Agents,”
+https://huggingface.co/Hcompany/
+Holo3-35B-A3B, 2026.
+[14] Alexandre Drouin, Maxime Gasse, Massimo Caccia, Is-
+sam H. Laradji, Manuel Del Verme, Tom Marty, David
+Vazquez, Nicolas Chapados, and Alexandre Lacoste,
+“WorkArena: How Capable are Web Agents at Solv-
+ing Common Knowledge Work Tasks?,”Proceedings of
+the International Conference on Machine Learning, vol.
+235, pp. 11642–11662, July 2024, Vienna, Austria.
+[15] Ying Mo, Yu Bai, Dapeng Sun, Yuqian Shi, Yukai Miao,
+Li Chen, and Dan Li, “EntWorld: A Holistic Envi-
+ronment and Benchmark for Verifiable Enterprise GUI
+Agents,”arXiv:2601.17722, January 2026.
+[16] Emre Turan, “Oversight Has a Capacity: Calibrat-
+ing Agent Guards to a Subjective, Fatiguing Human,”
+arXiv:2606.08919, June 2026.
+[17] Peiran Wang, Ying Li, and Yuan Tian, “Reframing LLM
+Agent Security as an Agent-Human Interaction Prob-
+lem,”arXiv:2605.24309, May 2026.
+[18] Tianyu Chen, Chujia Hu, Ge Gao, Dongrui Liu, Xia
+Hu, and Wenjie Wang, “LPS-Bench: Benchmarking
+Safety Awareness of Computer-Use Agents in Long-
+Horizon Planning under Benign and Adversarial Scenar-
+ios,”arXiv:2602.03255, February 2026.
+[19] Jia-Chen Zhang, Ze-Yu Zhang, and Kai-Wei Zhang,
+“Invisible Ink Threats: Adversarial Goals Be-
+hind Legitimate Tasks in Computer-Use Agents,”
+arXiv:2608.02018, August 2026.
+[20] Yadong Lu, Jianwei Yang, Yelong Shen, and Ahmed
+Awadallah, “OmniParser for Pure Vision Based GUI
+Agent,”arXiv:2408.00203, August 2024.
