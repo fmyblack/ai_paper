@@ -11,7 +11,7 @@ topics:
   - 安全、鲁棒性与治理
 status: active
 created: 2026-07-31
-updated: 2026-08-13
+updated: 2026-10-08
 cssclasses:
   - paper-note
 ---
@@ -145,3 +145,60 @@ cssclasses:
 1. 先读 SkillRise 图 1、式（6）–（8）和图 2，理解能力状态怎样被 future return 训练。
 2. 再读 MemSecBench 图 3–4 和附录 E.2–E.5，理解“出现—采用—后果—修复”为什么必须拆开。
 3. 最后读 See2Think 表 3、图 7–8 和附录 F.2，用 paired intervention 区分中间状态的效用与行为依赖。
+
+## 2026-10-08 补充：四种反馈及其可信边界
+
+本轮阅读把“反馈”进一步拆成四种来源。它们回答不同问题，不能按分数横向排优劣。
+
+| 论文 | 反馈来源 | 真正验证的对象 | 关键证据 | 不能越过的边界 |
+| --- | --- | --- | --- | --- |
+| [[notes/papers/2026/10/08/ToolRACER- A Robust Agentic Conversation Emulation Resource for Agent Training and Evaluation\|ToolRACER]] | 多角色模拟、schema 检查、语义 judge | 合成轨迹及训练后的工具调用行为 | τ² macro 32.2→39.2%；ACEBench 4B 过程准确率 29.2→19.0%（表 3/5，pp.8–9） | 模拟工具结果不证明真实后端动作；终点提升不证明过程更可靠 |
+| [[notes/papers/2026/10/08/Kernel Autoresearch for Open-Ended Model Discovery\|Kernaut]] | 数学合约、确定性执行、留出数值评估 | 候选核的性质与分布内外预测 | 12-seed full vs closure CRPS 0.571 vs 0.618；88 变体冻结 DWF 中位改善 −0.2%（表 7/附录 B.7，pp.28、30） | 条件性 PSD 保证不证明任意程序纯度；搜索收益不等于普遍科学规律 |
+| [[notes/papers/2026/10/08/RobotWorld- Benchmarking Multimodal Agents for Robot Use Across Diverse Tasks and Embodiments\|RobotWorld]] | 隔离环境状态、持续时间、预算 ledger | 规定预算内的物理任务后果 | 最强 16/84；任务 82 历史成功被裁为预算内失败（表 3/附录 H，pp.14、59–62） | 暂停物理、原生控制器、单 episode；不直接代表实时机器人能力 |
+| [[notes/papers/2026/10/08/U-Space- Uncovering When and Why Uncertainty Arises in Language Models\|U-Space]] | 隐藏状态语义方向×平均预测熵 | 错误排序和选择性保留风险 | 长度控制 AUROC 68.4/71.0/68.3，比最强比较基线高 2.2/1.9/4.7pp（表 2） | 无标签不等于零预计算；方向读数不是校准错误概率或外部事实证明 |
+
+### 证据怎样进入闭环
+
+以下是**我的系统设想，四篇没有联合实现或验证**：
+
+```mermaid
+flowchart LR
+    O[观察与目标] --> P[提出动作或研究假设]
+    P --> R[不确定性信号分配核验资源]
+    R --> C[类型与数学合约检查]
+    C --> X[执行并记录实际状态]
+    X --> V[独立结果与预算核验]
+    V --> D[保留失败原因与恢复轨迹]
+    D --> T[受控数据用于训练]
+    T --> P
+```
+
+这个闭环需要保留不同层面的失败，不能合并成一个 success Boolean：
+
+1. **提案可接受吗？** 语法、形状与结构合约检查，不代表任务成功。
+2. **实际执行了吗？** backend 状态/日志证明动作后果，而非模拟叙述或 API 返回“完成”。
+3. **目标真的达到了吗？** 检查物体状态、持续时间、科学测量与独立留出集。
+4. **预算内达到了吗？** 首次成功时刻、动作/非动作消耗和历史结果分别记录。
+5. **学习后哪项能力变了？** 端到端完成、过程准确、误拒绝、成本必须同时测。
+
+U-Space 适合作为要求检查的信号，不能替代第 2–4 步。ToolRACER 适合提供失败和恢复情境，但其工具模拟最好接入真实状态机。Kernaut 的可信组装可缩小错误空间，却仍要测纯度和分布外失配。RobotWorld 的环境判据最接近操作后果，也会受任务可解性和预算口径影响。
+
+### 本轮改变的判断
+
+- “困难场景数据更多”不足以证明鲁棒性：ToolRACER 的终点和过程指标相反，数据价值要按目标分解。
+- “数学有效”与“经验上更好”是两项检查：DWF 合法，但冻结后真实数据 16 个比较只赢 4 个（Kernaut 附录 B.7，p.30）。
+- “机器人命令成功”与“物体目标成功”分离；预算外的恢复也应单独记录，避免视频与得分冲突。
+- “模型看起来不确定”与“答案真的易错”相关但不相等；先做错误排序，再谈阈值校准和自动拒答。
+
+### 与已有主题的连接
+
+[[notes/papers/2026/08/28/What Makes Good Agentic Data- An ACE Lens on Data Generation for LLM Agents]] 的 Accuracy gate 可具体落到 schema、真实状态和独立 judge 的分歧审计。[[notes/papers/2026/09/29/OpenAI4S- Code as Action, Science as Sessions]] 的 session/artifact ledger 可承载 Kernaut 提案、执行和冻结版本，但交付完整不自动保证科学结论正确。See2Think 的 paired intervention 则提醒：要证明某种反馈被使用，应改变反馈并观察行为，而不能只看它被记录了。
+
+### 后续优先级
+
+先做 CPU 可执行的 Kernaut 结构/分布失配小实验；再做 ToolRACER 的真实状态机核验。RobotWorld 先审计预算日志，U-Space 先用缓存激活对齐 entropy 基线，再考虑高成本在线生成。具体方案与未执行声明见 [[notes/reproductions/四篇Agent反馈论文的最小验证计划]]。
+
+- [ ] 不确定性触发额外核验，能否在同预算下提高任务成功并降低错误动作？
+- [ ] 把模拟轨迹接入确定性状态机后，困难场景数据的训练收益是否保留？
+- [ ] 将首次成功、预算边界和最终状态分别入账，是否会改变 Agent 比较结果？
+- [ ] 对可解释程序先验做结构匹配/失配测试，能否预测迁移收益而不是事后解释？
